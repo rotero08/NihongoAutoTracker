@@ -10,7 +10,7 @@ Built with [WXT](https://wxt.dev/) and TypeScript.
 * **Smart Auto-Logging**: Configurable threshold (90-100%). Watch past your threshold, and the extension logs the full video duration for you.
 * **Fully Configurable**: Toggle time tracking, switch between auto and manual modes, and hide UI elements to keep your browsing clean.
 
-## Installation for Development (BazziteDX / Firefox)
+## Installation for Development 
 
 1. Clone this repository.
 2. Run `pnpm install`.
