@@ -1,55 +1,46 @@
-import { defineBackground } from 'wxt/sandbox';
-import { configStorage } from '@/utils/storage';
-import { submitLog } from '@/utils/api';
+import { defineBackground } from '#imports';
+import { submitLog, notify } from '@/utils/api';
 
 export default defineBackground(() => {
-  browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    if (reason === 'install') {
-      browser.runtime.openOptionsPage();
-    }
+  // Create Context Menu
+  browser.contextMenus.create({
+    id: 'log-text',
+    title: 'Log to NihongoTracker',
+    contexts: ['selection'],
   });
+browser.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'log-text' && info.selectionText && tab) {
+    // 1. Extract Japanese characters
+    const japaneseOnly = info.selectionText.replace(/[^\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g, "");
+    const count = japaneseOnly.length;
 
-  browser.runtime.onStartup.addListener(setupContextMenu);
-  browser.runtime.onInstalled.addListener(setupContextMenu);
+    if (count === 0) {
+      notify('No Japanese Found', 'Selection didn\'t contain valid Japanese characters.');
+      return;
+    }
 
-  function setupContextMenu() {
-    browser.contextMenus.create({
-      id: 'log-nihongo-text',
-      title: 'Log this text to NihongoTracker',
-      contexts: ['selection'],
+    // 2. Capture Page Info (Now available thanks to the 'tabs' permission)
+    const pageTitle = tab.title || 'Unknown Title';
+    const pageUrl = tab.url || 'Unknown URL';
+
+    await submitLog({
+      type: 'reading',
+      mediaData: {
+        contentId: pageTitle,          // ID is the document title
+        contentTitleNative: pageTitle,
+        contentTitleEnglish: pageUrl,
+        type: 'web',
+      },
+      // Description format: 'document title' from 'url'
+      description: `'${pageTitle}' from '${pageUrl}'`, 
+      chars: count,
+      time: 0,
+      date: new Date().toISOString(),
+      episodes: 0,
+      pages: 0,
+      private: false,
+      tags: []
     });
   }
-
-  browser.contextMenus.onClicked.addListener(async (info, tab) => {
-    if (info.menuItemId === 'log-nihongo-text' && info.selectionText && tab?.id) {
-      const config = await configStorage.getValue();
-      const chars = info.selectionText.length;
-      
-      let activeTimeMinutes = 0;
-      if (config.trackTextTime) {
-        try {
-          const response = await browser.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_TIME' });
-          activeTimeMinutes = response?.minutes || 0;
-        } catch (e) {
-          console.warn('Could not get time from content script');
-        }
-      }
-
-      try {
-        await submitLog({
-          type: 'reading',
-          mediaData: {
-            contentTitleNative: tab.title || 'Unknown Webpage',
-            contentTitleEnglish: tab.url || '',
-          },
-          description: 'Logged via Context Menu',
-          chars: chars,
-          time: activeTimeMinutes,
-          date: new Date().toISOString(),
-        });
-      } catch (error) {
-        console.error('Failed to log text:', error);
-      }
-    }
-  });
+});
 });

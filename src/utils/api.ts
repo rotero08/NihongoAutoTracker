@@ -1,22 +1,46 @@
-import { configStorage } from './storage';
+const API_BASE = 'https://nihongotracker.app/api';
 
-const API_BASE = 'https://nihongotracker.com/api';
+// Added "export" here so background.ts can see it
+export function notify(title: string, message: string) {
+  browser.notifications.create({
+    type: 'basic',
+    iconUrl: '/icon/48.png',
+    title: title,
+    message: message,
+  });
+}
 
 export async function submitLog(payload: any) {
-  const config = await configStorage.getValue();
-  if (!config.apiKey) throw new Error('No API Key configured.');
+  const res = await browser.storage.local.get('apiKey');
+  const apiKey = res.apiKey;
 
-  const response = await fetch(`${API_BASE}/logs`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': config.apiKey,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    throw new Error(`API Error: ${response.statusText}`);
+  if (!apiKey) {
+    notify('Setup Required', 'Please enter your API Key.');
+    return;
   }
-  return response.json();
+
+  try {
+    // NOTE: Ensure this URL matches your tracker's actual API documentation
+    const response = await fetch('https://nihongotracker.app/api/logs', {
+      method: 'POST',
+      mode: 'cors', // Explicitly request CORS
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) {
+      notify('Log Success!', 'Data sent to NihongoTracker.');
+    } else {
+      const errorText = await response.text();
+      console.error('Server Error:', errorText);
+      notify('Log Failed', `Status: ${response.status}`);
+    }
+  } catch (err) {
+    // This is where your current error is being caught
+    console.error('Fetch Check:', err);
+    notify('Network Error', 'Check connection or permissions.');
+  }
 }

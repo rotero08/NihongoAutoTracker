@@ -1,22 +1,13 @@
-import { storage } from 'wxt/storage';
+import { storage } from '#imports';
 
 export interface TrackerConfig {
   apiKey: string;
-  logMode: 'auto' | 'manual';
-  threshold: number;
-  trackTextTime: boolean;
-  hideButtons: boolean;
 }
 
-export const defaultConfig: TrackerConfig = {
-  apiKey: '',
-  logMode: 'auto',
-  threshold: 90,
-  trackTextTime: true,
-  hideButtons: false,
-};
-
+// We use 'local:' to ensure it persists on your machine
 export const configStorage = storage.defineItem<TrackerConfig>(
   'local:config',
-  { defaultValue: defaultConfig }
+  { 
+    defaultValue: { apiKey: '' } 
+  }
 );
