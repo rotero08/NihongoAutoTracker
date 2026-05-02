@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NihongoAutoTracker — Settings</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="shell">
+
+    <nav class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">日</div>
+        <div>
+          <div class="brand-name">NihongoAutoTracker</div>
+          <div class="brand-ver">v1.1.0</div>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <a class="nav-item active" data-tab="queue">
+          <span class="nav-icon">📼</span> Queue
+          <span id="nav-badge" class="nav-badge hidden">0</span>
+        </a>
+        <a class="nav-item" data-tab="api">
+          <span class="nav-icon">🔑</span> API Key
+        </a>
+        <a class="nav-item" data-tab="video">
+          <span class="nav-icon">🎬</span> Video
+        </a>
+        <a class="nav-item" data-tab="overlay">
+          <span class="nav-icon">⏱</span> Overlay
+        </a>
+      </div>
+    </nav>
+
+    <main class="main">
+
+      <!-- ── Queue ────────────────────────────────────────────────── -->
+      <section class="tab active" id="tab-queue">
+        <div class="tab-head">
+          <h2>Video Queue</h2>
+          <div class="tab-actions" id="queue-actions" style="display:none">
+            <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
+            <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
+          </div>
+        </div>
+        <p class="hint">Videos tracked from YouTube, Crunchyroll, AnimeKai. Edit title/time then send.</p>
+        <div id="queue-list"></div>
+      </section>
+
+      <!-- ── API Key ──────────────────────────────────────────────── -->
+      <section class="tab" id="tab-api">
+        <div class="tab-head"><h2>API Key</h2></div>
+        <p class="hint">Get this from your NihongoTracker account settings page.</p>
+
+        <div class="field">
+          <label class="label">API Key</label>
+          <div class="row-inline">
+            <input type="password" id="api-key" class="input" placeholder="Paste your key here…" autocomplete="off" />
+            <button id="toggle-key" class="btn btn-ghost btn-icon">👁</button>
+          </div>
+          <div id="api-status" class="api-status"></div>
+        </div>
+
+        <button id="save-api-btn" class="btn btn-amber">Save API Key</button>
+      </section>
+
+      <!-- ── Video ────────────────────────────────────────────────── -->
+      <section class="tab" id="tab-video">
+        <div class="tab-head"><h2>Video Tracking</h2></div>
+
+        <div class="field">
+          <label class="label">Logging Mode</label>
+          <div class="radio-stack">
+
+            <label class="radio-card">
+              <input type="radio" name="log-mode" value="manual" />
+              <div class="radio-dot"></div>
+              <div class="radio-body">
+                <strong>Manual <span class="tip-trigger" data-tip="manual">?</span></strong>
+                <small>Tracks exactly how much of each video you watched. Queues automatically — you decide when to send.</small>
+              </div>
+            </label>
+
+            <label class="radio-card">
+              <input type="radio" name="log-mode" value="auto" />
+              <div class="radio-dot"></div>
+              <div class="radio-body">
+                <strong>Auto <span class="tip-trigger" data-tip="auto">?</span></strong>
+                <small>When your position in the video hits the threshold, the full video duration is sent immediately — no queue.</small>
+              </div>
+            </label>
+
+          </div>
+
+          <!-- Tooltips -->
+          <div id="tip-manual" class="tooltip" style="display:none">
+            <strong>Manual mode</strong><br>
+            The timer in the player counts real watch-time (skips excluded). When a video ends — or you click the Log button — the watched minutes enter the queue. Nothing is sent until you click Send here or in the popup.
+          </div>
+          <div id="tip-auto" class="tooltip" style="display:none">
+            <strong>Auto mode</strong><br>
+            When your playback position passes the threshold (e.g. 95%), the extension immediately logs the video's <em>full</em> duration to NihongoTracker — no review step. Works only on videos detected as Japanese.
+          </div>
+        </div>
+
+        <div class="field" id="threshold-field">
+          <label class="label">
+            Auto-Send Threshold
+            <span id="threshold-val" class="label-val">95%</span>
+          </label>
+          <input type="range" id="threshold" class="slider" min="90" max="100" step="1" value="95" />
+          <div class="slider-ticks"><span>90%</span><span>95%</span><span>100%</span></div>
+        </div>
+
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" id="hide-buttons" class="toggle-chk" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Hide Log button on video players
+          </label>
+        </div>
+
+        <button id="save-video-btn" class="btn btn-amber">Save</button>
+      </section>
+
+      <!-- ── Overlay ──────────────────────────────────────────────── -->
+      <section class="tab" id="tab-overlay">
+        <div class="tab-head"><h2>Text Overlay</h2></div>
+        <p class="hint">
+          A small draggable timer shown on Japanese-language pages while you read.
+          Reported with your text logs (context menu). Drag it anywhere — position resets on page reload.
+        </p>
+
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" id="track-time" class="toggle-chk" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Include active reading time in context-menu logs
+          </label>
+        </div>
+
+        <div class="field">
+          <label class="label">Default Position</label>
+          <div class="pos-grid">
+            <label class="pos-opt" data-pos="top-left">
+              <input type="radio" name="overlay-pos" value="top-left" /> Top Left
+            </label>
+            <label class="pos-opt" data-pos="top-right">
+              <input type="radio" name="overlay-pos" value="top-right" /> Top Right
+            </label>
+            <label class="pos-opt" data-pos="bottom-left">
+              <input type="radio" name="overlay-pos" value="bottom-left" /> Bottom Left
+            </label>
+            <label class="pos-opt" data-pos="bottom-right">
+              <input type="radio" name="overlay-pos" value="bottom-right" /> Bottom Right
+            </label>
+            <label class="pos-opt pos-wide" data-pos="hidden">
+              <input type="radio" name="overlay-pos" value="hidden" /> Hidden
+            </label>
+          </div>
+        </div>
+
+        <button id="save-overlay-btn" class="btn btn-amber">Save</button>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- status toast -->
+  <div id="status" class="status-toast hidden"></div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

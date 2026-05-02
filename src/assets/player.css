@@ -1,0 +1,65 @@
+.ytp-time-display {
+  display: flex !important;
+  align-items: center !important;
+  overflow: visible !important;
+}
+
+#nt-status-badge {
+margin-left: 8px;
+display: inline-flex !important;
+align-items: center !important;
+justify-content: center !important;
+height: 100% !important;
+cursor: pointer;
+vertical-align: middle !important;
+position: relative; /* Necessary for the pseudo-element hover */
+}
+
+.nt-pill-visual-wrapper {
+  background-color: rgba(0, 0, 0, 0.2);
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transform: none;
+  position: relative;
+  z-index: 1;
+}
+
+/* Partial Hover Effect logic */
+.nt-pill-visual-wrapper::before {
+  content: "";
+  position: absolute;
+  /* Adjust these percentages to control how much of the pill the hover covers */
+  top: 13%;
+  bottom: 13%;
+  left: 5%;
+  right: 5%;
+  border-radius: 12px;
+  background-color: transparent;
+  transition: background-color 0.1s;
+  z-index: -1; /* Sits behind the text but above the main pill bg */
+}
+
+#nt-status-badge:hover .nt-pill-visual-wrapper::before {
+background-color: rgba(195, 195, 195, 0.2) !important;
+}
+
+.nt-brand-label {
+  color: #f0b429;
+  font-weight: 700;
+  font-size: 14px;
+  font-family: "Roboto", "Arial", sans-serif !important;
+  line-height: 1 !important;
+}
+
+.nt-time-label {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: "Roboto", "Arial", sans-serif !important;
+  line-height: 1 !important;
+}

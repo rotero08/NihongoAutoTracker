@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NihongoAutoTracker</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <div class="brand-mark">日</div>
+      <div class="brand-text">
+        <div class="brand-name">NihongoAutoTracker</div>
+        <div id="api-pill" class="pill pill-off">No API Key</div>
+      </div>
+    </div>
+    <button id="btn-settings" class="icon-btn" title="Open Settings">⚙</button>
+  </header>
+
+  <div class="sep"></div>
+
+  <div class="queue-header">
+    <span class="queue-label">PENDING QUEUE</span>
+    <span id="queue-count" class="badge">0</span>
+  </div>
+
+  <div id="queue-list" class="queue-list"></div>
+
+  <div class="sep"></div>
+
+  <footer class="footer">
+    <button id="btn-open" class="btn-primary">Open Settings &amp; Review Queue</button>
+  </footer>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

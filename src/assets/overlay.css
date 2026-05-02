@@ -1,0 +1,84 @@
+/* ── NihongoAutoTracker — reading overlay ───────────────────────
+   Minimal, translucent, draggable. Designed not to intrude.
+   ─────────────────────────────────────────────────────────────── */
+
+#nt-overlay {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  /* translucent glass look */
+  background: rgba(8, 8, 20, 0.55);
+  backdrop-filter: blur(8px) saturate(180%);
+  -webkit-backdrop-filter: blur(8px) saturate(180%);
+
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 5px;
+  padding: 4px 8px 4px 4px;
+
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+
+  box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+  user-select: none;
+
+  /* fade when not hovered */
+  opacity: 0.55;
+  transition: opacity 0.25s;
+}
+#nt-overlay:hover { opacity: 1; }
+
+/* drag handle */
+.nt-handle {
+  cursor: grab;
+  color: rgba(255,255,255,0.25);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 3px 0 2px;
+  letter-spacing: -1px;
+  transition: color 0.15s;
+}
+.nt-handle:hover { color: rgba(240,180,41,0.7); }
+
+/* time display */
+.nt-time {
+  color: #f0b429;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-width: 36px;
+  text-align: center;
+  transition: color 0.15s;
+}
+.nt-time:hover { color: #ffd060; }
+
+/* control buttons */
+.nt-ctrl {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 1px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.nt-ctrl:hover { color: rgba(255,255,255,0.8); }
+.nt-ctrl.active { color: #3ddc84; }
+
+/* inline time edit input */
+.nt-edit {
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(240,180,41,0.5);
+  border-radius: 3px;
+  color: #f0b429;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  padding: 1px 4px;
+  outline: none;
+  width: 48px;
+  text-align: center;
+}
