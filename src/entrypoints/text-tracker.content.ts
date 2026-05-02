@@ -2,7 +2,7 @@ import { defineContentScript } from '#imports';
 import { configStorage } from '@/utils/storage';
 import '@/assets/overlay.css';
 
-const SKIP_HOSTS = ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'reader.ttsu.app'];
+const SKIP_HOSTS = ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'reader.ttsu.app', 'nihongotracker.app'];
 const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 
 // ── Japanese page detection ───────────────────────────────────────────────────
