@@ -120,11 +120,14 @@ function getYouTubeChannelId(): string | null {
 }
 
 function getChannelNameFallback(): string {
-  const a = document.querySelector<HTMLElement>('ytd-channel-name yt-formatted-string, ytd-channel-name a');
-  if (a && a.innerText) return a.innerText.trim();
-  const meta = document.querySelector('meta[itemprop="name"]');
-  if (meta && meta.getAttribute('content')) return meta.getAttribute('content')!;
-  return document.title.split(' - ')[0] || 'Unknown';
+  // YouTube: only ytd-channel-name is reliable — meta[itemprop="name"] and
+  // document.title.split(' - ')[0] both return the VIDEO title on YouTube, not the channel.
+  const ytEl = document.querySelector<HTMLElement>('ytd-channel-name yt-formatted-string, ytd-channel-name a');
+  if (ytEl?.innerText?.trim()) return ytEl.innerText.trim();
+  // Crunchyroll / AnimeKai
+  const showEl = document.querySelector<HTMLElement>('.show-title-link, .series-title, .title[data-t="title"]');
+  if (showEl?.innerText?.trim()) return showEl.innerText.trim();
+  return ''; // caller uses 'Unknown' as display fallback — never store video title as channel
 }
 
 // ── Queue helpers ─────────────────────────────────────────────────────────────
@@ -556,119 +559,119 @@ export default defineContentScript({
       document.getElementById('nt-status-badge')?.remove();
 
       const tryChannel = () => {
-        const id = getYouTubeChannelId();
-        if (id) channelId = id;
-        if (!cachedChannelName) cachedChannelName = getChannelNameFallback();
+        if (!channelId) { const id = getYouTubeChannelId(); if (id) channelId = id; }
+        // Only accept non-empty — getChannelNameFallback returns '' rather than video title
+        if (!cachedChannelName) { const n = getChannelNameFallback(); if (n) cachedChannelName = n; }
       };
-        tryChannel(); setTimeout(tryChannel, 2000); setTimeout(tryChannel, 5000);
+      tryChannel(); setTimeout(tryChannel, 2000); setTimeout(tryChannel, 5000); setTimeout(tryChannel, 10000);
 
-        (async () => {
-          const queue = await videoQueueStorage.getValue();
-          const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
-          if (existing) {
-            const sessions: any[] = existing.sessions ?? [];
-            completedSessionSecs = sessions.reduce((a: number, s: any) => a + s.secs, 0);
+      (async () => {
+        const queue = await videoQueueStorage.getValue();
+        const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
+        if (existing) {
+          const sessions: any[] = existing.sessions ?? [];
+          completedSessionSecs = sessions.reduce((a: number, s: any) => a + s.secs, 0);
+        }
+      })();
+
+      // ── FIX: wall-clock playback events replace timeupdate delta math ──────
+      vid.addEventListener('playing', () => {
+        playClockStart = performance.now();
+      });
+
+      // Pause, buffering, and seek-start all stop the clock
+      const stopClock = () => { flushPlayClock(); };
+      vid.addEventListener('pause',   stopClock);
+      vid.addEventListener('waiting', stopClock); // buffering freeze
+      vid.addEventListener('seeking', stopClock);
+
+      // Seeked: restart clock only if video is still playing after seek
+      vid.addEventListener('seeked', () => {
+        if (!vid.paused && !vid.ended) playClockStart = performance.now();
+      });
+
+        // ── timeupdate: only for threshold/sync checks + throttled counter ──────
+        vid.addEventListener('timeupdate', async () => {
+          const cfg = cachedConfig;
+
+          if (!state.hasTriggered) {
+            // Pass live seconds — includes in-flight clock not yet flushed to watchedSecs
+            ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
           }
-        })();
 
-        // ── FIX: wall-clock playback events replace timeupdate delta math ──────
-        vid.addEventListener('playing', () => {
-          playClockStart = performance.now();
-        });
+          if (state.hasTriggered || vid.duration <= 0) return;
 
-        // Pause, buffering, and seek-start all stop the clock
-        const stopClock = () => { flushPlayClock(); };
-        vid.addEventListener('pause',   stopClock);
-        vid.addEventListener('waiting', stopClock); // buffering freeze
-        vid.addEventListener('seeking', stopClock);
+          const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+          const liveSecs = getLiveWatched();
 
-        // Seeked: restart clock only if video is still playing after seek
-        vid.addEventListener('seeked', () => {
-          if (!vid.paused && !vid.ended) playClockStart = performance.now();
-        });
-
-          // ── timeupdate: only for threshold/sync checks + throttled counter ──────
-          vid.addEventListener('timeupdate', async () => {
-            const cfg = cachedConfig;
-
-            if (!state.hasTriggered) {
-              // Pass live seconds — includes in-flight clock not yet flushed to watchedSecs
-              ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
+          if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
+            lastSyncSecs = liveSecs;
+            if (isLikelyJapaneseCached() && !isMusic()) {
+              await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
             }
+          }
 
-            if (state.hasTriggered || vid.duration <= 0) return;
-
-            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-            const liveSecs = getLiveWatched();
-
-            if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
-              lastSyncSecs = liveSecs;
-              if (isLikelyJapaneseCached() && !isMusic()) {
-                await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
-              }
-            }
-
-            if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
-              lastAutoCheckSecs = liveSecs;
-              if (isLikelyJapaneseCached() && !isMusic()) {
-                const threshType  = cfg.thresholdType  ?? 'percent';
-                const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-                const triggered   = threshType === 'percent'
-                ? (vid.currentTime / vid.duration) * 100 >= threshValue
-                : (liveSecs / 60) >= threshValue;
-                if (triggered) {
-                  state.hasTriggered = true;
-                  const fullMins = Math.round(vid.duration / 60);
-                  const ok = await submitLog({
-                    type: 'anime',
-                    mediaData: { contentId: channelId ?? undefined, contentTitleNative: cachedChannelName || getChannelNameFallback(), contentTitleEnglish: currentUrl },
-                                             time: fullMins, date: new Date().toISOString(),
-                                             private: false, description: document.title,
-                  });
-                  if (ok) {
-                    toast(`✓ Auto-logged: ${fullMins} min`);
-                    removeFromQueue(currentUrl);
-                  } else {
-                    toast(`⚠ Auto-log failed`);
-                    state.hasTriggered = false;
-                  }
+          if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
+            lastAutoCheckSecs = liveSecs;
+            if (isLikelyJapaneseCached() && !isMusic()) {
+              const threshType  = cfg.thresholdType  ?? 'percent';
+              const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
+              const triggered   = threshType === 'percent'
+              ? (vid.currentTime / vid.duration) * 100 >= threshValue
+              : (liveSecs / 60) >= threshValue;
+              if (triggered) {
+                state.hasTriggered = true;
+                const fullMins = Math.round(vid.duration / 60);
+                const ok = await submitLog({
+                  type: 'anime',
+                  mediaData: { contentId: channelId ?? undefined, contentTitleNative: cachedChannelName || getChannelNameFallback(), contentTitleEnglish: currentUrl },
+                                           time: fullMins, date: new Date().toISOString(),
+                                           private: false, description: document.title,
+                });
+                if (ok) {
+                  toast(`✓ Auto-logged: ${fullMins} min`);
+                  removeFromQueue(currentUrl);
+                } else {
+                  toast(`⚠ Auto-log failed`);
+                  state.hasTriggered = false;
                 }
               }
             }
-          });
+          }
+        });
 
-          vid.addEventListener('ended', async () => {
-            flushPlayClock();
-            if (state.hasTriggered) return;
-            const cfg = cachedConfig;
-            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-            if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
+        vid.addEventListener('ended', async () => {
+          flushPlayClock();
+          if (state.hasTriggered) return;
+          const cfg = cachedConfig;
+          const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+          if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
+            await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+            completedSessionSecs += watchedSecs;
+            watchedSecs = 0;
+            currentSessionId = crypto.randomUUID();
+          }
+        });
+
+        // FIX: 'emptied' fires on quality switches and buffer recovery on YouTube
+        // (same URL, same video element) — was incorrectly resetting watchedSecs to 0.
+        // Now only does a full reset if the page URL actually changed.
+        vid.addEventListener('emptied', async () => {
+          flushPlayClock();
+          const urlNow = cleanUrl(window.location.href);
+          if (urlNow !== currentUrl) {
+            // Genuine navigation — finalize and reset
+            if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
               await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-              completedSessionSecs += watchedSecs;
-              watchedSecs = 0;
-              currentSessionId = crypto.randomUUID();
             }
-          });
-
-          // FIX: 'emptied' fires on quality switches and buffer recovery on YouTube
-          // (same URL, same video element) — was incorrectly resetting watchedSecs to 0.
-          // Now only does a full reset if the page URL actually changed.
-          vid.addEventListener('emptied', async () => {
-            flushPlayClock();
-            const urlNow = cleanUrl(window.location.href);
-            if (urlNow !== currentUrl) {
-              // Genuine navigation — finalize and reset
-              if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
-                await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-              }
-              watchedSecs = 0;
-              lastSyncSecs = 0;
-              lastAutoCheckSecs = 0;
-              state.hasTriggered = false;
-              document.getElementById('nt-status-badge')?.remove();
-            }
-            // Same URL: 'emptied' was a quality switch / buffer reload — keep counters intact
-          });
+            watchedSecs = 0;
+            lastSyncSecs = 0;
+            lastAutoCheckSecs = 0;
+            state.hasTriggered = false;
+            document.getElementById('nt-status-badge')?.remove();
+          }
+          // Same URL: 'emptied' was a quality switch / buffer reload — keep counters intact
+        });
     };
 
     browser.storage.onChanged.addListener((changes, area) => {
