@@ -1,10 +1,16 @@
 export function notify(title: string, message: string) {
-  browser.notifications.create({
-    type: 'basic',
-    iconUrl: '/icon/48.png',
-    title,
-    message,
-  });
+  try {
+    if (typeof browser !== 'undefined' && browser.notifications) {
+      browser.notifications.create({
+        type: 'basic',
+        iconUrl: '/icon/48.png',
+        title,
+        message,
+      });
+    }
+  } catch (e) {
+    console.log("Notification skipped (content script context)");
+  }
 }
 
 export async function submitLog(payload: Record<string, unknown>): Promise<boolean> {

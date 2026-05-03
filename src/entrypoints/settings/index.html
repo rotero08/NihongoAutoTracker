@@ -1,177 +1,247 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>NihongoAutoTracker — Settings</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="./style.css"/>
 </head>
 <body>
-  <div class="shell">
+<div class="shell">
 
-    <nav class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">日</div>
-        <div>
-          <div class="brand-name">NihongoAutoTracker</div>
-          <div class="brand-ver">v1.1.0</div>
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">日</div>
+      <div><div class="brand-name">NihongoAutoTracker</div><div class="brand-ver">v1.1.0</div></div>
+    </div>
+    <div class="nav-group">
+
+      <a class="nav-item active" data-tab="queue">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="10" y2="12"/></svg></span>
+        Queue <span id="nav-badge" class="nav-badge hidden">0</span>
+      </a>
+
+      <a class="nav-item" data-tab="api">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><circle cx="5.5" cy="10.5" r="3"/><path d="M8 8l5-5M13 3h-2M13 3v2"/></svg></span>
+        API Key
+      </a>
+
+      <a class="nav-item" data-tab="video">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><polygon points="4,2 4,14 13,8" stroke="none" fill="currentColor"/></svg></span>
+        Video
+      </a>
+
+      <a class="nav-item" data-tab="overlay">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2.5 2"/></svg></span>
+        Overlay
+      </a>
+
+      <a class="nav-item" data-tab="readers">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><line x1="5" y1="7" x2="11" y2="7"/><line x1="5" y1="10" x2="9" y2="10"/></svg></span>
+        Readers
+      </a>
+
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- Queue -->
+    <section class="tab active" id="tab-queue">
+      <div class="tab-head">
+        <h2>Video Queue</h2>
+        <div class="tab-actions" id="queue-actions" style="display:none">
+          <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
+          <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
+        </div>
+      </div>
+      <p class="hint">Videos tracked from YouTube, Crunchyroll, AnimeKai. Edit title/time then send.</p>
+      <div id="queue-list"></div>
+    </section>
+
+    <!-- API Key -->
+    <section class="tab" id="tab-api">
+      <div class="tab-head"><h2>API Key</h2></div>
+      <p class="hint">Get this from your NihongoTracker account settings page.</p>
+      <div class="field">
+        <label class="label">API Key</label>
+        <div class="row-inline">
+          <input type="password" id="api-key" class="input" placeholder="Paste your key here…" autocomplete="off"/>
+          <button id="toggle-key" class="btn btn-ghost btn-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><ellipse cx="8" cy="8" rx="6" ry="4"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+        <div id="api-status" class="api-status"></div>
+      </div>
+      <button id="save-api-btn" class="btn btn-amber">Save API Key</button>
+    </section>
+
+    <!-- Video -->
+    <section class="tab" id="tab-video">
+      <div class="tab-head"><h2>Video Tracking</h2></div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="auto-send" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Automatically send video based on threshold
+        </label>
+      </div>
+
+      <div id="auto-config">
+        <div class="field">
+          <label class="label">Threshold Type</label>
+          <div class="thresh-row">
+            <label class="thresh-opt"><input type="radio" name="thresh-type" value="percent" checked/> Percentage</label>
+            <label class="thresh-opt"><input type="radio" name="thresh-type" value="time"/> Minutes watched</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Threshold Value <span id="thresh-unit" class="label-val">95%</span></label>
+          <div id="thresh-slider-wrap">
+            <input type="range" id="threshold-pct" class="slider" min="0" max="100" step="1" value="95"/>
+            <div class="slider-ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+          </div>
+          <div id="thresh-minutes-wrap">
+            <div class="thresh-spinner">
+              <input type="number" id="threshold-min" class="input" min="1" value="30" placeholder="30"/>
+              <div class="thresh-spin-btns">
+                <button type="button" class="thresh-spin-up" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg></button>
+                <button type="button" class="thresh-spin-dn" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg></button>
+              </div>
+            </div>
+            <p class="hint" style="margin-top:7px;margin-bottom:0">Send when accumulated watch time reaches this many minutes.</p>
+          </div>
         </div>
       </div>
 
-      <div class="nav-group">
-        <a class="nav-item active" data-tab="queue">
-          <span class="nav-icon">📼</span> Queue
-          <span id="nav-badge" class="nav-badge hidden">0</span>
-        </a>
-        <a class="nav-item" data-tab="api">
-          <span class="nav-icon">🔑</span> API Key
-        </a>
-        <a class="nav-item" data-tab="video">
-          <span class="nav-icon">🎬</span> Video
-        </a>
-        <a class="nav-item" data-tab="overlay">
-          <span class="nav-icon">⏱</span> Overlay
-        </a>
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="hide-buttons" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide Log button on video players
+        </label>
       </div>
-    </nav>
 
-    <main class="main">
+      <div class="field" id="hide-jp-field">
+        <label class="toggle">
+          <input type="checkbox" id="hide-if-not-jp" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide Log button if content is not Japanese
+        </label>
+      </div>
 
-      <!-- ── Queue ────────────────────────────────────────────────── -->
-      <section class="tab active" id="tab-queue">
-        <div class="tab-head">
-          <h2>Video Queue</h2>
-          <div class="tab-actions" id="queue-actions" style="display:none">
-            <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
-            <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
+      <div class="field" id="show-total-field">
+        <label class="toggle">
+          <input type="checkbox" id="show-total-badge" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Show total time (all sessions) in video badge
+        </label>
+      </div>
+
+      <button id="save-video-btn" class="btn btn-amber">Save</button>
+    </section>
+
+    <!-- Overlay -->
+    <section class="tab" id="tab-overlay">
+      <div class="tab-head"><h2>Text Overlay</h2></div>
+      <p class="hint">A small draggable timer shown on Japanese pages while you read.</p>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="track-time" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Include active reading time in context-menu logs
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="label">Default Position</label>
+        <div class="pos-grid">
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-left"/> Top Left</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-right"/> Top Right</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="bottom-left"/> Bottom Left</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="bottom-right"/> Bottom Right</label>
+          <label class="pos-opt pos-wide"><input type="radio" name="overlay-pos" value="hidden"/> Hidden</label>
+        </div>
+      </div>
+
+      <button id="save-overlay-btn" class="btn btn-amber" style="margin-bottom:36px">Save</button>
+
+      <!-- Sites sub-section -->
+      <div class="sub-head">
+        <h3>Sites</h3>
+      </div>
+      <p class="hint" style="margin-top:0">Control where the overlay appears. Click a domain to edit it inline.</p>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="allow-list-only" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Only show overlay on Allow sites (skip auto-detection)
+        </label>
+      </div>
+
+      <!-- Allow -->
+      <div class="sites-group">
+        <div class="sites-toggle-head" data-group="allow">
+          <div class="sites-head-left">
+            <span class="sites-head-label allow">Allow</span>
+            <span class="sites-head-count" id="allow-count">0</span>
+          </div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
+        </div>
+        <div class="sites-body" id="allow-body">
+          <div class="site-list" id="allow-list"></div>
+          <div class="add-site-row">
+            <input type="text" id="allow-input" class="input" placeholder="e.g. example.jp"/>
+            <button id="allow-add" class="btn btn-amber btn-sm">Add</button>
           </div>
         </div>
-        <p class="hint">Videos tracked from YouTube, Crunchyroll, AnimeKai. Edit title/time then send.</p>
-        <div id="queue-list"></div>
-      </section>
+      </div>
 
-      <!-- ── API Key ──────────────────────────────────────────────── -->
-      <section class="tab" id="tab-api">
-        <div class="tab-head"><h2>API Key</h2></div>
-        <p class="hint">Get this from your NihongoTracker account settings page.</p>
-
-        <div class="field">
-          <label class="label">API Key</label>
-          <div class="row-inline">
-            <input type="password" id="api-key" class="input" placeholder="Paste your key here…" autocomplete="off" />
-            <button id="toggle-key" class="btn btn-ghost btn-icon">👁</button>
+      <!-- Skip -->
+      <div class="sites-group">
+        <div class="sites-toggle-head" data-group="skip">
+          <div class="sites-head-left">
+            <span class="sites-head-label skip">Skip</span>
+            <span class="sites-head-count" id="skip-count">0</span>
           </div>
-          <div id="api-status" class="api-status"></div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
         </div>
-
-        <button id="save-api-btn" class="btn btn-amber">Save API Key</button>
-      </section>
-
-      <!-- ── Video ────────────────────────────────────────────────── -->
-      <section class="tab" id="tab-video">
-        <div class="tab-head"><h2>Video Tracking</h2></div>
-
-        <div class="field">
-          <label class="label">Logging Mode</label>
-          <div class="radio-stack">
-
-            <label class="radio-card">
-              <input type="radio" name="log-mode" value="manual" />
-              <div class="radio-dot"></div>
-              <div class="radio-body">
-                <strong>Manual <span class="tip-trigger" data-tip="manual">?</span></strong>
-                <small>Tracks exactly how much of each video you watched. Queues automatically — you decide when to send.</small>
-              </div>
-            </label>
-
-            <label class="radio-card">
-              <input type="radio" name="log-mode" value="auto" />
-              <div class="radio-dot"></div>
-              <div class="radio-body">
-                <strong>Auto <span class="tip-trigger" data-tip="auto">?</span></strong>
-                <small>When your position in the video hits the threshold, the full video duration is sent immediately — no queue.</small>
-              </div>
-            </label>
-
-          </div>
-
-          <!-- Tooltips -->
-          <div id="tip-manual" class="tooltip" style="display:none">
-            <strong>Manual mode</strong><br>
-            The timer in the player counts real watch-time (skips excluded). When a video ends — or you click the Log button — the watched minutes enter the queue. Nothing is sent until you click Send here or in the popup.
-          </div>
-          <div id="tip-auto" class="tooltip" style="display:none">
-            <strong>Auto mode</strong><br>
-            When your playback position passes the threshold (e.g. 95%), the extension immediately logs the video's <em>full</em> duration to NihongoTracker — no review step. Works only on videos detected as Japanese.
+        <div class="sites-body" id="skip-body">
+          <div class="site-list" id="skip-list"></div>
+          <div class="add-site-row">
+            <input type="text" id="skip-input" class="input" placeholder="e.g. example.com"/>
+            <button id="skip-add" class="btn btn-amber btn-sm">Add</button>
           </div>
         </div>
+      </div>
 
-        <div class="field" id="threshold-field">
-          <label class="label">
-            Auto-Send Threshold
-            <span id="threshold-val" class="label-val">95%</span>
-          </label>
-          <input type="range" id="threshold" class="slider" min="90" max="100" step="1" value="95" />
-          <div class="slider-ticks"><span>90%</span><span>95%</span><span>100%</span></div>
+    </section>
+
+    <!-- Readers -->
+    <section class="tab" id="tab-readers">
+      <div class="tab-head"><h2>Readers</h2></div>
+      <p class="hint">Configure tracking behaviour for supported reading applications.</p>
+
+      <div class="reader-card">
+        <div class="reader-card-left">
+          <span class="reader-card-name">TTU Reader</span>
+          <span class="reader-card-url">reader.ttsu.app</span>
         </div>
+        <label class="toggle">
+          <input type="checkbox" id="ttu-enabled" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
 
-        <div class="field">
-          <label class="toggle">
-            <input type="checkbox" id="hide-buttons" class="toggle-chk" />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            Hide Log button on video players
-          </label>
-        </div>
+    </section>
 
-        <button id="save-video-btn" class="btn btn-amber">Save</button>
-      </section>
+  </main>
+</div>
 
-      <!-- ── Overlay ──────────────────────────────────────────────── -->
-      <section class="tab" id="tab-overlay">
-        <div class="tab-head"><h2>Text Overlay</h2></div>
-        <p class="hint">
-          A small draggable timer shown on Japanese-language pages while you read.
-          Reported with your text logs (context menu). Drag it anywhere — position resets on page reload.
-        </p>
-
-        <div class="field">
-          <label class="toggle">
-            <input type="checkbox" id="track-time" class="toggle-chk" />
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            Include active reading time in context-menu logs
-          </label>
-        </div>
-
-        <div class="field">
-          <label class="label">Default Position</label>
-          <div class="pos-grid">
-            <label class="pos-opt" data-pos="top-left">
-              <input type="radio" name="overlay-pos" value="top-left" /> Top Left
-            </label>
-            <label class="pos-opt" data-pos="top-right">
-              <input type="radio" name="overlay-pos" value="top-right" /> Top Right
-            </label>
-            <label class="pos-opt" data-pos="bottom-left">
-              <input type="radio" name="overlay-pos" value="bottom-left" /> Bottom Left
-            </label>
-            <label class="pos-opt" data-pos="bottom-right">
-              <input type="radio" name="overlay-pos" value="bottom-right" /> Bottom Right
-            </label>
-            <label class="pos-opt pos-wide" data-pos="hidden">
-              <input type="radio" name="overlay-pos" value="hidden" /> Hidden
-            </label>
-          </div>
-        </div>
-
-        <button id="save-overlay-btn" class="btn btn-amber">Save</button>
-      </section>
-
-    </main>
-  </div>
-
-  <!-- status toast -->
-  <div id="status" class="status-toast hidden"></div>
-
-  <script type="module" src="./main.ts"></script>
+<div id="status" class="status-toast hidden"></div>
+<script type="module" src="./main.ts"></script>
 </body>
 </html>

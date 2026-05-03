@@ -6,21 +6,24 @@ export type LogMode = 'auto' | 'manual';
 export interface TrackerConfig {
   apiKey: string;
   logMode: LogMode;
-  threshold: number;        // 90–100 %
+  threshold: number;
   trackTime: boolean;
   hideButtons: boolean;
   overlayPosition: OverlayPosition;
+  showTotalInBadge: boolean; // Added[cite: 3]
 }
 
 export interface QueuedVideoLog {
-  id: string;               // crypto.randomUUID()
+  id: string;
   contentTitleNative: string;
   contentTitleEnglish: string;
-  time: number;             // minutes
-  date: string;             // ISO
+  time: number;
+  date: string;
   private: boolean;
   tags: string[];
   description: string;
+  channelId?: string; // Added[cite: 3]
+  sessions?: { id: string; secs: number; date: string }[]; // Added[cite: 3]
 }
 
 export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
@@ -31,6 +34,7 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     trackTime: true,
     hideButtons: false,
     overlayPosition: 'top-right',
+    showTotalInBadge: true,
   },
 });
 

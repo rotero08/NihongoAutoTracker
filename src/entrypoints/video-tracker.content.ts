@@ -3,46 +3,9 @@ import { configStorage, videoQueueStorage } from '@/utils/storage';
 import { submitLog } from '@/utils/api';
 import '@/assets/player.css';
 
-// ── Site / content type detection ────────────────────────────────────────────
-
-const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/;
-
-function isMusic(): boolean {
-  const host = window.location.hostname;
-  if (host === 'music.youtube.com') return true;
-
-  if (host.includes('youtube.com')) {
-    // 1. Highly reliable check for standard YouTube music category
-    const genreMeta = document.querySelector('meta[itemprop="genre"]');
-    if (genreMeta && genreMeta.getAttribute('content') === 'Music') return true;
-
-    // 2. Check for music metadata renderer (Official music videos)
-    if (document.querySelector('ytd-music-watch-metadata-renderer')) return true;
-
-    // 3. Fallback: Check chips
-    const chips = document.querySelectorAll<HTMLElement>('yt-chip-cloud-chip-renderer');
-    for (const c of chips) {
-      if (c.textContent?.trim().toLowerCase() === 'music') return true;
-    }
-  }
-  return false;
-}
-
-function isLikelyJapanese(): boolean {
-  const host = window.location.hostname;
-  if (host.includes('animekai')) return true;
-  if (host.includes('crunchyroll')) return true;
-  if (host.includes('youtube')) {
-    if (JP_RE.test(document.title)) return true;
-    if (document.documentElement.lang.startsWith('ja')) return true;
-    const t = document.querySelector<HTMLElement>('#title h1 yt-formatted-string, h1.ytd-video-primary-info-renderer yt-formatted-string');
-    if (t && JP_RE.test(t.textContent ?? '')) return true;
-  }
-  return false;
-}
+const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
 function fmtSecs(s: number): string {
   s = Math.floor(s);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -58,134 +21,235 @@ function toast(msg: string) {
   setTimeout(() => el.remove(), 3500);
 }
 
-// Strip timestamps and playlist params to uniquely identify a video
-function getBaseUrl(url: string): string {
+function cleanUrl(url: string): string {
   try {
     const u = new URL(url);
-    if (u.hostname.includes('youtube.com')) {
+    if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
       const v = u.searchParams.get('v');
-      if (v) return u.origin + u.pathname + '?v=' + v;
+      if (v) return `https://www.youtube.com/watch?v=${v}`;
     }
     return u.origin + u.pathname;
-  } catch {
-    return url.split('&t=')[0].split('?t=')[0];
-  }
+  } catch { return url; }
 }
 
-async function syncWithQueue(secs: number, title: string, url: string) {
+function isMusic(): boolean {
+  const host = window.location.hostname;
+  if (host === 'music.youtube.com') return true;
+  if (host.includes('youtube.com')) {
+    const g = document.querySelector('meta[itemprop="genre"]');
+    if (g?.getAttribute('content') === 'Music') return true;
+    if (document.querySelector('ytd-music-watch-metadata-renderer')) return true;
+  }
+  return false;
+}
+
+// ── Robust JP detection ───────────────────────────────────────────────────────
+function isLikelyJapanese(): boolean {
+  const host = window.location.hostname;
+  if (host.includes('animekai') || host.includes('crunchyroll')) return true;
+
+  if (host.includes('youtube.com')) {
+    const pr = (window as any).ytInitialPlayerResponse;
+    if (pr?.videoDetails?.languageCode === 'ja') return true;
+
+    if (pr) {
+      const tracks: any[] = pr.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+      if (tracks.some(t => t.vssId === 'a.ja' || (t.languageCode === 'ja' && t.vssId?.startsWith('a.')))) return true;
+    }
+
+    const descEl = document.querySelector<HTMLElement>(
+      '#description-inline-expander yt-attributed-string, ytd-expandable-video-description-body-renderer'
+    );
+    if (descEl) {
+      const sample = descEl.innerText?.slice(0, 2000) ?? '';
+      if ((sample.match(JP_RE) ?? []).length >= 15) return true;
+    }
+
+    for (const s of document.querySelectorAll('script:not([src])')) {
+      if (/"languageCode"\s*:\s*"ja"/.test(s.textContent ?? '')) return true;
+    }
+
+    return false;
+  }
+  return false;
+}
+
+// ── Channel ID & Name ─────────────────────────────────────────────────────────
+function getYouTubeChannelId(): string | null {
+  for (const s of document.querySelectorAll('script:not([src])')) {
+    const m = s.textContent?.match(/"channelId"\s*:\s*"(UC[a-zA-Z0-9_-]{22})"/);
+    if (m) return m[1];
+  }
+  const link = document.querySelector<HTMLLinkElement>('link[itemprop="url"][href*="/channel/"]');
+  if (link) { const m = link.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/); if (m) return m[1]; }
+  const a = document.querySelector<HTMLAnchorElement>('ytd-channel-name a[href*="/channel/"]');
+  if (a) { const m = a.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/); if (m) return m[1]; }
+  return null;
+}
+
+function getChannelNameFallback(): string {
+  const a = document.querySelector<HTMLElement>('ytd-channel-name yt-formatted-string, ytd-channel-name a');
+  if (a && a.innerText) return a.innerText.trim();
+  const meta = document.querySelector('meta[itemprop="name"]');
+  if (meta && meta.getAttribute('content')) return meta.getAttribute('content')!;
+  return document.title.split(' - ')[0] || 'Unknown';
+}
+
+// ── Queue helpers ─────────────────────────────────────────────────────────────
+async function upsertQueueLive(secs: number, videoTitle: string, channelName: string, url: string, channelId: string | null, sessionId: string) {
   if (secs < 60) return;
-
-  const minutes = Math.max(1, Math.round(secs / 60));
+  const clean = cleanUrl(url);
   const queue = await videoQueueStorage.getValue();
-  const baseMatch = getBaseUrl(url);
+  const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
 
-  const existingIndex = queue.findIndex((q) => getBaseUrl(q.contentTitleEnglish) === baseMatch);
+  if (idx !== -1) {
+    const item = queue[idx] as any;
+    item.sessions = item.sessions || [];
 
-  if (existingIndex !== -1) {
-    queue[existingIndex].time = minutes;
-    (queue[existingIndex] as any)._secs = secs;
+    const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
+    if (sIdx >= 0) {
+      item.sessions[sIdx].secs = secs;
+      item.sessions[sIdx].date = new Date().toISOString();
+    } else {
+      item.sessions.push({ id: sessionId, secs, date: new Date().toISOString() });
+    }
+
+    const completedSecs = item.sessions.reduce((a: number, s: any) => a + s.secs, 0);
+    item.time = Math.max(1, Math.round(completedSecs / 60));
+    item.description = videoTitle;
+    item.contentTitleNative = channelName;
+    if (channelId && !item.channelId) item.channelId = channelId;
+    delete item._currentSecs;
   } else {
     queue.push({
       id: crypto.randomUUID(),
-               contentTitleNative: title,
-               contentTitleEnglish: url,
-               time: minutes, date: new Date().toISOString(),
-               private: false, tags:[], description: '',
-                 _secs: secs
+               contentTitleNative: channelName,
+               contentTitleEnglish: clean,
+               time: Math.max(1, Math.round(secs / 60)),
+               date: new Date().toISOString(),
+               private: false, tags: [],
+                 description: videoTitle,
+                 sessions: [{ id: sessionId, secs, date: new Date().toISOString() }],
+               channelId,
     } as any);
   }
-
-  // Force WXT reactivity by passing a new array reference
   await videoQueueStorage.setValue([...queue]);
+  try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length }); } catch {}
+}
 
-  // Try/catch prevents the script from crashing if the popup is closed
-  try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length }); } catch (e) {}
+async function finalizeSession(secs: number, url: string, sessionId: string) {
+  if (secs < 60) return;
+  const clean = cleanUrl(url);
+  const queue = await videoQueueStorage.getValue();
+  const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
+  if (idx === -1) return;
+
+  const item = queue[idx] as any;
+  item.sessions = item.sessions || [];
+
+  const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
+  if (sIdx >= 0) {
+    item.sessions[sIdx].secs = secs;
+  } else {
+    item.sessions.push({ id: sessionId, secs, date: new Date().toISOString() });
+  }
+
+  item.time = Math.max(1, Math.round(item.sessions.reduce((a: number, s: any) => a + s.secs, 0) / 60));
+  delete item._currentSecs;
+
+  await videoQueueStorage.setValue([...queue]);
+  try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length }); } catch {}
 }
 
 async function removeFromQueue(url: string) {
+  const clean = cleanUrl(url);
   const queue = await videoQueueStorage.getValue();
-  const baseMatch = getBaseUrl(url);
-  const newQueue = queue.filter((q) => getBaseUrl(q.contentTitleEnglish) !== baseMatch);
-
-  if (newQueue.length !== queue.length) {
-    await videoQueueStorage.setValue(newQueue);
-    try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: newQueue.length }); } catch (e) {}
+  const next = queue.filter(q => q.contentTitleEnglish !== clean);
+  if (next.length !== queue.length) {
+    await videoQueueStorage.setValue(next);
+    try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: next.length }); } catch {}
   }
 }
 
-// ── Modals & Styling ──────────────────────────────────────────────────────────
-
+// ── Modal ─────────────────────────────────────────────────────────────────────
 function injectModalStyles() {
   if (document.getElementById('nt-modal-styles')) return;
   const style = document.createElement('style');
   style.id = 'nt-modal-styles';
   style.textContent = `
   #nt-modal-overlay {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); z-index: 2147483647;
-  display: flex; align-items: center; justify-content: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:2147483647;
+  display:flex; align-items:center; justify-content:center;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
   }
   .nt-modal {
-    background: #0b0c0f; border: 1px solid #1e1e24; border-radius: 6px;
-    width: 380px; max-width: 90vw; padding: 24px; color: #fff;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.9); box-sizing: border-box;
-    color-scheme: dark;
+    background:#0d0d12; border:1px solid #222d42; border-radius:8px;
+    width:320px; max-width:90vw; padding:20px; color:#dde4f0;
+    box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark;
   }
   .nt-modal-header {
-    display: flex; align-items: center; gap: 14px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #1e1e24;
+    display:flex; align-items:center; gap:12px;
   }
   .nt-logo-sq {
-    width: 34px; height: 34px; border: 1px solid #F5B831; color: #F5B831;
-    display: flex; align-items: center; justify-content: center; border-radius: 4px; font-weight: bold; font-size: 16px;
-    box-sizing: border-box;
+    width:30px; height:30px; border:1px solid #F5B831; color:#F5B831;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:4px; font-weight:bold; font-size:15px; box-sizing:border-box; flex-shrink:0;
   }
-  .nt-title-area { display: flex; flex-direction: column; gap: 5px; }
-  .nt-brand-name { font-weight: bold; font-size: 14px; letter-spacing: 0.5px; }
+  .nt-title-area { display:flex; flex-direction:column; gap:4px; }
+  .nt-brand-name { font-weight:bold; font-size:13px; letter-spacing:.5px; }
   .nt-badge {
-    background: #3E1C1F; color: #E57373; border: 1px solid #5A2A2E;
-    font-size: 10px; padding: 2px 8px; border-radius: 12px; font-weight: bold; width: max-content;
+    background:#3E1C1F; color:#E57373; border:1px solid #5A2A2E;
+    font-size:9px; padding:2px 6px; border-radius:12px; font-weight:bold; width:max-content;
   }
-  .nt-form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; width: 100%; box-sizing: border-box; }
-  .nt-form-group label { color: #8A8A9A; font-size: 11px; font-weight: bold; letter-spacing: 0.5px; }
-  .nt-form-group input {
-    background: #111115; border: 1px solid #2A2A35; color: #fff; padding: 10px 12px;
-    border-radius: 4px; font-family: inherit; font-size: 13px; outline: none; transition: border 0.2s;
-    box-sizing: border-box; width: 100%; min-width: 0;
+
+  .nt-link-btn {
+    background:none; border:none; color:#5a6a85; cursor:pointer;
+    font-family:inherit; font-size:10px; font-weight:bold; padding:0; transition:color .2s;
   }
-  .nt-form-group input:focus { border-color: #F5B831; }
+  .nt-link-btn:hover { color:#dde4f0; }
+  .nt-link-btn.active { color:#F5B831; pointer-events:none; }
 
-  .nt-form-row { display: flex; gap: 12px; width: 100%; }
-  .nt-form-row .nt-form-group { margin-bottom: 0; }
-  .nt-form-row .nt-form-group:first-child { flex: 0 0 100px; }
-  .nt-form-row .nt-form-group:last-child { flex: 1; min-width: 0; }
+  .nt-form-group { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; width:100%; box-sizing:border-box; }
+  .nt-form-group label { color:#8A8A9A; font-size:11px; font-weight:bold; letter-spacing:.5px; }
+  .nt-form-group input, .nt-form-group select {
+    background:#14141e; border:1px solid #222d42; color:#fff; padding:8px 12px;
+    border-radius:6px; font-family:inherit; font-size:12px; outline:none;
+    transition:border .2s, background .2s; box-sizing:border-box; width:100%; min-width:0;
+  }
+  .nt-form-group input:focus, .nt-form-group select:focus { border-color:#F5B831; background:#1a1a24; }
+  .nt-form-row { display:flex; gap:12px; width:100%; }
+  .nt-form-row .nt-form-group { margin-bottom:0; }
+  .nt-form-row .nt-form-group:first-child { flex:0 0 90px; }
+  .nt-form-row .nt-form-group:last-child  { flex:1; min-width:0; }
 
-  .nt-note { color: #6A6A7A; font-size: 11px; margin-top: 16px; margin-bottom: 24px; text-align: center; }
-  .nt-modal-footer { display: flex; gap: 12px; }
+  .nt-modal-footer { display:flex; gap:12px; margin-top:20px; }
   .nt-modal-footer button {
-    flex: 1; padding: 12px; border: none; border-radius: 4px; font-family: inherit;
-    font-weight: bold; cursor: pointer; font-size: 13px; transition: opacity 0.2s;
-    box-sizing: border-box;
+    flex:1; padding:10px; border:none; border-radius:4px; font-family:inherit;
+    font-weight:bold; cursor:pointer; font-size:12px; transition:opacity .2s; box-sizing:border-box;
   }
-  .nt-modal-footer button:hover { opacity: 0.8; }
-  #nt-modal-cancel { background: #1E1E28; color: #A0A0B0; }
-  #nt-modal-submit { background: #F5B831; color: #111; }
-
-  .nt-absolute-pill { position: absolute; bottom: 60px; left: 20px; z-index: 9999; }
+  .nt-modal-footer button:hover { opacity:.8; }
+  #nt-modal-cancel { background:#1E1E28; color:#A0A0B0; }
+  #nt-modal-submit { background:#F5B831; color:#111; }
+  .nt-absolute-pill { position:absolute; bottom:60px; left:20px; z-index:9999; }
   `;
   document.head.appendChild(style);
 }
 
-function showNTEditModal(data: { title: string, url: string, secs: number }, onConfirm: (finalData: any) => void) {
+function showNTEditModal(data: {
+  channelName: string; videoTitle: string; url: string;
+  totalSecs: number; showTotal: boolean; channelId: string | null;
+  onToggleShowTotal: (v: boolean) => void;
+}, onConfirm: (d: any) => void) {
   injectModalStyles();
-
   const overlay = document.createElement('div');
   overlay.id = 'nt-modal-overlay';
 
-  const defaultMins = Math.max(1, Math.round(data.secs / 60));
   const today = new Date().toISOString().split('T')[0];
+  const totalMins = Math.max(1, Math.round(data.totalSecs / 60));
 
   overlay.innerHTML = `
   <div class="nt-modal">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
   <div class="nt-modal-header">
   <div class="nt-logo-sq">日</div>
   <div class="nt-title-area">
@@ -193,48 +257,74 @@ function showNTEditModal(data: { title: string, url: string, secs: number }, onC
   <span class="nt-badge">MANUAL LOG</span>
   </div>
   </div>
-
-  <div class="nt-modal-body">
-  <div class="nt-form-group">
-  <label>CONTENT TITLE</label>
-  <input type="text" id="nt-edit-title" value="${data.title.replace(/"/g, '&quot;')}">
   </div>
+
+  <!-- Integrated Badge Toggle -->
+  <div style="display:flex; justify-content:flex-start; gap:10px; font-size:10px; font-weight:bold; margin-bottom:16px;">
+  <span style="color:#5a6a85;">DISPLAY:</span>
+  <button id="nt-badge-session" class="nt-link-btn ${!data.showTotal ? 'active' : ''}">Session Only</button>
+  <span style="color:#222d42;">/</span>
+  <button id="nt-badge-total" class="nt-link-btn ${data.showTotal ? 'active' : ''}">Session / Total</button>
+  </div>
+
+  <div class="nt-form-group">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+  <label>VIDEO TITLE</label>
+  <span style="font-size:9px; color:#8A8A9A; max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${data.channelName.replace(/"/g, '&quot;')}">${data.channelName.replace(/</g, '&lt;')}</span>
+  </div>
+  <input type="text" id="nt-edit-desc" value="${data.videoTitle.replace(/"/g, '&quot;')}"/>
+  </div>
+
   <div class="nt-form-row">
   <div class="nt-form-group">
-  <label>TIME (MIN)</label>
-  <input type="number" id="nt-edit-time" value="${defaultMins}">
+  <label>MINUTES</label>
+  <input type="number" id="nt-edit-time" value="${totalMins}" min="1"/>
   </div>
   <div class="nt-form-group">
   <label>DATE</label>
-  <input type="date" id="nt-edit-date" value="${today}">
+  <input type="date" id="nt-edit-date" value="${today}"/>
   </div>
-  </div>
-  <p class="nt-note">Queue logic will be bypassed for this video.</p>
   </div>
 
   <div class="nt-modal-footer">
-  <button id="nt-modal-cancel">CANCEL</button>
-  <button id="nt-modal-submit">LOG IMMERSION</button>
+  <button id="nt-modal-cancel">Cancel</button>
+  <button id="nt-modal-submit">Log Video</button>
   </div>
-  </div>
-  `;
+  </div>`;
+
   document.body.appendChild(overlay);
 
-  document.getElementById('nt-modal-cancel')?.addEventListener('click', () => overlay.remove());
-  document.getElementById('nt-modal-submit')?.addEventListener('click', () => {
-    const finalData = {
-      title: (document.getElementById('nt-edit-title') as HTMLInputElement).value,
-                                                               time: parseInt((document.getElementById('nt-edit-time') as HTMLInputElement).value),
-                                                               date: new Date((document.getElementById('nt-edit-date') as HTMLInputElement).value).toISOString(),
-    };
-    onConfirm(finalData);
+  const btnSession = overlay.querySelector('#nt-badge-session')!;
+  const btnTotal = overlay.querySelector('#nt-badge-total')!;
+
+  btnSession.addEventListener('click', () => {
+    btnSession.classList.add('active'); btnTotal.classList.remove('active');
+    data.onToggleShowTotal(false);
+  });
+  btnTotal.addEventListener('click', () => {
+    btnTotal.classList.add('active'); btnSession.classList.remove('active');
+    data.onToggleShowTotal(true);
+  });
+
+  overlay.querySelector('#nt-modal-cancel')!.addEventListener('click', () => overlay.remove());
+  overlay.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
+    onConfirm({
+      title: data.channelName,
+      desc:  (overlay.querySelector('#nt-edit-desc') as HTMLInputElement).value,
+              time:  parseInt((overlay.querySelector('#nt-edit-time')  as HTMLInputElement).value),
+              date:  new Date((overlay.querySelector('#nt-edit-date')  as HTMLInputElement).value).toISOString(),
+    });
     overlay.remove();
   });
 }
 
-// ── Player counter injection ──────────────────────────────────────────────────
+// ── Counter ───────────────────────────────────────────────────────────────────
+let watchedSecs = 0; // Exposing these to ensureCounter
+let completedSessionSecs = 0;
+let lastSyncSecs = 0;
+let lastAutoCheckSecs = 0;
 
-function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement, isFallback: boolean } | null {
+function getTimestampContainer(vid: HTMLVideoElement): {el: HTMLElement; isFallback: boolean} | null {
   const host = window.location.hostname;
   if (host.includes('youtube.com')) {
     const el = document.querySelector('.ytp-left-controls') as HTMLElement;
@@ -249,15 +339,29 @@ function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement, isFall
     document.querySelector('.jw-controlbar-left-group');
     if (el) return { el: el as HTMLElement, isFallback: false };
   }
-
   const fallback = document.querySelector('.video-player-container') || document.querySelector('#movie_player') ||
   document.querySelector('.plyr__video-wrapper') || document.querySelector('.jw-media') || vid.parentElement;
   if (fallback) return { el: fallback as HTMLElement, isFallback: true };
   return null;
 }
 
-function ensureCounter(getWatchedSecs: () => number, title: string, url: string, state: { hasTriggered: boolean }, vid: HTMLVideoElement) {
+function ensureCounter(
+  currentSecs: number,
+  totalSecs: number,
+  title: string,
+  url: string,
+  channelId: string | null,
+  state: {hasTriggered: boolean},
+  vid: HTMLVideoElement,
+  cfg: any,
+) {
+  const shouldHide = cfg.hideButtons || (cfg.hideIfNotJapanese && !isLikelyJapanese());
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
+  if (shouldHide) { el?.remove(); return; }
+
+  const multiSession = totalSecs > currentSecs + 2;
+  const showTotal: boolean = cfg.showTotalInBadge ?? true;
+  const channelName = getChannelNameFallback();
 
   if (!el) {
     const containerData = getTimestampContainer(vid);
@@ -265,76 +369,137 @@ function ensureCounter(getWatchedSecs: () => number, title: string, url: string,
 
     el = document.createElement('div');
     el.id = 'nt-status-badge';
-    el.title = "Log this video";
     if (containerData.isFallback) el.classList.add('nt-absolute-pill');
 
     el.innerHTML = `
     <div class="nt-pill-visual-wrapper">
     <span class="nt-brand-label">NT</span>
     <span class="nt-time-label">0:00</span>
-    </div>
-    `;
+    </div>`;
 
-    el.onclick = () => {
-      showNTEditModal({ title, url, secs: getWatchedSecs() }, async (final) => {
-        state.hasTriggered = true;
-        const ok = await submitLog({
-          type: 'watching',
-          mediaData: { contentTitleNative: final.title, contentTitleEnglish: url },
-          time: final.time, date: final.date,
-          episodes: 0, pages: 0, chars: 0, private: false, tags:[],
-          description: 'Pill Override',
-        });
-        if (ok) {
-          toast(`✓ Logged: ${final.time} min`);
-          removeFromQueue(window.location.href); // Clear from queue upon success
-        } else {
-          state.hasTriggered = false; // Allow retry if failed
+    el.onclick = async () => {
+      // Pull live configuration to ensure state persists after cancel
+      const liveCfg = await configStorage.getValue() as any;
+      const liveShowTotal = liveCfg.showTotalInBadge ?? true;
+
+      showNTEditModal(
+        {
+          channelName, videoTitle: title, url, totalSecs, showTotal: liveShowTotal, channelId,
+          onToggleShowTotal: async (v) => {
+            const c = await configStorage.getValue() as any;
+            await configStorage.setValue({ ...c, showTotalInBadge: v });
+          },
+        },
+        async final => {
+          try {
+            const ok = await submitLog({
+              type: "video",
+              mediaId: channelId || "web-video", // Top level mediaId (Channel ID)
+            description: final.desc,           // Video Title
+            mediaData: {
+              channelId: channelId || "web-video",
+              channelTitle: final.title,       // Channel Name
+            },
+            episodes: 0,
+            time: Math.floor(final.time),
+                                       pages: 0,
+                                       date: new Date().toISOString(),
+                                       unknownDate: false
+            });
+
+            if (ok) {
+              toast(`✓ Logged: ${final.time} min`);
+              await removeFromQueue(url);
+
+              // --- RESET COUNTERS ---
+              watchedSecs = 0;
+              completedSessionSecs = 0;
+              lastSyncSecs = 0;
+              lastAutoCheckSecs = 0;
+              state.hasTriggered = false;
+
+              // Force UI Badge to 0:00
+              const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+              if (badgeLabel) badgeLabel.textContent = "0:00";
+            } else {
+              toast(`⚠ API Validation Error`);
+              state.hasTriggered = false;
+            }
+          } catch (err) {
+            toast(`⚠ Send failed`);
+            state.hasTriggered = false;
+          }
         }
-      });
+      );
     };
 
     containerData.el.appendChild(el);
-  } else {
-    const timeLabel = el.querySelector('.nt-time-label');
-    if (timeLabel) timeLabel.textContent = fmtSecs(getWatchedSecs());
   }
+
+  const timeLabel = el.querySelector<HTMLElement>('.nt-time-label')!;
+  const currentStr = fmtSecs(currentSecs);
+
+  if (multiSession && showTotal) {
+    const totalStr = fmtSecs(totalSecs);
+    timeLabel.textContent = `${currentStr} / ${totalStr}`;
+  } else {
+    timeLabel.textContent = currentStr;
+  }
+
+  el.title = '(manually log this video)';
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-
 export default defineContentScript({
-  matches:['*://*.youtube.com/*', '*://music.youtube.com/*', '*://*.crunchyroll.com/*', '*://*.animekai.to/*'],
+  matches:['*://*.youtube.com/*','*://music.youtube.com/*','*://*.crunchyroll.com/*','*://*.animekai.to/*'],
   cssInjectionMode: 'manifest',
 
   async main() {
-    let watchedSecs = 0, prevTime = -1;
-    let lastSyncSecs = 0, lastAutoCheckSecs = 0;
+    let cachedConfig: any = {};
+    configStorage.getValue().then(c => cachedConfig = c || {});
+
+    watchedSecs = 0;
+    let prevTime = -1;
+    lastSyncSecs = 0;
+    lastAutoCheckSecs = 0;
+    completedSessionSecs = 0;
+    let currentSessionId = crypto.randomUUID();
     const state = { hasTriggered: false };
     let trackedVideo: HTMLVideoElement | null = null;
-    let currentUrl = ''; // <-- ADD THIS
+    let currentUrl = '';
+    let channelId: string | null = null;
 
-  const attach = (vid: HTMLVideoElement) => {
-    if (trackedVideo === vid && currentUrl === window.location.href) return;
+    const getTotal = () => completedSessionSecs + watchedSecs;
 
-    trackedVideo = vid;
-    currentUrl = window.location.href; // <-- ADD THIS
+    const attach = (vid: HTMLVideoElement) => {
+      if (trackedVideo === vid && currentUrl === window.location.href) return;
 
-    watchedSecs = 0; prevTime = -1;
-    lastSyncSecs = 0; lastAutoCheckSecs = 0;
-    state.hasTriggered = false;
+      if (trackedVideo && watchedSecs >= 60 && currentUrl && !state.hasTriggered) {
+        finalizeSession(watchedSecs, currentUrl, currentSessionId);
+      }
 
-    document.getElementById('nt-status-badge')?.remove();
+      trackedVideo  = vid;
+      currentUrl    = window.location.href;
+      watchedSecs   = 0;
+      prevTime      = -1;
+      lastSyncSecs  = 0;
+      lastAutoCheckSecs = 0;
+      state.hasTriggered = false;
+      channelId = null;
+      completedSessionSecs = 0;
+      currentSessionId = crypto.randomUUID();
+      document.getElementById('nt-status-badge')?.remove();
 
-      // 1. Initial Load: Check if we are resuming a queued video
+      const tryChannel = () => { const id = getYouTubeChannelId(); if (id) channelId = id; };
+      tryChannel(); setTimeout(tryChannel, 2000); setTimeout(tryChannel, 5000);
+
       (async () => {
         const queue = await videoQueueStorage.getValue();
-        const baseMatch = getBaseUrl(window.location.href);
-        const existing = queue.find((q: any) => getBaseUrl(q.contentTitleEnglish) === baseMatch);
+        const clean = cleanUrl(currentUrl);
+        const existing = queue.find(q => q.contentTitleEnglish === clean) as any;
         if (existing) {
-          watchedSecs = (existing as any)._secs || (existing.time * 60);
-          lastSyncSecs = watchedSecs;
-          ensureCounter(() => watchedSecs, document.title, window.location.href, state, vid);
+          const sessions: any[] = existing.sessions ?? [];
+          completedSessionSecs = sessions.reduce((a: number, s: any) => a + s.secs, 0);
         }
       })();
 
@@ -345,75 +510,108 @@ export default defineContentScript({
         }
         prevTime = vid.currentTime;
 
-        ensureCounter(() => watchedSecs, document.title, window.location.href, state, vid);
+        const cfg = cachedConfig;
+
+        if (!state.hasTriggered) {
+          ensureCounter(watchedSecs, getTotal(), document.title, currentUrl, channelId, state, vid, cfg);
+        }
 
         if (state.hasTriggered || vid.duration <= 0) return;
 
-        // 2. MANUAL Mode Logic: Silently sync with queue every 10 seconds of watch time
-        if (watchedSecs >= 60 && (watchedSecs - lastSyncSecs) >= 10) {
+        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+
+        if (!autoOn && watchedSecs >= 60 && (watchedSecs - lastSyncSecs) >= 10) {
           lastSyncSecs = watchedSecs;
-          const cfg = await configStorage.getValue();
-          if (cfg.logMode === 'manual' && isLikelyJapanese() && !isMusic()) {
-            syncWithQueue(watchedSecs, document.title, window.location.href);
+          if (isLikelyJapanese() && !isMusic()) {
+            await upsertQueueLive(watchedSecs, document.title, getChannelNameFallback(), currentUrl, channelId, currentSessionId);
           }
         }
 
-        // 3. AUTO Mode Logic: Check thresholds every 5 seconds
-        if ((watchedSecs - lastAutoCheckSecs) >= 5) {
+        if (autoOn && (watchedSecs - lastAutoCheckSecs) >= 5) {
           lastAutoCheckSecs = watchedSecs;
-          const cfg = await configStorage.getValue();
-
-          if (cfg.logMode === 'auto' && isLikelyJapanese() && !isMusic()) {
-            const pct = (vid.currentTime / vid.duration) * 100;
-            if (pct >= cfg.threshold) {
+          if (isLikelyJapanese() && !isMusic()) {
+            const threshType  = cfg.thresholdType  ?? 'percent';
+            const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
+            const triggered   = threshType === 'percent'
+            ? (vid.currentTime / vid.duration) * 100 >= threshValue
+            : (watchedSecs / 60) >= threshValue;
+            if (triggered) {
               state.hasTriggered = true;
               const fullMins = Math.round(vid.duration / 60);
               const ok = await submitLog({
-                type: 'watching',
-                mediaData: { contentTitleNative: document.title, contentTitleEnglish: window.location.href },
-                time: fullMins, date: new Date().toISOString(),
-                                         episodes: 0, pages: 0, chars: 0, private: false, tags: [],
-                                         description: '',
+                type: 'anime',
+                mediaData: { contentId: channelId ?? undefined, contentTitleNative: getChannelNameFallback(), contentTitleEnglish: cleanUrl(currentUrl) },
+                                         time: fullMins, date: new Date().toISOString(),
+                                         private: false, description: document.title,
               });
-
               if (ok) {
                 toast(`✓ Auto-logged: ${fullMins} min`);
-                // Once logged, we clear it from the manual queue
-                removeFromQueue(window.location.href);
+                removeFromQueue(currentUrl);
               } else {
-                state.hasTriggered = false; // Allow retry if API failed
+                toast(`⚠ Auto-log failed`);
+                state.hasTriggered = false;
               }
             }
           }
         }
       });
 
-      // ── Final Sync on Video End ──
       vid.addEventListener('ended', async () => {
         if (state.hasTriggered) return;
-        const cfg = await configStorage.getValue();
-
-        // Final manual sync to ensure the last few seconds are caught
-        if (cfg.logMode === 'manual' && isLikelyJapanese() && !isMusic() && watchedSecs >= 60) {
-          syncWithQueue(watchedSecs, document.title, window.location.href);
+        const cfg = cachedConfig;
+        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+        // Only finalize to queue if not music and it's a valid Japanese video
+        if (!autoOn && isLikelyJapanese() && !isMusic() && watchedSecs >= 60) {
+          await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+          completedSessionSecs += watchedSecs;
+          watchedSecs = 0;
+          currentSessionId = crypto.randomUUID(); // Cycle ID for replay
         }
       });
 
-      vid.addEventListener('emptied', () => {
-        watchedSecs = 0; prevTime = -1;
-        lastSyncSecs = 0; lastAutoCheckSecs = 0;
+      vid.addEventListener('emptied', async () => {
+        // If the video source changes (e.g. clicking a new video in a sidebar)
+        if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapanese() && !isMusic()) {
+          await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+        }
+        watchedSecs = 0;
+        prevTime = -1;
+        lastSyncSecs = 0;
+        lastAutoCheckSecs = 0;
         state.hasTriggered = false;
         document.getElementById('nt-status-badge')?.remove();
       });
     };
 
-    // ── Polling (SPA navigation & dynamic element insertion) ─────────────────
-    setInterval(() => {
+    browser.storage.onChanged.addListener((changes, area) => {
+      // Keep cache fresh without blocking the video player
+      configStorage.getValue().then(c => { if(c) cachedConfig = c; });
+
+      if (area === 'local' && changes['videoQueue']) {
+        const queue = changes['videoQueue'].newValue || [];
+        const clean = cleanUrl(window.location.href);
+        const exists = queue.some((q: any) => q.contentTitleEnglish === clean);
+        if (!exists) {
+          completedSessionSecs = 0;
+          watchedSecs = 0;
+          lastSyncSecs = 0;
+          lastAutoCheckSecs = 0;
+          const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+          if (badgeLabel) badgeLabel.textContent = "0:00";
+        }
+      }
+    });
+
+    // Robust polling to detect video element injection (common in SPAs like YouTube)
+    setInterval(async () => {
       const vid = document.querySelector<HTMLVideoElement>('video');
       if (vid) {
         attach(vid);
-        // Ensure counter is visible even if the site's UI re-rendered and wiped it
-        ensureCounter(() => watchedSecs, document.title, window.location.href, state, vid);
+        // Ensure the counter stays visible even if the player re-renders its controls
+        if (!state.hasTriggered) {
+          const cfg = cachedConfig;
+          ensureCounter(watchedSecs, getTotal(), document.title, currentUrl, channelId, state, vid, cfg);
+        }
       }
     }, 2000);
   },
