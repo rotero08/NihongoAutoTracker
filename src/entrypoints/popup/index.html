@@ -21,8 +21,14 @@
   <div class="sep"></div>
 
   <div class="queue-header">
-    <span class="queue-label">PENDING QUEUE</span>
-    <span id="queue-count" class="badge">0</span>
+    <div class="queue-header-left">
+      <span class="queue-label">PENDING QUEUE</span>
+      <span id="queue-count" class="badge">0</span>
+    </div>
+    <div class="queue-bulk" id="queue-bulk" style="display:none">
+      <button id="btn-send-all" class="btn-bulk btn-bulk-amber">Send All</button>
+      <button id="btn-clear-all" class="btn-bulk btn-bulk-ghost">Clear</button>
+    </div>
   </div>
 
   <div id="queue-list" class="queue-list"></div>
@@ -30,7 +36,7 @@
   <div class="sep"></div>
 
   <footer class="footer">
-    <button id="btn-open" class="btn-primary">Open Settings &amp; Review Queue</button>
+    <button id="btn-open" class="btn-primary">Open Settings</button>
   </footer>
 
   <script type="module" src="./main.ts"></script>

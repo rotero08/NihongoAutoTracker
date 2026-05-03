@@ -10,6 +10,17 @@ export default defineBackground(() => {
     contexts: ['selection'],
   });
 
+  browser.runtime.onMessage.addListener((msg) => {
+    if (msg.action === 'NOTIFY') {
+      browser.notifications.create({
+        type: 'basic',
+        iconUrl: '/icon/48.png',
+        title: msg.title,
+        message: msg.message,
+      });
+    }
+  });
+
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
     if (info.menuItemId !== 'log-text' || !info.selectionText || !tab?.id) return;
 

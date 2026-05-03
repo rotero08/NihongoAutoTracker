@@ -1,15 +1,9 @@
+// Notify routes through background — browser.notifications unavailable in content scripts
 export function notify(title: string, message: string) {
   try {
-    if (typeof browser !== 'undefined' && browser.notifications) {
-      browser.notifications.create({
-        type: 'basic',
-        iconUrl: '/icon/48.png',
-        title,
-        message,
-      });
-    }
+    browser.runtime.sendMessage({ action: 'NOTIFY', title, message });
   } catch (e) {
-    console.log("Notification skipped (content script context)");
+    // Context invalidated (e.g. extension reloaded) — silent
   }
 }
 
