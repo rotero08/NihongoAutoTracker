@@ -108,16 +108,16 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
   font-family: var(--mono);
   white-space: nowrap;
   overflow-x: auto;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE 10+ */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   flex: 1;
   color: var(--muted);
   cursor: text;
   user-select: text;
 }
-.qi-meta::-webkit-scrollbar { display: none; /* Chrome/Safari */ }
+.qi-meta::-webkit-scrollbar { display: none; }
 
-.qi-date-input { background: transparent; border: none; color: var(--muted); font-family: var(--mono); font-size: 11px; outline: none; cursor: pointer; color-scheme: dark; text-align: right; }
+.qi-date-input { background: transparent; border: 1px solid transparent; color: var(--muted); font-family: var(--mono); font-size: 11px; outline: none; cursor: pointer; color-scheme: dark; text-align: right; border-radius: 3px; padding: 2px 4px; transition: color .15s; }
 .qi-date-input:hover, .qi-date-input:focus { color: var(--text); }
 
 .qi-sessions { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--bdr); }

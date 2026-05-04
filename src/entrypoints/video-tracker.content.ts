@@ -543,13 +543,18 @@ const attach = (vid: HTMLVideoElement) => {
     }
   })();
 
+  // Fix 4: F5 Auto-Play Bug Fix
+  if (!vid.paused && !vid.ended && vid.readyState > 2) {
+    playClockStart = performance.now();
+  }
+
   vid.addEventListener('playing', () => {
     playClockStart = performance.now();
   });
 
   vid.addEventListener('play', () => {
     playClockStart = performance.now();
-    if (vid.currentTime < 5) state.hasTriggered = false; // Video restarted
+    if (vid.currentTime < 5) state.hasTriggered = false;
   });
 
     const stopClock = () => { flushPlayClock(); };
@@ -558,7 +563,7 @@ const attach = (vid: HTMLVideoElement) => {
     vid.addEventListener('seeking', stopClock);
 
     vid.addEventListener('seeked', () => {
-      if (vid.currentTime < 5) state.hasTriggered = false; // Video restarted via scrubbing
+      if (vid.currentTime < 5) state.hasTriggered = false;
       if (!vid.paused && !vid.ended) playClockStart = performance.now();
     });
 
@@ -592,10 +597,8 @@ const attach = (vid: HTMLVideoElement) => {
             if (triggered) {
               state.hasTriggered = true;
 
-              // FIX: Only log the time the user actually watched this session
               const sessionMins = Math.max(1, Math.round(liveSecs / 60));
 
-              // FIX: Exact same payload type used in manual modal
               const ok = await submitLog({
                 type: 'video',
                 mediaId: channelId || 'web-video',
@@ -656,7 +659,6 @@ const attach = (vid: HTMLVideoElement) => {
 browser.storage.onChanged.addListener((changes, area) => {
   configStorage.getValue().then(c => { if(c) cachedConfig = c; });
 
-  // FIX: Reset clock when a video log is successfully processed & removed from Queue
   if (area === 'local' && changes['videoQueue']) {
     const queue = changes['videoQueue'].newValue || [];
     const clean = cleanUrl(window.location.href);
@@ -668,7 +670,7 @@ browser.storage.onChanged.addListener((changes, area) => {
       lastAutoCheckSecs = 0;
       state.hasTriggered = false;
 
-      if (!trackedVideo?.paused && !trackedVideo?.ended) {
+      if (!trackedVideo?.paused && !trackedVideo?.ended && trackedVideo?.readyState > 2) {
         playClockStart = performance.now();
       }
 

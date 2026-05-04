@@ -153,16 +153,16 @@ function injectTTUStyles() {
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 26px; height: 26px; fill: currentColor; }
 
-  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 240px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; }
   #nt-ttu-dropdown.open { display: flex; }
 
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
   .nt-ttu-dd-title { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
 
-  .nt-ttu-stats-row { display: flex; justify-content: space-evenly; align-items: center; margin-bottom: 12px; }
-  .nt-ttu-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 45%; }
+  .nt-ttu-stats-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+  .nt-ttu-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
   .nt-ttu-stat-label { font-size: 10px; color: #999; }
-  .nt-ttu-stat-val { font-family: monospace; font-size: 16px; color: #fff; cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; transition: background 0.2s; text-align: center; }
+  .nt-ttu-stat-val { font-family: monospace; font-size: 14px; color: #fff; cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; transition: background 0.2s; text-align: center; }
   .nt-ttu-stat-val:hover { background: #333; border-color: #555; }
   .nt-ttu-stat-val.no-hover { cursor: default; }
   .nt-ttu-stat-val.no-hover:hover { background: transparent; border-color: transparent; }
@@ -216,6 +216,10 @@ function setupTTUChronometer() {
   <span class="nt-ttu-stat-label">Chars</span>
   <span class="nt-ttu-stat-val" id="nt-ttu-val-chars" title="Edit">0</span>
   </div>
+  <div class="nt-ttu-stat">
+  <span class="nt-ttu-stat-label">Speed</span>
+  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-val-speed">0 c/m</span>
+  </div>
   </div>
   <div class="nt-ttu-controls">
   <button class="nt-ttu-btn-icon" id="nt-ttu-btn-toggle" title="Play/Pause"><svg viewBox="0 0 24 24"><path id="nt-ttu-play-path" d="M8 5v14l11-7z"/></svg></button>
@@ -234,6 +238,10 @@ function setupTTUChronometer() {
   <div class="nt-ttu-stat">
   <span class="nt-ttu-stat-label">Total Chars</span>
   <span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-chars" style="color:#f0b429;">0</span>
+  </div>
+  <div class="nt-ttu-stat">
+  <span class="nt-ttu-stat-label">Avg Speed</span>
+  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-speed" style="color:#f0b429;">0 c/m</span>
   </div>
   </div>
   </div>
@@ -254,6 +262,8 @@ function setupTTUChronometer() {
   const toggleBtn = wrapper.querySelector('#nt-ttu-btn-toggle')!;
   const timeVal = wrapper.querySelector('#nt-ttu-val-time')!;
   const charsVal = wrapper.querySelector('#nt-ttu-val-chars')!;
+  const speedVal = wrapper.querySelector('#nt-ttu-val-speed')!;
+  const totalSpeedVal = wrapper.querySelector('#nt-ttu-total-speed')!;
   const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
 
   let cachedHistoryMins = 0;
@@ -290,6 +300,15 @@ function setupTTUChronometer() {
 
     const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
     const totalChars = cachedHistoryChars + ttuState.chars;
+
+    // 1 hour = 60 minutes = 3,600,000 milliseconds
+    const sessSpeed = ttuState.timeMs > 0 ? Math.round(ttuState.chars / (ttuState.timeMs / 3600000)) : 0;
+
+    // Multiply by 60 to convert "per minute" to "per hour"
+    const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
+
+    speedVal.textContent = sessSpeed + '/h';
+    totalSpeedVal.textContent = totSpeed + '/h';
 
     wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
     wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
@@ -420,7 +439,7 @@ function setupTTUChronometer() {
 
   btnLog.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (currentConfig.ttuAutoSave !== false) return; // Prevent manual save if autosyncing
+    if (currentConfig.ttuAutoSave !== false) return;
     await saveSessionAndQueue();
     await updateHistoryData();
     updateUI();
@@ -623,7 +642,6 @@ browser.storage.onChanged.addListener((changes, area) => {
     }
   }
 
-  // Listen for the queue resetting via Settings UI send
   if (area === 'local' && changes['readingQueue']) {
     const queue = changes['readingQueue'].newValue || [];
     const title = getTTUTitle();

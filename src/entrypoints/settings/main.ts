@@ -104,11 +104,14 @@ const threshSpinDn   = document.querySelector('.thresh-spin-dn') as HTMLButtonEl
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
 const toLocalDT = (iso: string) => {
   if (!iso) return '';
   const d = new Date(iso);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
 };
+
 const SVG_UP = `<svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg>`;
 const SVG_DN = `<svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg>`;
 
@@ -266,19 +269,30 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     <span class="qi-session-num">S${i + 1}</span>
     <input class="qi-session-mins" type="number" value="${Math.max(1, Math.round(s.secs / 60))}"/>
     <span style="font-size:10px;color:var(--muted)">min</span>
-    ${type === 'reading' ? `<input class="qi-session-chars" type="number" value="${s.chars || 0}"/>` : ''}
+    ${type === 'reading' ? `<input class="qi-session-chars" type="number" value="${s.chars || 0}"/><span style="font-size:10px;color:var(--muted)">chars</span>` : ''}
     <input type="datetime-local" class="qi-session-date-input" value="${toLocalDT(s.date)}" />
     <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:14px;">×</button>
     </div>`).join('') + `</div>`;
   }
 
   const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
-  const dateVal = (item.date ? item.date : new Date().toISOString()).split('T')[0];
+
+  // Set date based on first session inherently, allowing fallback to standard Date
+  const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
+  const dateVal = toLocalDT(defaultDateStr);
+
   const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
 
-  // Custom display requested: Channel Name • URL
-  const channelName = type === 'reading' ? 'TTU Reader' : esc(item.contentTitleNative || 'YouTube');
-  const urlDisplay = esc(item.contentTitleEnglish || '');
+  // Fix 1: Properly stringify TTU Reader meta text
+  let channelName = '';
+  let urlDisplay = '';
+  if (type === 'reading') {
+    channelName = 'TTU Reader \u2022 ' + esc(item.contentTitleNative || '');
+    urlDisplay = '';
+  } else {
+    channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');
+    urlDisplay = '\u2022 ' + esc(item.contentTitleEnglish || item.channelId || '');
+  }
 
   let charsGroup = '';
   if (type === 'reading') {
@@ -307,8 +321,8 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>
   </div>
   <div class="qi-row mid-row">
-  <span class="qi-meta">${channelName} &bull; ${urlDisplay}</span>
-  <input type="date" class="qi-date-input" value="${dateVal}" ${sessions.length > 1 ? 'disabled style="opacity:0.5"' : ''}/>
+  <span class="qi-meta">${channelName} ${urlDisplay}</span>
+  <input type="datetime-local" class="qi-date-input" value="${dateVal}" />
   </div>
   ${sessionsHtml}
   <div class="qi-row bot-row">
@@ -317,13 +331,31 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>`;
 
   const minsEl = el.querySelector<HTMLInputElement>('.qi-mins')!;
+  const charsEl = el.querySelector<HTMLInputElement>('.qi-chars');
+  const sessionMinsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.qi-session-mins'));
+  const sessionCharsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.qi-session-chars'));
+
+  // Fix 2: Realtime sync of session sums -> general fields
+  const syncSums = () => {
+    const sumMins = sessionMinsEls.reduce((acc, input) => acc + Number(input.value), 0);
+    if (sumMins > Number(minsEl.value)) minsEl.value = String(sumMins);
+
+    if (charsEl) {
+      const sumChars = sessionCharsEls.reduce((acc, input) => acc + Number(input.value), 0);
+      if (sumChars > Number(charsEl.value)) charsEl.value = String(sumChars);
+    }
+  };
+
   el.querySelector('.mins-up')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) + 1)); });
   el.querySelector('.mins-dn')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) - 1)); });
+  minsEl.addEventListener('input', syncSums);
+  sessionMinsEls.forEach(input => input.addEventListener('input', syncSums));
 
-  if (type === 'reading') {
-    const charsEl = el.querySelector<HTMLInputElement>('.qi-chars')!;
+  if (charsEl) {
     el.querySelector('.chars-up')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) + 100)); });
     el.querySelector('.chars-dn')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) - 100)); });
+    charsEl.addEventListener('input', syncSums);
+    sessionCharsEls.forEach(input => input.addEventListener('input', syncSums));
   }
 
   el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
@@ -355,8 +387,13 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 function getPayloadsForItem(item: any, el: HTMLElement) {
   const type = el.dataset.type as 'video' | 'reading';
   const desc = (el.querySelector('.qi-desc') as HTMLInputElement).value;
-  const totalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
+
+  const generalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
+  const generalChars = type === 'reading' ? Number((el.querySelector('.qi-chars') as HTMLInputElement).value) : 0;
+
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
+  const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value), 0);
+  const sumChars = type === 'reading' ? sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.qi-session-chars') as HTMLInputElement).value), 0) : 0;
 
   const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
 
@@ -379,21 +416,23 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
     base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
   }
 
-  if (sessionNodes.length > 0) {
-    return sessionNodes.map(node => ({
+  // Fix 3: Condition determining mapping type based on Overridden Sum values
+  if (sessionNodes.length === 0 || generalMins > sumMins || (type === 'reading' && generalChars > sumChars)) {
+    return [{
       ...base,
-      time: Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value),
-                                     date: new Date((node.querySelector('.qi-session-date-input') as HTMLInputElement).value).toISOString(),
-                                     chars: type === 'reading' ? Number((node.querySelector('.qi-session-chars') as HTMLInputElement).value) : 0
-    }));
+      time: generalMins,
+      date: new Date((el.querySelector('.qi-date-input') as HTMLInputElement).value).toISOString(),
+      chars: generalChars
+    }];
   }
 
-  return [{
+  // Otherwise map 1:1 using Session stats explicitly
+  return sessionNodes.map(node => ({
     ...base,
-    time: totalMins,
-    date: new Date((el.querySelector('.qi-date-input') as HTMLInputElement).value + 'T12:00:00').toISOString(),
-    chars: type === 'reading' ? Number((el.querySelector('.qi-chars') as HTMLInputElement).value) : 0
-  }];
+    time: Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value),
+                                   date: new Date((node.querySelector('.qi-session-date-input') as HTMLInputElement).value).toISOString(),
+                                   chars: type === 'reading' ? Number((node.querySelector('.qi-session-chars') as HTMLInputElement).value) : 0
+  }));
 }
 
 // ── Main Operations ───────────────────────────────────────────────────────────
