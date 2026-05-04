@@ -4,7 +4,7 @@ export default defineConfig({
   srcDir: 'src',
   manifest: {
     name: 'NihongoAutoTracker',
-    version: '2.8.0',
+    version: '3.0.0',
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs'],
     host_permissions: [
       'https://nihongotracker.app/*',

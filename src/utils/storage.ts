@@ -12,6 +12,7 @@ export interface TrackerConfig {
   trackTime: boolean;
   hideButtons: boolean;
   hideIfNotJapanese?: boolean;
+  hideMusic?: boolean; // NEW: Toggle hiding log badge on music videos
   overlayPosition: OverlayPosition;
   showTotalInBadge: boolean;
   ttuEnabled: boolean; // Required explicitly for defaults to apply flawlessly
@@ -75,6 +76,7 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     threshold: 95,
     trackTime: true,
     hideButtons: false,
+    hideMusic: false,
     overlayPosition: 'top-right',
     showTotalInBadge: true,
     ttuEnabled: true, // Defaults to ON immediately.

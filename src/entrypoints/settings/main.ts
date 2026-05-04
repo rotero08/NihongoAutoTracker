@@ -70,6 +70,8 @@ const threshMinsWrap = document.getElementById('thresh-minutes-wrap')!;
 const hideBtnsEl     = document.getElementById('hide-buttons')   as HTMLInputElement;
 const hideJpFieldEl  = document.getElementById('hide-jp-field')!;
 const hideIfNotJpEl  = document.getElementById('hide-if-not-jp') as HTMLInputElement;
+const hideMusicEl    = document.getElementById('hide-music')     as HTMLInputElement;
+const hideMusicFieldEl = document.getElementById('hide-music-field')!;
 
 const showTotalEl    = document.getElementById('show-total-badge') as HTMLSelectElement;
 const saveVideoBtn   = document.getElementById('save-video-btn')!;
@@ -181,6 +183,7 @@ async function loadConfig() {
 
   hideBtnsEl.checked = cfg.hideButtons ?? false;
   hideIfNotJpEl.checked = cfg.hideIfNotJapanese ?? false;
+  hideMusicEl.checked = cfg.hideMusic ?? false;
   updateHideJpDim(hideBtnsEl.checked);
 
   if (showTotalEl) {
@@ -205,7 +208,12 @@ function setApiStatus(key: string) {
   apiStatusEl.className = 'api-status ' + (key ? 'ok' : 'err');
 }
 function updateAutoConfigDim(on: boolean) { autoConfigEl.classList.toggle('dim-block', !on); }
-function updateHideJpDim(hideBtns: boolean) { hideJpFieldEl.classList.toggle('dim-block', hideBtns); }
+
+function updateHideJpDim(hideBtns: boolean) {
+  hideJpFieldEl.classList.toggle('dim-block', hideBtns);
+  hideMusicFieldEl.classList.toggle('dim-block', hideBtns);
+}
+
 function updateThreshUI(type: string, cfg?: any) {
   const isPct = type === 'percent';
   threshSliderWrap.style.display = isPct ? 'block' : 'none';
@@ -259,7 +267,7 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   }
   const cfg = await configStorage.getValue() as any;
   const key = list === 'allow' ? 'allowSites' : 'skipSites';
-  const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP]);
+  const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] :[...BUILT_IN_SKIP]);
   const next = currentList.map((d: string) => d === domain ? newVal : d);
   await configStorage.setValue({ ...cfg, [key]: next });
   loadConfig();
@@ -273,9 +281,9 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   rm.onclick = async () => {
     const cfg = await configStorage.getValue() as any;
     const key = list === 'allow' ? 'allowSites' : 'skipSites';
-    const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] :[...BUILT_IN_SKIP]);
+    const currentList = cfg[key] ?? (list === 'allow' ?[...BUILT_IN_ALLOW] :[...BUILT_IN_SKIP]);
     const next = currentList.filter((d: string) => d !== domain);
-    await configStorage.setValue({ ...cfg, [key]: next });
+    await configStorage.setValue({ ...cfg,[key]: next });
     loadConfig();
   };
 
@@ -796,6 +804,7 @@ saveVideoBtn.addEventListener('click', async () => {
     thresholdValue: tVal,
     hideButtons: hideBtnsEl.checked,
     hideIfNotJapanese: hideIfNotJpEl.checked,
+    hideMusic: hideMusicEl.checked,
     showTotalInBadge: showTotalEl.value === 'total'
   });
   showStatus('✓ Video Settings Saved');
@@ -811,6 +820,7 @@ resetVideoBtn.addEventListener('click', async () => {
     thresholdValue: 95,
     hideButtons: false,
     hideIfNotJapanese: false,
+    hideMusic: false,
     showTotalInBadge: true
   });
   loadConfig();
