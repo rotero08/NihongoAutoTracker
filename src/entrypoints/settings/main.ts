@@ -92,6 +92,9 @@ const skipAddBtn     = document.getElementById('skip-add')!;
 const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
 const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
 
+const threshSpinUp   = document.querySelector('.thresh-spin-up') as HTMLButtonElement;
+const threshSpinDn   = document.querySelector('.thresh-spin-dn') as HTMLButtonElement;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 const toLocalDT = (iso: string) => {
@@ -107,18 +110,15 @@ function parseTitle(docTitle: string) {
   let title = base;
   let volume: number | undefined = undefined;
 
-  // If entirely digits, keep as title and don't assume it's just a volume number
   if (/^\d+$/.test(base)) {
     return { query: base, volume: undefined };
   }
 
-  // Attempt to extract trailing volume info
   const volMatch = base.match(/^(.*?)[\s\-_]+(?:vol(?:ume)?\.?\s*|v|第)?(\d+)\s*(?:巻|話|章)?$/i);
   if (volMatch && volMatch[1].trim().length > 0 && !/^\d+$/.test(volMatch[1].trim())) {
     title = volMatch[1].trim();
     volume = parseInt(volMatch[2], 10);
   } else {
-    // Fallback if joined without spaces e.g. "MyBook19"
     const match2 = base.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
     if (match2) {
       title = match2[1].trim();
@@ -153,7 +153,8 @@ async function loadConfig() {
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
   renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ?? [...BUILT_IN_SKIP]);
 
-  ttuEnabledEl.checked = cfg.ttuEnabled ?? false;
+  // FIX: Make sure the UI mirrors the true default of `true`
+  ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
   ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
 }
 
@@ -167,9 +168,19 @@ function updateThreshUI(type: string, cfg?: any) {
   const isPct = type === 'percent';
   threshSliderWrap.style.display = isPct ? 'block' : 'none';
   threshMinsWrap.style.display = !isPct ? 'block' : 'none';
-  const v = isPct ? (cfg?.thresholdValue ?? cfg?.threshold ?? 95) : (cfg?.thresholdValue ?? 30);
-  if (isPct) { threshPctEl.value = String(v); threshUnitEl.textContent = v + '%'; }
-  else { threshMinEl.value = String(v); threshUnitEl.textContent = v + ' min'; }
+
+  if (cfg) {
+    const vPct = (cfg.thresholdType === 'percent' || !cfg.thresholdType) ? (cfg.thresholdValue ?? cfg.threshold ?? 95) : 95;
+    const vMin = cfg.thresholdType === 'time' ? (cfg.thresholdValue ?? 30) : 30;
+    threshPctEl.value = String(vPct);
+    threshMinEl.value = String(vMin);
+  }
+
+  if (isPct) {
+    threshUnitEl.textContent = threshPctEl.value + '%';
+  } else {
+    threshUnitEl.textContent = threshMinEl.value + ' min';
+  }
 }
 
 // ── Site List Logic ───────────────────────────────────────────────────────────
@@ -182,18 +193,57 @@ function renderSites(allow: string[], skip: string[]) {
 }
 
 function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
-  const el = document.createElement('div'); el.className = 'site-item';
-  const host = document.createElement('span'); host.className = 'site-item-host'; host.textContent = domain;
-  const rm = document.createElement('button'); rm.className = 'site-remove';
+  const el = document.createElement('div');
+  el.className = 'site-item';
+
+  const host = document.createElement('span');
+  host.className = 'site-item-host';
+  host.textContent = domain;
+
+  // FIX: Make it editable
+  host.contentEditable = 'true';
+  host.spellcheck = false;
+
+  // FIX: Save on enter key
+  host.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      host.blur();
+    }
+  });
+
+  // FIX: Save changes on blur
+  host.addEventListener('blur', async () => {
+    const newVal = host.textContent?.trim().toLowerCase() || '';
+  if (!newVal || newVal === domain) {
+    host.textContent = domain; // Revert if empty or unchanged
+    return;
+  }
+  const cfg = await configStorage.getValue() as any;
+  const key = list === 'allow' ? 'allowSites' : 'skipSites';
+  const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP]);
+  const next = currentList.map((d: string) => d === domain ? newVal : d);
+  await configStorage.setValue({ ...cfg, [key]: next });
+  loadConfig();
+  showStatus('✓ Site Updated');
+  });
+
+  const rm = document.createElement('button');
+  rm.className = 'site-remove';
   rm.innerHTML = `<svg viewBox="0 0 12 12"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>`;
+
   rm.onclick = async () => {
     const cfg = await configStorage.getValue() as any;
     const key = list === 'allow' ? 'allowSites' : 'skipSites';
-    const next = (cfg[key] ?? []).filter((d: string) => d !== domain);
+    // FIX: Fall back to defaults instead of an empty array to prevent wipeout
+    const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP]);
+    const next = currentList.filter((d: string) => d !== domain);
     await configStorage.setValue({ ...cfg, [key]: next });
     loadConfig();
   };
-  el.append(host, rm); return el;
+
+  el.append(host, rm);
+  return el;
 }
 
 // ── Queue Item UI ─────────────────────────────────────────────────────────────
@@ -218,7 +268,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     </div>`).join('') + `</div>`;
   }
 
-  // Display minutes (reading items store total seconds in item.time)
   const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
   const dateVal = (item.date ? item.date : new Date().toISOString()).split('T')[0];
   const title = esc(item.contentTitleNative || 'Unknown Title');
@@ -302,7 +351,6 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   const totalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
 
-  // If user hasn't explicitly customized description, use the Native Title mapped from API search/Tab title
   const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
 
   const base: any = {
@@ -379,10 +427,8 @@ async function sendOne(id: string, el: HTMLElement) {
       const cfg = await configStorage.getValue() as any;
       const apiKey = cfg.apiKey ?? '';
 
-      // 1. Sanitize the Title
       const { query, volume } = parseTitle(item.contentTitleNative);
 
-      // 2. Fetch Media Metadata via AniList Integration
       if (!item.mediaId || !item.mediaData?.contentId) {
         const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
           headers: { 'X-API-Key': apiKey }
@@ -392,7 +438,6 @@ async function sendOne(id: string, el: HTMLElement) {
           const results: any[] = Array.isArray(data) ? data : (data.data ?? []);
           if (results.length > 0) {
             const media = results[0];
-            // Normalize nested title object into flat structure expected by payload builder
             item.mediaData = {
               contentId:           media.contentId,
               contentTitleNative:  media.title?.contentTitleNative  ?? media.contentTitleNative,
@@ -417,11 +462,9 @@ async function sendOne(id: string, el: HTMLElement) {
     }
   }
 
-  // 3. Construct the Payload Array mapped to the API schema
   const payloads = getPayloadsForItem(item, el);
 
   let success = true;
-  // 4. Dispatch the API Call
   for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
   if (success) { showStatus('✓ Sent'); removeOne(id, type); }
@@ -451,13 +494,108 @@ clearAllBtn.addEventListener('click', async () => {
   renderQueue();
 });
 
-// Settings interactions
-apiKeyEl.onchange = () => saveApiBtn.click();
-saveApiBtn.onclick = async () => {
+// ── Settings Interactions ─────────────────────────────────────────────────────
+
+// 1. API Key
+toggleKeyEl.addEventListener('click', () => {
+  apiKeyEl.type = apiKeyEl.type === 'password' ? 'text' : 'password';
+});
+apiKeyEl.addEventListener('change', () => saveApiBtn.click());
+saveApiBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({ ...cfg, apiKey: apiKeyEl.value.trim() });
   loadConfig(); showStatus('✓ API Key Saved');
-};
+});
+
+// 2. Video Track
+autoSendEl.addEventListener('change', () => updateAutoConfigDim(autoSendEl.checked));
+hideBtnsEl.addEventListener('change', () => updateHideJpDim(hideBtnsEl.checked));
+
+threshTypeEls.forEach(r => r.addEventListener('change', () => {
+  if (r.checked) updateThreshUI(r.value);
+}));
+
+threshPctEl.addEventListener('input', () => { threshUnitEl.textContent = threshPctEl.value + '%'; });
+threshMinEl.addEventListener('input', () => { threshUnitEl.textContent = threshMinEl.value + ' min'; });
+if (threshSpinUp) {
+  threshSpinUp.addEventListener('click', () => {
+    threshMinEl.value = String(Number(threshMinEl.value) + 1);
+    threshUnitEl.textContent = threshMinEl.value + ' min';
+  });
+}
+if (threshSpinDn) {
+  threshSpinDn.addEventListener('click', () => {
+    threshMinEl.value = String(Math.max(1, Number(threshMinEl.value) - 1));
+    threshUnitEl.textContent = threshMinEl.value + ' min';
+  });
+}
+
+saveVideoBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  const tType = Array.from(threshTypeEls).find(r => r.checked)?.value || 'percent';
+  const tVal = tType === 'percent' ? Number(threshPctEl.value) : Number(threshMinEl.value);
+  await configStorage.setValue({
+    ...cfg,
+    autoSend: autoSendEl.checked,
+    logMode: autoSendEl.checked ? 'auto' : 'manual',
+    thresholdType: tType,
+    thresholdValue: tVal,
+    hideButtons: hideBtnsEl.checked,
+    hideIfNotJapanese: hideIfNotJpEl.checked,
+    showTotalInBadge: showTotalEl.checked
+  });
+  showStatus('✓ Video Settings Saved');
+});
+
+// 3. Overlay
+document.querySelectorAll('.sites-toggle-head').forEach(head => {
+  head.addEventListener('click', () => {
+    head.classList.toggle('open');
+    const bodyId = (head as HTMLElement).dataset.group + '-body';
+    document.getElementById(bodyId)?.classList.toggle('open');
+  });
+});
+
+allowAddBtn.addEventListener('click', async () => {
+  const val = allowInputEl.value.trim().toLowerCase();
+  if (!val) return;
+  const cfg = await configStorage.getValue() as any;
+  const sites = cfg.allowSites ?? [...BUILT_IN_ALLOW];
+  if (!sites.includes(val)) {
+    await configStorage.setValue({ ...cfg, allowSites: [...sites, val] });
+    allowInputEl.value = ''; loadConfig(); showStatus('✓ Allowed Site Added');
+  }
+});
+
+skipAddBtn.addEventListener('click', async () => {
+  const val = skipInputEl.value.trim().toLowerCase();
+  if (!val) return;
+  const cfg = await configStorage.getValue() as any;
+  const sites = cfg.skipSites ?? [...BUILT_IN_SKIP];
+  if (!sites.includes(val)) {
+    await configStorage.setValue({ ...cfg, skipSites: [...sites, val] });
+    skipInputEl.value = ''; loadConfig(); showStatus('✓ Skipped Site Added');
+  }
+});
+
+saveOverlayBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  const pos = Array.from(overlayEls).find(r => r.checked)?.value || 'top-right';
+await configStorage.setValue({
+  ...cfg,
+  trackTime: trackTimeEl.checked,
+  allowListOnly: allowListOnlyEl.checked,
+  overlayPosition: pos
+});
+showStatus('✓ Overlay Settings Saved');
+});
+
+// 4. Readers
+ttuEnabledEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, ttuEnabled: ttuEnabledEl.checked });
+  showStatus(ttuEnabledEl.checked ? '✓ TTU Tracking enabled' : '✓ TTU Tracking disabled');
+});
 
 ttuAutoSaveEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;

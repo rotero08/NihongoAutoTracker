@@ -2,8 +2,8 @@ import { defineContentScript } from '#imports';
 import { configStorage, readingQueueStorage, ttuHistoryStorage } from '@/utils/storage';
 import '@/assets/overlay.css';
 
-const SKIP_HOSTS_DEFAULT =['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app', 'mail.google.com', 'mail.proton.me'];
-const JP_DOMAINS_DEFAULT =[
+const SKIP_HOSTS_DEFAULT = ['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app', 'mail.google.com', 'mail.proton.me'];
+const JP_DOMAINS_DEFAULT = [
   'nhk.or.jp','nhk.jp','news.yahoo.co.jp','yomiuri.co.jp','asahi.com','mainichi.jp',
 'nikkei.com','tokyoreporter.com','watanoc.com','aozora.gr.jp','syosetu.com','kakuyomu.jp',
 'pixiv.net','nicovideo.jp','comic-walker.com','manga-raw.club','jisho.org',
@@ -14,7 +14,7 @@ const TTU_HOST = 'reader.ttsu.app';
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   const host = window.location.hostname;
-  const allowSites: string[] = cfg.allowSites ??[...JP_DOMAINS_DEFAULT];
+  const allowSites: string[] = cfg.allowSites ?? [...JP_DOMAINS_DEFAULT];
   const allowListOnly: boolean = cfg.allowListOnly ?? false;
 
   if (allowSites.some((d: string) => host.includes(d))) return true;
@@ -25,7 +25,7 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
 
   await new Promise(r => setTimeout(r, 1500));
   const sample = (document.body?.innerText ?? '').slice(0, 8000);
-  return (sample.match(JP_RE) ??[]).length >= 40;
+  return (sample.match(JP_RE) ?? []).length >= 40;
 }
 
 function fmt(ms: number): string {
@@ -41,6 +41,10 @@ const ttuState = {
   timeMs: 0,
   chars: 0,
 };
+
+let globalSessionStartChar = -1;
+let globalManualCharOffset = 0;
+let globalLastTick = Date.now();
 
 function getTTUTitle() {
   let title = document.title;
@@ -74,34 +78,31 @@ async function saveSessionAndQueue() {
   const secs = Math.round(ttuState.timeMs / 1000);
   const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
 
-  // 1. Save to local history
   const history = await ttuHistoryStorage.getValue() || {};
   if (!history[title]) history[title] = [];
   history[title].push(sessionLog);
   await ttuHistoryStorage.setValue(history);
 
-  // 2. Add to Reading Queue
   const queue = await readingQueueStorage.getValue();
   let existing = queue.find(q => q.contentTitleNative === title);
 
   if (!existing) {
     existing = {
       id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
-      description: '', chars: ttuState.chars, time: secs, // Stored as seconds!
+      description: '', chars: ttuState.chars, time: secs,
       date: dateStr, private: false, tags: [],
-      sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
+      sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
     };
     queue.push(existing);
   } else {
-    existing.sessions = existing.sessions ||[];
+    existing.sessions = existing.sessions || [];
     existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
-    existing.chars = existing.sessions.reduce((acc, s) => acc + s.chars, 0);
-    const totalSecs = existing.sessions.reduce((acc, s) => acc + s.secs, 0);
-    existing.time = totalSecs; // Stored as seconds!
+    existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+    const totalSecs = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
+    existing.time = totalSecs;
   }
   await readingQueueStorage.setValue(queue);
 
-  // 3. Reset State cleanly
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
@@ -110,19 +111,18 @@ async function saveSessionAndQueue() {
   showToast(`Session queued!`);
 }
 
-// --- STYLES ---
 function injectTTUStyles() {
   if (typeof document === 'undefined' || document.getElementById('nt-ttu-styles')) return;
   const s = document.createElement('style');
   s.id = 'nt-ttu-styles';
   s.textContent = `
-  #nt-ttu-chrono-wrapper { position: relative; display: inline-flex; z-index: 9999; font-family: sans-serif; align-items: center; }
-  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 6px; color: #f0b429; transition: all 0.15s ease; }
+  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 9999; font-family: sans-serif; align-items: center; flex-shrink: 0; margin-right: 4px; }
+  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 6px; color: #f0b429; transition: all 0.15s ease; align-items: center; justify-content: center; user-select: none; }
   #nt-ttu-chrono-btn:hover { color: #ffcc33 !important; filter: brightness(1.3); }
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
-  #nt-ttu-chrono-btn svg { width: 22px; height: 22px; fill: currentColor; }
+  #nt-ttu-chrono-btn svg { width: 26px; height: 26px; fill: currentColor; }
 
-  #nt-ttu-dropdown { position: absolute; top: 100%; right: 0; margin-top: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 240px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 240px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; }
   #nt-ttu-dropdown.open { display: flex; }
 
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
@@ -152,16 +152,13 @@ function injectTTUStyles() {
   document.head.appendChild(s);
 }
 
-// --- CORE LOGIC ---
 function setupTTUChronometer() {
   if (typeof document === 'undefined') return;
 
-  // Clean up existing interval if we're rebuilding the UI
   if ((window as any).ntChronoInterval) {
     clearInterval((window as any).ntChronoInterval);
   }
 
-  // Remove old wrapper if it exists (happens when TTU re-renders toolbar)
   const oldWrapper = document.getElementById('nt-ttu-chrono-wrapper');
   if (oldWrapper) oldWrapper.remove();
 
@@ -173,8 +170,8 @@ function setupTTUChronometer() {
   const wrapper = document.createElement('div');
   wrapper.id = 'nt-ttu-chrono-wrapper';
   wrapper.innerHTML = `
-  <button id="nt-ttu-chrono-btn" title="NihongoTracker Session">
-  <svg viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.4 0-8-3.6-8-8s3.6-8 8-8 8 3.6 8 8-3.6 8-8 8zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z"/></svg>
+  <button id="nt-ttu-chrono-btn" title="Click to open Tracker Menu or Double Click to toggle Tracker">
+  <svg viewBox="0 0 24 24"><path id="nt-ttu-main-icon-path" d="M8 5v14l11-7z"/></svg>
   </button>
   <div id="nt-ttu-dropdown">
   <div class="nt-ttu-dd-section">
@@ -217,33 +214,36 @@ function setupTTUChronometer() {
   </div>
   `;
 
-  const btn = wrapper.querySelector('#nt-ttu-chrono-btn')!;
+  wrapper.addEventListener('click', e => e.stopPropagation());
+  wrapper.addEventListener('dblclick', e => e.stopPropagation());
   const dropdown = wrapper.querySelector('#nt-ttu-dropdown')!;
+  dropdown.addEventListener('click', e => e.stopPropagation());
+
+  const btn = wrapper.querySelector('#nt-ttu-chrono-btn')!;
+  const toggleBtn = wrapper.querySelector('#nt-ttu-btn-toggle')!;
   const timeVal = wrapper.querySelector('#nt-ttu-val-time')!;
   const charsVal = wrapper.querySelector('#nt-ttu-val-chars')!;
-  const toggleBtn = wrapper.querySelector('#nt-ttu-btn-toggle')!;
 
   let cachedHistoryMins = 0;
   let cachedHistoryChars = 0;
 
-  // Intelligent reading bounds tracking
-  let sessionStartChar = extractTTUCharCount() || 0;
-  let manualCharOffset = 0;
-  let lastTick = Date.now();
+  if (globalSessionStartChar === -1) {
+    globalSessionStartChar = extractTTUCharCount() || 0;
+  }
 
   const updateHistoryData = async () => {
     const history = await ttuHistoryStorage.getValue() || {};
-    const sessions = history[getTTUTitle()] ||[];
+    const sessions = history[getTTUTitle()] || [];
 
-    cachedHistoryMins = sessions.reduce((acc, s) => acc + Math.round(s.timeMs / 60000), 0);
-    cachedHistoryChars = sessions.reduce((acc, s) => acc + s.chars, 0);
+    cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
+    cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
 
     const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
     if (sessions.length === 0) {
       listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
     } else {
       let html = '';
-      sessions.forEach(s => {
+      sessions.forEach((s: any) => {
         const mins = Math.max(1, Math.round(s.timeMs / 60000));
         const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         html += `<div class="nt-ttu-history-item"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span></div>`;
@@ -262,21 +262,24 @@ function setupTTUChronometer() {
     wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
     wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
 
+    const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z'; // Pause
+    const playSvg  = 'M8 5v14l11-7z';                   // Play
+
     const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
+    const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
+
     if (playPath) {
-      if (ttuState.running) {
-        playPath.setAttribute('d', 'M6 19h4V5H6v14zm8-14v14h4V5h-4z'); // Pause
-        toggleBtn.title = 'Pause Timer';
-      } else {
-        playPath.setAttribute('d', 'M8 5v14l11-7z'); // Play
-        toggleBtn.title = 'Start Timer';
-      }
+      playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+      toggleBtn.title = ttuState.running ? 'Pause Timer' : 'Start Timer';
+    }
+    if (mainIconPath) {
+      mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
     }
   };
 
   const makeEditable = (el: Element, isTime: boolean) => {
     el.addEventListener('click', (e) => {
-      e.stopPropagation(); // Prevents click from bubbling to document and closing dropdown
+      e.stopPropagation();
       const input = document.createElement('input');
       input.type = 'text';
       input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
@@ -297,9 +300,9 @@ function setupTTUChronometer() {
           const val = parseInt(input.value.replace(/\D/g, ''));
           if (!isNaN(val) && val >= 0) {
             const currentCount = extractTTUCharCount() || 0;
-            let diff = currentCount - sessionStartChar;
+            let diff = currentCount - (globalSessionStartChar !== -1 ? globalSessionStartChar : 0);
             if (diff < 0) diff = 0;
-            manualCharOffset = val - diff;
+            globalManualCharOffset = val - diff;
             ttuState.chars = val;
           }
         }
@@ -326,71 +329,96 @@ function setupTTUChronometer() {
     updateUI();
   });
 
+  btn.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    ttuState.running = !ttuState.running;
+    if (ttuState.running) {
+      const currentCount = extractTTUCharCount();
+      if (currentCount !== null) {
+        const oldDiff = ttuState.chars - globalManualCharOffset;
+        globalSessionStartChar = currentCount - oldDiff;
+      }
+      globalLastTick = Date.now();
+    }
+    updateUI();
+  });
+
   document.addEventListener('click', (e) => {
     if (!e.composedPath().includes(wrapper)) {
       dropdown.classList.remove('open');
     }
   });
 
-  toggleBtn.addEventListener('click', () => {
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     ttuState.running = !ttuState.running;
     if (ttuState.running) {
-      // Shifting the anchor forwards to prevent counting skipped jumps
-      const currentCount = extractTTUCharCount() || 0;
-      const oldDiff = ttuState.chars - manualCharOffset;
-      sessionStartChar = currentCount - oldDiff;
-      lastTick = Date.now();
+      const currentCount = extractTTUCharCount();
+      if (currentCount !== null) {
+        const oldDiff = ttuState.chars - globalManualCharOffset;
+        globalSessionStartChar = currentCount - oldDiff;
+      }
+      globalLastTick = Date.now();
     }
     updateUI();
   });
 
-  wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', () => {
+  wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
+    e.stopPropagation();
     ttuState.timeMs = 0;
     ttuState.chars = 0;
-    sessionStartChar = extractTTUCharCount() || 0;
-    manualCharOffset = 0;
+    const currentCount = extractTTUCharCount();
+    globalSessionStartChar = currentCount !== null ? currentCount : -1;
+    globalManualCharOffset = 0;
     updateUI();
   });
 
-  wrapper.querySelector('#nt-ttu-btn-log')!.addEventListener('click', async () => {
+  wrapper.querySelector('#nt-ttu-btn-log')!.addEventListener('click', async (e) => {
+    e.stopPropagation();
     await saveSessionAndQueue();
-    sessionStartChar = extractTTUCharCount() || 0;
-    manualCharOffset = 0;
+    globalSessionStartChar = extractTTUCharCount() || 0;
+    globalManualCharOffset = 0;
     await updateHistoryData();
     updateUI();
   });
 
-  // The Tracking Engine
   (window as any).ntChronoInterval = setInterval(() => {
     if (ttuState.running && !document.hidden) {
       const now = Date.now();
-      ttuState.timeMs += (now - lastTick);
+      ttuState.timeMs += (now - globalLastTick);
 
       const currentCount = extractTTUCharCount();
       if (currentCount !== null) {
-        let diff = currentCount - sessionStartChar;
-        // If they scroll backwards heavily, difference drops. We cap floor it at 0
+        let diff = currentCount - globalSessionStartChar;
         if (diff < 0) diff = 0;
-        ttuState.chars = diff + manualCharOffset;
+        ttuState.chars = diff + globalManualCharOffset;
       }
-      lastTick = now;
-      if (dropdown.classList.contains('open')) updateUI();
+      globalLastTick = now;
+      updateUI();
     } else if (ttuState.running && document.hidden) {
-      // Don't accumulate time while tab is hidden, but keep anchor updated
-      lastTick = Date.now();
+      globalLastTick = Date.now();
     }
   }, 1000);
 
-  pt.insertAdjacentElement('beforebegin', wrapper);
+  pt.el.insertAdjacentElement(pt.pos, wrapper);
   updateHistoryData().then(() => updateUI());
 }
 
-function findTTUInsertPoint() {
+function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
+
+  const footer = document.getElementById('ttu-page-footer');
+  if (footer) {
+    const lastElement = footer.lastElementChild;
+    if (lastElement && lastElement.tagName === 'DIV') {
+      return { el: lastElement, pos: 'beforebegin' };
+    }
+    return { el: footer, pos: 'beforeend' };
+  }
+
   const completeBookBtn = document.querySelector('[title="Complete Book"]');
-  if (completeBookBtn) return completeBookBtn;
-  const rightSideToolbar = document.querySelector('.flex.translate-x-4');
-  if (rightSideToolbar && rightSideToolbar.firstElementChild) return rightSideToolbar.firstElementChild;
+  if (completeBookBtn) return { el: completeBookBtn, pos: 'beforebegin' };
   return null;
 }
 
@@ -398,13 +426,16 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   const observer = new MutationObserver(() => {
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     const target = findTTUInsertPoint();
-    if (target && !wrapper) setupTTUChronometer();
+    if (target && !wrapper) {
+      // Re-check config quickly to prevent injecting if disabled during navigation
+      configStorage.getValue().then(cfg => {
+        if (cfg?.ttuEnabled !== false) setupTTUChronometer();
+      });
+    }
   });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setupTTUChronometer();
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// Ensure the toast matches the extension aesthetics and defies page layout quirks
 function showToast(msg: string, err = false) {
   const el = document.createElement('div');
   Object.assign(el.style, {
@@ -424,7 +455,6 @@ function showToast(msg: string, err = false) {
   }, 3000);
 }
 
-// Globally register the toast listener
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
     if (req.action === 'GET_ACTIVE_TIME') {
@@ -513,6 +543,27 @@ function buildOverlay(cfg: any) {
   setInterval(() => { timeEl.textContent = fmt((window as any).__nt.getTotal()); }, 1000);
 }
 
+// FIX: Listen for config changes to toggle TTU immediately
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes['config']) {
+    const newCfg = changes['config'].newValue || {};
+    const oldCfg = changes['config'].oldValue || {};
+
+    if (window.location.hostname.includes(TTU_HOST)) {
+      const wasEnabled = oldCfg.ttuEnabled ?? true;
+      const isEnabled = newCfg.ttuEnabled ?? true;
+
+      if (!isEnabled && wasEnabled) {
+        const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+        if (wrapper) wrapper.remove();
+        if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
+      } else if (isEnabled && !wasEnabled) {
+        setupTTUChronometer();
+      }
+    }
+  }
+});
+
 export default defineContentScript({
   matches:['<all_urls>'],
   cssInjectionMode: 'manifest',
@@ -520,10 +571,12 @@ export default defineContentScript({
   async main() {
     const host = window.location.hostname;
     const cfg  = await configStorage.getValue() as any;
-    const skipSites: string[] = cfg.skipSites ??['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app'];
+    const skipSites: string[] = cfg.skipSites ?? ['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app'];
 
     if (host.includes(TTU_HOST)) {
-      if (!cfg.ttuEnabled) return;
+      // FIX: Default to true
+      const ttuEnabled = cfg.ttuEnabled ?? true;
+      if (!ttuEnabled) return;
       startTimeTracker();
       await new Promise(r => setTimeout(r, 2500));
       setupTTUChronometer();

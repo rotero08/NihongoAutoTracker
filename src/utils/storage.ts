@@ -5,12 +5,17 @@ export type LogMode = 'auto' | 'manual';
 export interface TrackerConfig {
   apiKey: string;
   logMode: LogMode;
+  autoSend?: boolean;
   threshold: number;
+  thresholdType?: 'percent' | 'time';
+  thresholdValue?: number;
   trackTime: boolean;
   hideButtons: boolean;
+  hideIfNotJapanese?: boolean;
   overlayPosition: OverlayPosition;
   showTotalInBadge: boolean;
-  ttuEnabled?: boolean;
+  ttuEnabled: boolean; // Required explicitly for defaults to apply flawlessly
+  ttuAutoSave?: boolean;
   allowSites?: string[];
   skipSites?: string[];
   allowListOnly?: boolean;
@@ -36,7 +41,7 @@ export interface QueuedReadingLog {
   contentTitleEnglish: string;
   description: string;
   chars: number;
-  time: number; // Stored in seconds for granular queue building
+  time: number;
   date: string;
   private: boolean;
   tags: string[];
@@ -59,6 +64,8 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     hideButtons: false,
     overlayPosition: 'top-right',
     showTotalInBadge: true,
+    ttuEnabled: true, // Defaults to ON immediately.
+    ttuAutoSave: true,
   },
 });
 
