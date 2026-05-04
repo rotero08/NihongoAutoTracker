@@ -84,6 +84,7 @@ const allowListOnlyEl= document.getElementById('allow-list-only') as HTMLInputEl
 const queueListEl    = document.getElementById('queue-list')!;
 const queueActions   = document.getElementById('queue-actions')!;
 const navBadge       = document.getElementById('nav-badge')!;
+const sendTodayBtn   = document.getElementById('send-today-btn')!;
 const sendAllBtn     = document.getElementById('send-all-btn')!;
 const clearAllBtn    = document.getElementById('clear-all-btn')!;
 const allowListEl    = document.getElementById('allow-list')!;
@@ -164,7 +165,7 @@ async function loadConfig() {
   trackTimeEl.checked = cfg.trackTime ?? false;
   allowListOnlyEl.checked = cfg.allowListOnly ?? false;
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
-  renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ?? [...BUILT_IN_SKIP]);
+  renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ??[...BUILT_IN_SKIP]);
 
   ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
   ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
@@ -243,7 +244,7 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   rm.onclick = async () => {
     const cfg = await configStorage.getValue() as any;
     const key = list === 'allow' ? 'allowSites' : 'skipSites';
-    const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP]);
+    const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] :[...BUILT_IN_SKIP]);
     const next = currentList.filter((d: string) => d !== domain);
     await configStorage.setValue({ ...cfg, [key]: next });
     loadConfig();
@@ -260,7 +261,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   el.dataset.id = item.id;
   el.dataset.type = type;
 
-  const sessions: any[] = item.sessions ?? [];
+  const sessions: any[] = item.sessions ??[];
   let sessionsHtml = '';
 
   if (sessions.length > 1) {
@@ -364,7 +365,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           });
           if (!res.ok) throw new Error();
           const data = await res.json();
-          const results = Array.isArray(data) ? data : (data.data ?? []);
+          const results = Array.isArray(data) ? data : (data.data ??[]);
 
           if (results.length === 0) {
             dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">No results found</div>';
@@ -537,7 +538,7 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   }
 
   if (sessionNodes.length === 0 || generalMins > sumMins || (type === 'reading' && generalChars > sumChars)) {
-    return [{
+    return[{
       ...base,
       time: generalMins,
       date: new Date((el.querySelector('.qi-date-input') as HTMLInputElement).value).toISOString(),
@@ -642,6 +643,24 @@ async function removeOne(id: string, type: 'video' | 'reading') {
   renderQueue();
 }
 
+sendTodayBtn.addEventListener('click', async () => {
+  const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
+  const todayStr = new Date().toLocaleDateString();
+  sendTodayBtn.disabled = true;
+  for (const el of items) {
+    if (el.style.display !== 'none') {
+      const dateInput = el.querySelector('.qi-date-input') as HTMLInputElement;
+      if (dateInput) {
+        const itemDate = new Date(dateInput.value).toLocaleDateString();
+        if (itemDate === todayStr) {
+          await sendOne(el.dataset.id!, el);
+        }
+      }
+    }
+  }
+  sendTodayBtn.disabled = false;
+});
+
 sendAllBtn.addEventListener('click', async () => {
   const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
   sendAllBtn.disabled = true;
@@ -741,7 +760,7 @@ allowAddBtn.addEventListener('click', async () => {
   const val = allowInputEl.value.trim().toLowerCase();
   if (!val) return;
   const cfg = await configStorage.getValue() as any;
-  const sites = cfg.allowSites ?? [...BUILT_IN_ALLOW];
+  const sites = cfg.allowSites ??[...BUILT_IN_ALLOW];
   if (!sites.includes(val)) {
     await configStorage.setValue({ ...cfg, allowSites: [...sites, val] });
     allowInputEl.value = ''; loadConfig(); showStatus('✓ Allowed Site Added');
@@ -752,7 +771,7 @@ skipAddBtn.addEventListener('click', async () => {
   const val = skipInputEl.value.trim().toLowerCase();
   if (!val) return;
   const cfg = await configStorage.getValue() as any;
-  const sites = cfg.skipSites ?? [...BUILT_IN_SKIP];
+  const sites = cfg.skipSites ??[...BUILT_IN_SKIP];
   if (!sites.includes(val)) {
     await configStorage.setValue({ ...cfg, skipSites: [...sites, val] });
     skipInputEl.value = ''; loadConfig(); showStatus('✓ Skipped Site Added');

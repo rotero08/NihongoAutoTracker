@@ -46,6 +46,10 @@ export interface QueuedReadingLog {
   private: boolean;
   tags: string[];
   sessions?: { id: string; secs: number; chars: number; date: string }[];
+  mediaId?: string;
+  mediaData?: any;
+  volume?: number;
+  originalTitle?: string;
 }
 
 export interface TTUHistorySession {
@@ -53,6 +57,12 @@ export interface TTUHistorySession {
   date: string;
   timeMs: number;
   chars: number;
+}
+
+export interface TTULink {
+  mediaId: string;
+  volume: number;
+  mediaData: any;
 }
 
 export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
@@ -78,5 +88,9 @@ export const readingQueueStorage = storage.defineItem<QueuedReadingLog[]>('local
 });
 
 export const ttuHistoryStorage = storage.defineItem<Record<string, TTUHistorySession[]>>('local:ttuHistory', {
+  defaultValue: {},
+});
+
+export const ttuLinkStorage = storage.defineItem<Record<string, TTULink>>('local:ttuLink', {
   defaultValue: {},
 });

@@ -62,10 +62,10 @@ export default defineBackground(() => {
       chars: count,
       time: timeMinutes,
       date: new Date().toISOString(),
-      episodes: 0,
-      pages: 0,
-      private: false,
-      tags: [],
+                    episodes: 0,
+                    pages: 0,
+                    private: false,
+                      tags:[],
     });
   });
 
