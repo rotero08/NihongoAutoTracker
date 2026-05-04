@@ -12,6 +12,9 @@ const JP_DOMAINS_DEFAULT = [
 const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 const TTU_HOST = 'reader.ttsu.app';
 
+let currentConfig: any = {};
+configStorage.getValue().then(c => currentConfig = c || {});
+
 async function isJapanesePage(cfg: any): Promise<boolean> {
   const host = window.location.hostname;
   const allowSites: string[] = cfg.allowSites ?? [...JP_DOMAINS_DEFAULT];
@@ -45,6 +48,7 @@ const ttuState = {
 let globalSessionStartChar = -1;
 let globalManualCharOffset = 0;
 let globalLastTick = Date.now();
+let isSyncing = false;
 
 function getTTUTitle() {
   let title = document.title;
@@ -70,6 +74,49 @@ function extractTTUCharCount(): number | null {
   return null;
 }
 
+// Pushes live session status to queue storage without destroying local UI state
+async function liveSyncQueue() {
+  if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
+  isSyncing = true;
+
+  try {
+    const title = getTTUTitle();
+    const dateStr = new Date().toISOString();
+    const secs = Math.round(ttuState.timeMs / 1000);
+
+    const queue = await readingQueueStorage.getValue();
+    let existing = queue.find(q => q.contentTitleNative === title);
+
+    if (!existing) {
+      existing = {
+        id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
+        description: '', chars: ttuState.chars, time: secs,
+        date: dateStr, private: false, tags: [],
+        sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
+      };
+      queue.push(existing);
+    } else {
+      existing.sessions = existing.sessions || [];
+      const sIdx = existing.sessions.findIndex((s:any) => s.id === ttuState.id);
+
+      if (sIdx >= 0) {
+        existing.sessions[sIdx].secs = secs;
+        existing.sessions[sIdx].chars = ttuState.chars;
+        existing.sessions[sIdx].date = dateStr;
+      } else {
+        existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
+      }
+
+      existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+      existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
+    }
+    await readingQueueStorage.setValue(queue);
+  } finally {
+    isSyncing = false;
+  }
+}
+
+// Commits to history, queues, and wipes out UI state for a new session
 async function saveSessionAndQueue() {
   if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
 
@@ -83,26 +130,9 @@ async function saveSessionAndQueue() {
   history[title].push(sessionLog);
   await ttuHistoryStorage.setValue(history);
 
-  const queue = await readingQueueStorage.getValue();
-  let existing = queue.find(q => q.contentTitleNative === title);
+  await liveSyncQueue(); // Ensures exact final precision makes it to the queue
 
-  if (!existing) {
-    existing = {
-      id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
-      description: '', chars: ttuState.chars, time: secs,
-      date: dateStr, private: false, tags: [],
-      sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
-    };
-    queue.push(existing);
-  } else {
-    existing.sessions = existing.sessions || [];
-    existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
-    existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
-    const totalSecs = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
-    existing.time = totalSecs;
-  }
-  await readingQueueStorage.setValue(queue);
-
+  // Reset State
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
@@ -262,8 +292,8 @@ function setupTTUChronometer() {
     wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
     wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
 
-    const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z'; // Pause
-    const playSvg  = 'M8 5v14l11-7z';                   // Play
+    const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+    const playSvg  = 'M8 5v14l11-7z';
 
     const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
     const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
@@ -396,6 +426,10 @@ function setupTTUChronometer() {
       }
       globalLastTick = now;
       updateUI();
+
+      if (currentConfig.ttuAutoSave !== false) {
+        liveSyncQueue();
+      }
     } else if (ttuState.running && document.hidden) {
       globalLastTick = Date.now();
     }
@@ -427,10 +461,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     const target = findTTUInsertPoint();
     if (target && !wrapper) {
-      // Re-check config quickly to prevent injecting if disabled during navigation
-      configStorage.getValue().then(cfg => {
-        if (cfg?.ttuEnabled !== false) setupTTUChronometer();
-      });
+      if (currentConfig.ttuEnabled !== false) setupTTUChronometer();
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
@@ -543,11 +574,11 @@ function buildOverlay(cfg: any) {
   setInterval(() => { timeEl.textContent = fmt((window as any).__nt.getTotal()); }, 1000);
 }
 
-// FIX: Listen for config changes to toggle TTU immediately
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['config']) {
     const newCfg = changes['config'].newValue || {};
     const oldCfg = changes['config'].oldValue || {};
+    currentConfig = newCfg;
 
     if (window.location.hostname.includes(TTU_HOST)) {
       const wasEnabled = oldCfg.ttuEnabled ?? true;
@@ -570,11 +601,10 @@ export default defineContentScript({
 
   async main() {
     const host = window.location.hostname;
-    const cfg  = await configStorage.getValue() as any;
+    const cfg  = currentConfig;
     const skipSites: string[] = cfg.skipSites ?? ['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app'];
 
     if (host.includes(TTU_HOST)) {
-      // FIX: Default to true
       const ttuEnabled = cfg.ttuEnabled ?? true;
       if (!ttuEnabled) return;
       startTimeTracker();

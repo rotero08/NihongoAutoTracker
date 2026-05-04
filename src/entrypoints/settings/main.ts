@@ -70,12 +70,17 @@ const threshMinsWrap = document.getElementById('thresh-minutes-wrap')!;
 const hideBtnsEl     = document.getElementById('hide-buttons')   as HTMLInputElement;
 const hideJpFieldEl  = document.getElementById('hide-jp-field')!;
 const hideIfNotJpEl  = document.getElementById('hide-if-not-jp') as HTMLInputElement;
-const showTotalEl    = document.getElementById('show-total-badge') as HTMLInputElement;
+
+const showTotalEl    = document.getElementById('show-total-badge') as HTMLSelectElement;
 const saveVideoBtn   = document.getElementById('save-video-btn')!;
+const resetVideoBtn  = document.getElementById('reset-video-btn')!;
+
 const trackTimeEl    = document.getElementById('track-time')       as HTMLInputElement;
 const overlayEls     = document.querySelectorAll<HTMLInputElement>('input[name="overlay-pos"]');
 const saveOverlayBtn = document.getElementById('save-overlay-btn')!;
+const resetOverlayBtn= document.getElementById('reset-overlay-btn')!;
 const allowListOnlyEl= document.getElementById('allow-list-only') as HTMLInputElement;
+
 const queueListEl    = document.getElementById('queue-list')!;
 const queueActions   = document.getElementById('queue-actions')!;
 const navBadge       = document.getElementById('nav-badge')!;
@@ -89,8 +94,10 @@ const allowInputEl   = document.getElementById('allow-input') as HTMLInputElemen
 const skipInputEl    = document.getElementById('skip-input')  as HTMLInputElement;
 const allowAddBtn    = document.getElementById('allow-add')!;
 const skipAddBtn     = document.getElementById('skip-add')!;
+
 const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
 const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
+const resetReadersBtn= document.getElementById('reset-readers-btn')!;
 
 const threshSpinUp   = document.querySelector('.thresh-spin-up') as HTMLButtonElement;
 const threshSpinDn   = document.querySelector('.thresh-spin-dn') as HTMLButtonElement;
@@ -146,14 +153,16 @@ async function loadConfig() {
   hideIfNotJpEl.checked = cfg.hideIfNotJapanese ?? false;
   updateHideJpDim(hideBtnsEl.checked);
 
-  if (showTotalEl) showTotalEl.checked = cfg.showTotalInBadge ?? true;
+  if (showTotalEl) {
+    const isTotal = cfg.showTotalInBadge ?? true;
+    showTotalEl.value = isTotal ? 'total' : 'session';
+  }
 
   trackTimeEl.checked = cfg.trackTime ?? false;
   allowListOnlyEl.checked = cfg.allowListOnly ?? false;
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
   renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ?? [...BUILT_IN_SKIP]);
 
-  // FIX: Make sure the UI mirrors the true default of `true`
   ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
   ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
 }
@@ -199,12 +208,9 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   const host = document.createElement('span');
   host.className = 'site-item-host';
   host.textContent = domain;
-
-  // FIX: Make it editable
   host.contentEditable = 'true';
   host.spellcheck = false;
 
-  // FIX: Save on enter key
   host.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -212,11 +218,10 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
     }
   });
 
-  // FIX: Save changes on blur
   host.addEventListener('blur', async () => {
     const newVal = host.textContent?.trim().toLowerCase() || '';
   if (!newVal || newVal === domain) {
-    host.textContent = domain; // Revert if empty or unchanged
+    host.textContent = domain;
     return;
   }
   const cfg = await configStorage.getValue() as any;
@@ -235,7 +240,6 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   rm.onclick = async () => {
     const cfg = await configStorage.getValue() as any;
     const key = list === 'allow' ? 'allowSites' : 'skipSites';
-    // FIX: Fall back to defaults instead of an empty array to prevent wipeout
     const currentList = cfg[key] ?? (list === 'allow' ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP]);
     const next = currentList.filter((d: string) => d !== domain);
     await configStorage.setValue({ ...cfg, [key]: next });
@@ -542,10 +546,27 @@ saveVideoBtn.addEventListener('click', async () => {
     thresholdValue: tVal,
     hideButtons: hideBtnsEl.checked,
     hideIfNotJapanese: hideIfNotJpEl.checked,
-    showTotalInBadge: showTotalEl.checked
+    showTotalInBadge: showTotalEl.value === 'total'
   });
   showStatus('✓ Video Settings Saved');
 });
+
+resetVideoBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({
+    ...cfg,
+    autoSend: false,
+    logMode: 'manual',
+    thresholdType: 'percent',
+    thresholdValue: 95,
+    hideButtons: false,
+    hideIfNotJapanese: false,
+    showTotalInBadge: true
+  });
+  loadConfig();
+  showStatus('✓ Defaults Restored');
+});
+
 
 // 3. Overlay
 document.querySelectorAll('.sites-toggle-head').forEach(head => {
@@ -590,6 +611,21 @@ await configStorage.setValue({
 showStatus('✓ Overlay Settings Saved');
 });
 
+resetOverlayBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({
+    ...cfg,
+    trackTime: true,
+    allowListOnly: false,
+    overlayPosition: 'top-right',
+    allowSites: [...BUILT_IN_ALLOW],
+    skipSites: [...BUILT_IN_SKIP]
+  });
+  loadConfig();
+  showStatus('✓ Defaults Restored');
+});
+
+
 // 4. Readers
 ttuEnabledEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
@@ -601,6 +637,17 @@ ttuAutoSaveEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({ ...cfg, ttuAutoSave: ttuAutoSaveEl.checked });
   showStatus(ttuAutoSaveEl.checked ? '✓ TTU Auto-sync enabled' : '✓ TTU Auto-sync disabled');
+});
+
+resetReadersBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({
+    ...cfg,
+    ttuEnabled: true,
+    ttuAutoSave: true
+  });
+  loadConfig();
+  showStatus('✓ Defaults Restored');
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
