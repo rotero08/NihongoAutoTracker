@@ -274,8 +274,11 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
   const dateVal = (item.date ? item.date : new Date().toISOString()).split('T')[0];
-  const title = esc(item.contentTitleNative || 'Unknown Title');
-  const urlOrMeta = type === 'reading' ? 'TTU Reader' : esc(item.channelTitle || item.channelId || 'YouTube');
+  const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
+
+  // Custom display requested: Channel Name • URL
+  const channelName = type === 'reading' ? 'TTU Reader' : esc(item.contentTitleNative || 'YouTube');
+  const urlDisplay = esc(item.contentTitleEnglish || '');
 
   let charsGroup = '';
   if (type === 'reading') {
@@ -291,7 +294,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   el.innerHTML = `
   <div class="qi-row top-row">
-  <input class="qi-desc" type="text" value="${esc(item.description || item.contentTitleNative || '')}" placeholder="${type === 'reading' ? 'Title / Note' : 'Video Title'}"/>
+  <input class="qi-desc" type="text" value="${title}" placeholder="${type === 'reading' ? 'Title / Note' : 'Video Title'}"/>
   <div style="display:flex;gap:6px;">
   <div class="qi-spin-group">
   <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
@@ -304,7 +307,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>
   </div>
   <div class="qi-row mid-row">
-  <span class="qi-meta">${urlOrMeta} • ${title}</span>
+  <span class="qi-meta">${channelName} &bull; ${urlDisplay}</span>
   <input type="date" class="qi-date-input" value="${dateVal}" ${sessions.length > 1 ? 'disabled style="opacity:0.5"' : ''}/>
   </div>
   ${sessionsHtml}

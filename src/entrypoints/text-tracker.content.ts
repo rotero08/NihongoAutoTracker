@@ -74,7 +74,6 @@ function extractTTUCharCount(): number | null {
   return null;
 }
 
-// Pushes live session status to queue storage without destroying local UI state
 async function liveSyncQueue() {
   if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
   isSyncing = true;
@@ -116,7 +115,6 @@ async function liveSyncQueue() {
   }
 }
 
-// Commits to history, queues, and wipes out UI state for a new session
 async function saveSessionAndQueue() {
   if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
 
@@ -130,12 +128,15 @@ async function saveSessionAndQueue() {
   history[title].push(sessionLog);
   await ttuHistoryStorage.setValue(history);
 
-  await liveSyncQueue(); // Ensures exact final precision makes it to the queue
+  await liveSyncQueue();
 
   // Reset State
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
+  const currentCount = extractTTUCharCount();
+  globalSessionStartChar = currentCount !== null ? currentCount : -1;
+  globalManualCharOffset = 0;
   ttuState.running = false;
 
   showToast(`Session queued!`);
@@ -170,7 +171,7 @@ function injectTTUStyles() {
   .nt-ttu-btn-icon { background: transparent; color: #aaa; border: none; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border-radius: 50%; }
   .nt-ttu-btn-icon:hover { background: rgba(255,255,255,0.08); color: #fff; }
   .nt-ttu-btn-icon.primary { color: #f0b429; }
-  .nt-ttu-btn-icon.primary:hover { background: rgba(240,180,41,0.15); color: #ffcc33; }
+  .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: #ffcc33; }
   .nt-ttu-btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
 
   .nt-ttu-history { border-top: 1px solid #3a3a3a; font-size: 12px; }
@@ -253,6 +254,7 @@ function setupTTUChronometer() {
   const toggleBtn = wrapper.querySelector('#nt-ttu-btn-toggle')!;
   const timeVal = wrapper.querySelector('#nt-ttu-val-time')!;
   const charsVal = wrapper.querySelector('#nt-ttu-val-chars')!;
+  const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
 
   let cachedHistoryMins = 0;
   let cachedHistoryChars = 0;
@@ -304,6 +306,18 @@ function setupTTUChronometer() {
     }
     if (mainIconPath) {
       mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+    }
+
+    if (currentConfig.ttuAutoSave !== false) {
+      btnLog.disabled = true;
+      btnLog.style.opacity = '0.3';
+      btnLog.style.cursor = 'not-allowed';
+      btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+    } else {
+      btnLog.disabled = false;
+      btnLog.style.opacity = '1';
+      btnLog.style.cursor = 'pointer';
+      btnLog.title = 'Save & Queue';
     }
   };
 
@@ -404,11 +418,10 @@ function setupTTUChronometer() {
     updateUI();
   });
 
-  wrapper.querySelector('#nt-ttu-btn-log')!.addEventListener('click', async (e) => {
+  btnLog.addEventListener('click', async (e) => {
     e.stopPropagation();
+    if (currentConfig.ttuAutoSave !== false) return; // Prevent manual save if autosyncing
     await saveSessionAndQueue();
-    globalSessionStartChar = extractTTUCharCount() || 0;
-    globalManualCharOffset = 0;
     await updateHistoryData();
     updateUI();
   });
@@ -591,6 +604,42 @@ browser.storage.onChanged.addListener((changes, area) => {
       } else if (isEnabled && !wasEnabled) {
         setupTTUChronometer();
       }
+
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) {
+        const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
+        if (isEnabled && currentConfig.ttuAutoSave !== false) {
+          btnLog.disabled = true;
+          btnLog.style.opacity = '0.3';
+          btnLog.style.cursor = 'not-allowed';
+          btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+        } else if (isEnabled) {
+          btnLog.disabled = false;
+          btnLog.style.opacity = '1';
+          btnLog.style.cursor = 'pointer';
+          btnLog.title = 'Save & Queue';
+        }
+      }
+    }
+  }
+
+  // Listen for the queue resetting via Settings UI send
+  if (area === 'local' && changes['readingQueue']) {
+    const queue = changes['readingQueue'].newValue || [];
+    const title = getTTUTitle();
+    const exists = queue.some((q: any) => q.contentTitleNative === title);
+
+    if (!exists && ttuState.timeMs > 0) {
+      ttuState.timeMs = 0;
+      ttuState.chars = 0;
+      const currentCount = extractTTUCharCount();
+      globalSessionStartChar = currentCount !== null ? currentCount : -1;
+      globalManualCharOffset = 0;
+
+      const timeVal = document.querySelector('#nt-ttu-val-time');
+      const charsVal = document.querySelector('#nt-ttu-val-chars');
+      if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
+      if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
     }
   }
 });

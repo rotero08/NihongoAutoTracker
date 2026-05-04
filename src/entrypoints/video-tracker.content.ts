@@ -439,15 +439,6 @@ function ensureCounter(
             if (ok) {
               toast(`✓ Logged: ${final.time} min`);
               await removeFromQueue(url);
-
-              watchedSecs = 0;
-              completedSessionSecs = 0;
-              lastSyncSecs = 0;
-              lastAutoCheckSecs = 0;
-              state.hasTriggered = false;
-
-              const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
-              if (badgeLabel) badgeLabel.textContent = "0:00";
             } else {
               toast(`⚠ API Validation Error`);
               state.hasTriggered = false;
@@ -556,107 +547,116 @@ const attach = (vid: HTMLVideoElement) => {
     playClockStart = performance.now();
   });
 
-  const stopClock = () => { flushPlayClock(); };
-  vid.addEventListener('pause',   stopClock);
-  vid.addEventListener('waiting', stopClock);
-  vid.addEventListener('seeking', stopClock);
-
-  vid.addEventListener('seeked', () => {
-    if (!vid.paused && !vid.ended) playClockStart = performance.now();
+  vid.addEventListener('play', () => {
+    playClockStart = performance.now();
+    if (vid.currentTime < 5) state.hasTriggered = false; // Video restarted
   });
 
-    vid.addEventListener('timeupdate', async () => {
-      const cfg = cachedConfig;
+    const stopClock = () => { flushPlayClock(); };
+    vid.addEventListener('pause',   stopClock);
+    vid.addEventListener('waiting', stopClock);
+    vid.addEventListener('seeking', stopClock);
 
-      if (!state.hasTriggered) {
-        ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
-      }
+    vid.addEventListener('seeked', () => {
+      if (vid.currentTime < 5) state.hasTriggered = false; // Video restarted via scrubbing
+      if (!vid.paused && !vid.ended) playClockStart = performance.now();
+    });
 
-      if (state.hasTriggered || vid.duration <= 0) return;
+      vid.addEventListener('timeupdate', async () => {
+        const cfg = cachedConfig;
 
-      const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-      const liveSecs = getLiveWatched();
-
-      if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
-        lastSyncSecs = liveSecs;
-        if (isLikelyJapaneseCached() && !isMusic()) {
-          await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
+        if (!state.hasTriggered) {
+          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
         }
-      }
 
-      if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
-        lastAutoCheckSecs = liveSecs;
-        if (isLikelyJapaneseCached() && !isMusic()) {
-          const threshType  = cfg.thresholdType  ?? 'percent';
-          const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-          const triggered   = threshType === 'percent'
-          ? (vid.currentTime / vid.duration) * 100 >= threshValue
-          : (liveSecs / 60) >= threshValue;
-          if (triggered) {
-            state.hasTriggered = true;
-            const fullMins = Math.round(vid.duration / 60);
+        if (state.hasTriggered || vid.duration <= 0) return;
 
-            // FIX: Map strictly identical to Video payloads created in UI
-            const ok = await submitLog({
-              type: 'video',
-              mediaId: channelId || 'web-video',
-              description: document.title,
-              mediaData: {
-                channelId: channelId || "web-video",
-                channelTitle: cachedChannelName || getChannelNameFallback()
-              },
-              time: fullMins,
-              date: new Date().toISOString(),
-                                       private: false,
-                                         episodes: 0,
-                                         pages: 0,
-                                         unknownDate: false
-            });
+        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+        const liveSecs = getLiveWatched();
 
-            if (ok) {
-              toast(`✓ Auto-logged: ${fullMins} min`);
-              removeFromQueue(currentUrl);
-            } else {
-              toast(`⚠ Auto-log failed`);
-              state.hasTriggered = false;
+        if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
+          lastSyncSecs = liveSecs;
+          if (isLikelyJapaneseCached() && !isMusic()) {
+            await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
+          }
+        }
+
+        if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
+          lastAutoCheckSecs = liveSecs;
+          if (isLikelyJapaneseCached() && !isMusic()) {
+            const threshType  = cfg.thresholdType  ?? 'percent';
+            const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
+            const triggered   = threshType === 'percent'
+            ? (vid.currentTime / vid.duration) * 100 >= threshValue
+            : (liveSecs / 60) >= threshValue;
+            if (triggered) {
+              state.hasTriggered = true;
+
+              // FIX: Only log the time the user actually watched this session
+              const sessionMins = Math.max(1, Math.round(liveSecs / 60));
+
+              // FIX: Exact same payload type used in manual modal
+              const ok = await submitLog({
+                type: 'video',
+                mediaId: channelId || 'web-video',
+                description: document.title,
+                mediaData: {
+                  channelId: channelId || "web-video",
+                  channelTitle: cachedChannelName || getChannelNameFallback()
+                },
+                time: sessionMins,
+                date: new Date().toISOString(),
+                                         private: false,
+                                           episodes: 0,
+                                           pages: 0,
+                                           unknownDate: false
+              });
+
+              if (ok) {
+                toast(`✓ Auto-logged: ${sessionMins} min`);
+                removeFromQueue(currentUrl);
+              } else {
+                toast(`⚠ Auto-log failed`);
+                state.hasTriggered = false;
+              }
             }
           }
         }
-      }
-    });
+      });
 
-    vid.addEventListener('ended', async () => {
-      flushPlayClock();
-      if (state.hasTriggered) return;
-      const cfg = cachedConfig;
-      const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-      if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
-        await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-        completedSessionSecs += watchedSecs;
-        watchedSecs = 0;
-        currentSessionId = crypto.randomUUID();
-      }
-    });
-
-    vid.addEventListener('emptied', async () => {
-      flushPlayClock();
-      const urlNow = cleanUrl(window.location.href);
-      if (urlNow !== currentUrl) {
-        if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
+      vid.addEventListener('ended', async () => {
+        flushPlayClock();
+        if (state.hasTriggered) return;
+        const cfg = cachedConfig;
+        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+        if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
           await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+          completedSessionSecs += watchedSecs;
+          watchedSecs = 0;
+          currentSessionId = crypto.randomUUID();
         }
-        watchedSecs = 0;
-        lastSyncSecs = 0;
-        lastAutoCheckSecs = 0;
-        state.hasTriggered = false;
-        document.getElementById('nt-status-badge')?.remove();
-      }
-    });
+      });
+
+      vid.addEventListener('emptied', async () => {
+        flushPlayClock();
+        const urlNow = cleanUrl(window.location.href);
+        if (urlNow !== currentUrl) {
+          if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
+            await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+          }
+          watchedSecs = 0;
+          lastSyncSecs = 0;
+          lastAutoCheckSecs = 0;
+          state.hasTriggered = false;
+          document.getElementById('nt-status-badge')?.remove();
+        }
+      });
 };
 
 browser.storage.onChanged.addListener((changes, area) => {
   configStorage.getValue().then(c => { if(c) cachedConfig = c; });
 
+  // FIX: Reset clock when a video log is successfully processed & removed from Queue
   if (area === 'local' && changes['videoQueue']) {
     const queue = changes['videoQueue'].newValue || [];
     const clean = cleanUrl(window.location.href);
@@ -666,6 +666,12 @@ browser.storage.onChanged.addListener((changes, area) => {
       watchedSecs = 0;
       lastSyncSecs = 0;
       lastAutoCheckSecs = 0;
+      state.hasTriggered = false;
+
+      if (!trackedVideo?.paused && !trackedVideo?.ended) {
+        playClockStart = performance.now();
+      }
+
       const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
       if (badgeLabel) badgeLabel.textContent = "0:00";
     }

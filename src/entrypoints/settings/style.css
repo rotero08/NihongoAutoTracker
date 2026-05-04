@@ -104,7 +104,19 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .qi-spin-nav button:hover { color: var(--amber); }
 .qi-spin-nav svg { width: 8px; height: 8px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; }
 
-.qi-meta { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; color: var(--muted); }
+.qi-meta {
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE 10+ */
+  flex: 1;
+  color: var(--muted);
+  cursor: text;
+  user-select: text;
+}
+.qi-meta::-webkit-scrollbar { display: none; /* Chrome/Safari */ }
+
 .qi-date-input { background: transparent; border: none; color: var(--muted); font-family: var(--mono); font-size: 11px; outline: none; cursor: pointer; color-scheme: dark; text-align: right; }
 .qi-date-input:hover, .qi-date-input:focus { color: var(--text); }
 
