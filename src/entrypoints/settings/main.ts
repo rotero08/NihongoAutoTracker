@@ -276,14 +276,12 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   }
 
   const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
-
-  // Set date based on first session inherently, allowing fallback to standard Date
   const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
   const dateVal = toLocalDT(defaultDateStr);
 
   const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
+  const isLinked = type === 'reading' && item.mediaId && item.mediaId !== 'web-reading';
 
-  // Fix 1: Properly stringify TTU Reader meta text
   let channelName = '';
   let urlDisplay = '';
   if (type === 'reading') {
@@ -308,7 +306,12 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   el.innerHTML = `
   <div class="qi-row top-row">
-  <input class="qi-desc" type="text" value="${title}" placeholder="${type === 'reading' ? 'Title / Note' : 'Video Title'}"/>
+  <div class="qi-search-wrap" style="${type !== 'reading' ? 'display:block;flex:1' : ''}">
+  ${type === 'reading' ? `<svg class="qi-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` : ''}
+  <input class="qi-desc ${type === 'reading' ? 'searchable' : ''}" type="text" value="${title}" placeholder="${type === 'reading' ? 'Search AniList...' : 'Video Title'}"/>
+  ${isLinked ? `<span class="qi-link-status" title="Linked to AniList">✓</span>` : ''}
+  ${type === 'reading' ? `<div class="qi-search-dropdown"></div>` : ''}
+  </div>
   <div style="display:flex;gap:6px;">
   <div class="qi-spin-group">
   <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
@@ -330,57 +333,174 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <button class="btn btn-ghost btn-sm qi-remove">Remove</button>
   </div>`;
 
+  const descInput = el.querySelector('.qi-desc') as HTMLInputElement;
+
+  if (type === 'reading') {
+    const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
+    let debounceTimer: any;
+
+    descInput.addEventListener('input', () => {
+      if (item.mediaId && item.mediaId !== 'web-reading') {
+        item.mediaId = 'web-reading';
+        item.mediaData = null;
+        el.querySelector('.qi-link-status')?.remove();
+      }
+
+      clearTimeout(debounceTimer);
+      const query = descInput.value.trim();
+      if (query.length < 2) {
+        dropdown.classList.remove('open');
+        return;
+      }
+
+      debounceTimer = setTimeout(async () => {
+        dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">Searching AniList...</div>';
+        dropdown.classList.add('open');
+
+        try {
+          const cfg = await configStorage.getValue() as any;
+          const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+            headers: { 'X-API-Key': cfg.apiKey ?? '' }
+          });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          const results = Array.isArray(data) ? data : (data.data ?? []);
+
+          if (results.length === 0) {
+            dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">No results found</div>';
+            return;
+          }
+
+          dropdown.innerHTML = '';
+      results.forEach(m => {
+        const row = document.createElement('div');
+        row.className = 'qi-search-item';
+        const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+        const eng = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+        const img = m.coverImage || m.contentImage || '';
+
+      row.innerHTML = `
+      ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
+      <div class="qi-search-info">
+      <div class="qi-search-title">${esc(native)}</div>
+      <div class="qi-search-sub">${esc(eng)}</div>
+      </div>
+      `;
+
+      row.addEventListener('mousedown', async (e) => {
+        e.preventDefault();
+        descInput.value = native;
+
+        const { volume } = parseTitle(native);
+        item.mediaData = {
+          contentId:           m.contentId,
+          contentTitleNative:  native,
+          contentTitleEnglish: eng,
+          contentTitleRomaji:  m.title?.contentTitleRomaji || m.contentTitleRomaji,
+          contentImage:        img,
+          coverImage:          img,
+          chapters:            m.chapters,
+          volumes:             m.volumes,
+        };
+        item.mediaId = m.contentId;
+        item.volume = volume || 1;
+        item.description = native;
+
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x:any) => x.id === item.id);
+        if (idx > -1) {
+          q[idx] = item;
+          await readingQueueStorage.setValue(q);
+        }
+
+        dropdown.classList.remove('open');
+        if (!el.querySelector('.qi-link-status')) {
+          descInput.insertAdjacentHTML('afterend', `<span class="qi-link-status" title="Linked to AniList">✓</span>`);
+        }
+      });
+      dropdown.appendChild(row);
+      });
+        } catch {
+          dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--red)">Search failed</div>';
+        }
+      }, 500);
+    });
+
+    descInput.addEventListener('blur', () => dropdown.classList.remove('open'));
+    descInput.addEventListener('focus', () => {
+      if (dropdown.children.length > 0 && descInput.value.trim().length >= 2) {
+        dropdown.classList.add('open');
+      }
+    });
+  }
+
   const minsEl = el.querySelector<HTMLInputElement>('.qi-mins')!;
   const charsEl = el.querySelector<HTMLInputElement>('.qi-chars');
   const sessionMinsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.qi-session-mins'));
   const sessionCharsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.qi-session-chars'));
 
-  // Fix 2: Realtime sync of session sums -> general fields
-  const syncSums = () => {
+  // Ensure minimum limits are dynamically updated and preserved
+  const updateGeneralMin = () => {
     const sumMins = sessionMinsEls.reduce((acc, input) => acc + Number(input.value), 0);
-    if (sumMins > Number(minsEl.value)) minsEl.value = String(sumMins);
+    minsEl.min = String(sumMins);
+    if (Number(minsEl.value) < sumMins) minsEl.value = String(sumMins);
 
     if (charsEl) {
       const sumChars = sessionCharsEls.reduce((acc, input) => acc + Number(input.value), 0);
-      if (sumChars > Number(charsEl.value)) charsEl.value = String(sumChars);
+      charsEl.min = String(sumChars);
+      if (Number(charsEl.value) < sumChars) charsEl.value = String(sumChars);
     }
   };
 
-  el.querySelector('.mins-up')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) + 1)); });
-  el.querySelector('.mins-dn')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) - 1)); });
-  minsEl.addEventListener('input', syncSums);
-  sessionMinsEls.forEach(input => input.addEventListener('input', syncSums));
+  updateGeneralMin();
 
-  if (charsEl) {
-    el.querySelector('.chars-up')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) + 100)); });
-    el.querySelector('.chars-dn')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) - 100)); });
-    charsEl.addEventListener('input', syncSums);
-    sessionCharsEls.forEach(input => input.addEventListener('input', syncSums));
-  }
-
-  el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
-  el.querySelector('.qi-send')!.addEventListener('click', () => sendOne(item.id, el));
-
-  el.querySelectorAll('.qi-session-remove').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
-      const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
-      const q = await targetStorage.getValue();
-      const idx = q.findIndex((x: any) => x.id === item.id);
-      if (idx !== -1) {
-        q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
-        const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-        q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
-        if (type === 'reading') {
-          q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
-        }
-        await targetStorage.setValue(q);
-        renderQueue();
-      }
-    });
+  el.querySelector('.mins-up')!.addEventListener('click', () => { minsEl.value = String(Number(minsEl.value) + 1); });
+  el.querySelector('.mins-dn')!.addEventListener('click', () => {
+    const minVal = Number(minsEl.min || 0);
+    minsEl.value = String(Math.max(minVal, Number(minsEl.value) - 1));
   });
+  minsEl.addEventListener('blur', () => {
+    const minVal = Number(minsEl.min || 0);
+    if (Number(minsEl.value) < minVal) minsEl.value = String(minVal);
+  });
+    sessionMinsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
 
-  return el;
+    if (charsEl) {
+      el.querySelector('.chars-up')!.addEventListener('click', () => { charsEl.value = String(Number(charsEl.value) + 100); });
+      el.querySelector('.chars-dn')!.addEventListener('click', () => {
+        const minVal = Number(charsEl.min || 0);
+        charsEl.value = String(Math.max(minVal, Number(charsEl.value) - 100));
+      });
+      charsEl.addEventListener('blur', () => {
+        const minVal = Number(charsEl.min || 0);
+        if (Number(charsEl.value) < minVal) charsEl.value = String(minVal);
+      });
+        sessionCharsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
+    }
+
+    el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
+    el.querySelector('.qi-send')!.addEventListener('click', () => sendOne(item.id, el));
+
+    el.querySelectorAll('.qi-session-remove').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
+        const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+        const q = await targetStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx !== -1) {
+          q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
+          const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+          q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
+          if (type === 'reading') {
+            q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+          }
+          await targetStorage.setValue(q);
+          renderQueue();
+        }
+      });
+    });
+
+    return el;
 }
 
 // ── Payload Compiler ──────────────────────────────────────────────────────────
@@ -416,7 +536,6 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
     base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
   }
 
-  // Fix 3: Condition determining mapping type based on Overridden Sum values
   if (sessionNodes.length === 0 || generalMins > sumMins || (type === 'reading' && generalChars > sumChars)) {
     return [{
       ...base,
@@ -426,7 +545,6 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
     }];
   }
 
-  // Otherwise map 1:1 using Session stats explicitly
   return sessionNodes.map(node => ({
     ...base,
     time: Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value),
