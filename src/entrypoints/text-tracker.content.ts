@@ -43,7 +43,10 @@ const ttuState = {
 };
 
 function getTTUTitle() {
-  return document.title.replace(/\s*[–—-]\s*ttu.*$/i, '').trim() || document.title;
+  let title = document.title;
+  title = title.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '');
+  title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
+  return title.trim() || document.title;
 }
 
 function extractTTUCharCount(): number | null {
@@ -84,7 +87,7 @@ async function saveSessionAndQueue() {
   if (!existing) {
     existing = {
       id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
-      description: '', chars: ttuState.chars, time: Math.max(1, Math.round(secs / 60)),
+      description: '', chars: ttuState.chars, time: secs, // Stored as seconds!
       date: dateStr, private: false, tags: [],
       sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
     };
@@ -94,7 +97,7 @@ async function saveSessionAndQueue() {
     existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
     existing.chars = existing.sessions.reduce((acc, s) => acc + s.chars, 0);
     const totalSecs = existing.sessions.reduce((acc, s) => acc + s.secs, 0);
-    existing.time = Math.max(1, Math.round(totalSecs / 60));
+    existing.time = totalSecs; // Stored as seconds!
   }
   await readingQueueStorage.setValue(queue);
 
@@ -104,7 +107,7 @@ async function saveSessionAndQueue() {
   ttuState.chars = 0;
   ttuState.running = false;
 
-  showTTUToast(`Session queued!`);
+  showToast(`Session queued!`);
 }
 
 // --- STYLES ---
@@ -119,7 +122,7 @@ function injectTTUStyles() {
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 22px; height: 22px; fill: currentColor; }
 
-  #nt-ttu-dropdown { position: absolute; top: 100%; right: 0; margin-top: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 240px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; }
+  #nt-ttu-dropdown { position: absolute; top: 100%; right: 0; margin-top: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 240px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; }
   #nt-ttu-dropdown.open { display: flex; }
 
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
@@ -222,7 +225,10 @@ function setupTTUChronometer() {
 
   let cachedHistoryMins = 0;
   let cachedHistoryChars = 0;
-  let sessionMaxChar = extractTTUCharCount() || 0; // The intelligent tracking anchor
+
+  // Intelligent reading bounds tracking
+  let sessionStartChar = extractTTUCharCount() || 0;
+  let manualCharOffset = 0;
   let lastTick = Date.now();
 
   const updateHistoryData = async () => {
@@ -289,7 +295,13 @@ function setupTTUChronometer() {
           if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
         } else {
           const val = parseInt(input.value.replace(/\D/g, ''));
-          if (!isNaN(val) && val >= 0) ttuState.chars = val;
+          if (!isNaN(val) && val >= 0) {
+            const currentCount = extractTTUCharCount() || 0;
+            let diff = currentCount - sessionStartChar;
+            if (diff < 0) diff = 0;
+            manualCharOffset = val - diff;
+            ttuState.chars = val;
+          }
         }
         input.replaceWith(el);
         updateUI();
@@ -315,7 +327,6 @@ function setupTTUChronometer() {
   });
 
   document.addEventListener('click', (e) => {
-    // composedPath ensures the UI doesn't close if we click elements that got swapped (like the editable inputs)
     if (!e.composedPath().includes(wrapper)) {
       dropdown.classList.remove('open');
     }
@@ -324,7 +335,10 @@ function setupTTUChronometer() {
   toggleBtn.addEventListener('click', () => {
     ttuState.running = !ttuState.running;
     if (ttuState.running) {
-      sessionMaxChar = extractTTUCharCount() || 0;
+      // Shifting the anchor forwards to prevent counting skipped jumps
+      const currentCount = extractTTUCharCount() || 0;
+      const oldDiff = ttuState.chars - manualCharOffset;
+      sessionStartChar = currentCount - oldDiff;
       lastTick = Date.now();
     }
     updateUI();
@@ -333,13 +347,15 @@ function setupTTUChronometer() {
   wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', () => {
     ttuState.timeMs = 0;
     ttuState.chars = 0;
-    sessionMaxChar = extractTTUCharCount() || 0;
+    sessionStartChar = extractTTUCharCount() || 0;
+    manualCharOffset = 0;
     updateUI();
   });
 
   wrapper.querySelector('#nt-ttu-btn-log')!.addEventListener('click', async () => {
     await saveSessionAndQueue();
-    sessionMaxChar = extractTTUCharCount() || 0;
+    sessionStartChar = extractTTUCharCount() || 0;
+    manualCharOffset = 0;
     await updateHistoryData();
     updateUI();
   });
@@ -352,21 +368,10 @@ function setupTTUChronometer() {
 
       const currentCount = extractTTUCharCount();
       if (currentCount !== null) {
-        const delta = currentCount - sessionMaxChar;
-
-        // Intelligent Char heuristic:
-        if (delta > 0) {
-          if (delta <= 5000) {
-            // Normal reading pace / page turn -> ADD to tracker
-            ttuState.chars += delta;
-          }
-          // Always update anchor to prevent double-counting massive forward skips
-          sessionMaxChar = currentCount;
-        } else if (delta < -2000) {
-          // The user deliberately jumped backwards heavily (e.g. previous chapter)
-          // Reset the anchor so reading forward from here counts.
-          sessionMaxChar = currentCount;
-        }
+        let diff = currentCount - sessionStartChar;
+        // If they scroll backwards heavily, difference drops. We cap floor it at 0
+        if (diff < 0) diff = 0;
+        ttuState.chars = diff + manualCharOffset;
       }
       lastTick = now;
       if (dropdown.classList.contains('open')) updateUI();
@@ -399,19 +404,43 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     setupTTUChronometer();
 }
 
-function showTTUToast(msg: string, err = false) {
+// Ensure the toast matches the extension aesthetics and defies page layout quirks
+function showToast(msg: string, err = false) {
   const el = document.createElement('div');
   Object.assign(el.style, {
     position:'fixed',bottom:'20px',right:'20px',zIndex:'2147483647',
     background: err ? '#1a0f0f' : '#0f1a0f', color: err ? '#f0706a' : '#3ddc84',
     border: `1px solid ${err ? 'rgba(240,112,106,.4)' : 'rgba(61,220,132,.4)'}`,
                 borderRadius:'5px',padding:'9px 15px', fontFamily:"'Courier New',monospace",
-                fontSize:'12px', boxShadow:'0 4px 20px rgba(0,0,0,.6)'
+                fontSize:'13px', boxShadow:'0 4px 20px rgba(0,0,0,.6)',
+                writingMode: 'horizontal-tb', direction: 'ltr', textAlign: 'left', lineHeight: '1.4'
   });
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3500);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.5s';
+    setTimeout(() => el.remove(), 500);
+  }, 3000);
 }
+
+// Globally register the toast listener
+if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
+  browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
+    if (req.action === 'GET_ACTIVE_TIME') {
+      const nt = (window as any).__nt;
+      if (nt && nt.getTotal) sendResponse({ minutes: Math.floor(nt.getTotal() / 60000) });
+    }
+    if (req.action === 'SHOW_TOAST') {
+      showToast(`${req.title}: ${req.message}`, req.title.toLowerCase().includes('fail') || req.title.toLowerCase().includes('error'));
+    }
+  });
+}
+window.addEventListener('message', (event) => {
+  if (event.data?.action === 'SHOW_TOAST') {
+    showToast(`${event.data.title}: ${event.data.message}`, event.data.title.toLowerCase().includes('fail') || event.data.title.toLowerCase().includes('error'));
+  }
+});
 
 function startTimeTracker() {
   let activeMs = 0, lastStamp = Date.now(), isVisible = !document.hidden, isPaused = false;
@@ -420,9 +449,6 @@ function startTimeTracker() {
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { accrue(); isVisible = false; } else { lastStamp = Date.now(); isVisible = true; }
-  });
-  browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
-    if (req.action === 'GET_ACTIVE_TIME') sendResponse({ minutes: Math.floor(getTotal() / 60000) });
   });
   (window as any).__nt = { getTotal, setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); }, pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } }, isPaused: () => isPaused };
 }

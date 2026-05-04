@@ -36,7 +36,7 @@ export interface QueuedReadingLog {
   contentTitleEnglish: string;
   description: string;
   chars: number;
-  time: number;
+  time: number; // Stored in seconds for granular queue building
   date: string;
   private: boolean;
   tags: string[];

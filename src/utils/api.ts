@@ -1,7 +1,22 @@
 // Notify routes through background — browser.notifications unavailable in content scripts
 export function notify(title: string, message: string) {
   try {
-    browser.runtime.sendMessage({ action: 'NOTIFY', title, message });
+    if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+      // Extension background script
+      if (browser.notifications && browser.notifications.create) {
+        browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icon128.png'), title, message }).catch(() => null);
+      }
+      browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+        if (tabs[0]?.id) browser.tabs.sendMessage(tabs[0].id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+      }).catch(() => null);
+    } else {
+      // Content script or popup
+      browser.runtime.sendMessage({ action: 'NOTIFY', title, message }).catch(() => null);
+      // Attempt local injection fallback if available
+      if (typeof window !== 'undefined') {
+        window.postMessage({ action: 'SHOW_TOAST', title, message }, '*');
+      }
+    }
   } catch (e) {
     // Context invalidated (e.g. extension reloaded) — silent
   }
@@ -33,7 +48,16 @@ export async function submitLog(payload: Record<string, unknown>): Promise<boole
     } else {
       const errorText = await response.text();
       console.error('NT API error:', errorText);
-      notify('Log Failed', `Status: ${response.status}`);
+
+      let shortError = errorText;
+      try {
+        const jsonErr = JSON.parse(errorText);
+        if (jsonErr.message) shortError = jsonErr.message;
+      } catch (e) {
+        shortError = errorText.slice(0, 40) + (errorText.length > 40 ? '...' : '');
+      }
+
+      notify('Log Failed', `Status: ${response.status} - ${shortError}`);
       return false;
     }
   } catch (err) {

@@ -24,6 +24,26 @@ document.querySelectorAll<HTMLElement>('.nav-item').forEach(item => {
   });
 });
 
+let currentFilter = 'all';
+document.querySelectorAll('.q-tab').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    document.querySelectorAll('.q-tab').forEach(b => b.classList.remove('active'));
+    const target = e.target as HTMLElement;
+    target.classList.add('active');
+    currentFilter = target.dataset.filter!;
+    applyFilter();
+  });
+});
+
+function applyFilter() {
+  const items = document.querySelectorAll('.qi');
+  items.forEach(el => {
+    const type = (el as HTMLElement).dataset.type;
+    const match = currentFilter === 'all' || currentFilter === type;
+    (el as HTMLElement).style.display = match ? 'flex' : 'none';
+  });
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const statusEl = document.getElementById('status')!;
 let statusTimer: ReturnType<typeof setTimeout>;
@@ -74,7 +94,6 @@ const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElem
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
-function trunc(s: string, n: number) { return s && s.length > n ? s.slice(0, n) + '…' : (s || ''); }
 const toLocalDT = (iso: string) => {
   if (!iso) return '';
   const d = new Date(iso);
@@ -82,6 +101,32 @@ const toLocalDT = (iso: string) => {
 };
 const SVG_UP = `<svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg>`;
 const SVG_DN = `<svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg>`;
+
+function parseTitle(docTitle: string) {
+  let base = docTitle.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '').trim();
+  let title = base;
+  let volume: number | undefined = undefined;
+
+  // If entirely digits, keep as title and don't assume it's just a volume number
+  if (/^\d+$/.test(base)) {
+    return { query: base, volume: undefined };
+  }
+
+  // Attempt to extract trailing volume info
+  const volMatch = base.match(/^(.*?)[\s\-_]+(?:vol(?:ume)?\.?\s*|v|第)?(\d+)\s*(?:巻|話|章)?$/i);
+  if (volMatch && volMatch[1].trim().length > 0 && !/^\d+$/.test(volMatch[1].trim())) {
+    title = volMatch[1].trim();
+    volume = parseInt(volMatch[2], 10);
+  } else {
+    // Fallback if joined without spaces e.g. "MyBook19"
+    const match2 = base.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
+    if (match2) {
+      title = match2[1].trim();
+      volume = parseInt(match2[2], 10);
+    }
+  }
+  return { query: title, volume };
+}
 
 // ── Config Logic ──────────────────────────────────────────────────────────────
 async function loadConfig() {
@@ -173,51 +218,54 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     </div>`).join('') + `</div>`;
   }
 
-  const charsHtml = type === 'reading' ? `
-  <div class="qi-spinner" style="margin-left:8px;">
-  <input class="qi-input qi-chars" type="number" value="${item.chars || 0}" min="0" placeholder="Chars"/>
-  <div class="qi-spin-btns">
-  <button type="button" class="qi-spin-up chars-up" tabindex="-1">${SVG_UP}</button>
-  <button type="button" class="qi-spin-dn chars-dn" tabindex="-1">${SVG_DN}</button>
-  </div>
-  </div>` : '';
-
+  // Display minutes (reading items store total seconds in item.time)
+  const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
   const dateVal = (item.date ? item.date : new Date().toISOString()).split('T')[0];
+  const title = esc(item.contentTitleNative || 'Unknown Title');
+  const urlOrMeta = type === 'reading' ? 'TTU Reader' : esc(item.channelTitle || item.channelId || 'YouTube');
+
+  let charsGroup = '';
+  if (type === 'reading') {
+    charsGroup = `
+    <div class="qi-spin-group">
+    <input class="qi-chars" type="number" value="${item.chars || 0}" min="0"/>
+    <div class="qi-spin-nav">
+    <button type="button" class="chars-up" tabindex="-1">${SVG_UP}</button>
+    <button type="button" class="chars-dn" tabindex="-1">${SVG_DN}</button>
+    </div>
+    </div>`;
+  }
 
   el.innerHTML = `
-  <div class="qi-fields">
-  <input class="qi-input qi-desc" type="text" value="${esc(item.description || '')}" placeholder="${type === 'reading' ? 'Session Note / Chapter' : 'Video Title'}"/>
-  <div style="display:flex;gap:8px;">
-  <div class="qi-spinner">
-  <input class="qi-input qi-mins" type="number" value="${item.time || 0}" min="0"/>
-  <div class="qi-spin-btns">
-  <button type="button" class="qi-spin-up mins-up" tabindex="-1">${SVG_UP}</button>
-  <button type="button" class="qi-spin-dn mins-dn" tabindex="-1">${SVG_DN}</button>
+  <div class="qi-row top-row">
+  <input class="qi-desc" type="text" value="${esc(item.description || item.contentTitleNative || '')}" placeholder="${type === 'reading' ? 'Title / Note' : 'Video Title'}"/>
+  <div style="display:flex;gap:6px;">
+  <div class="qi-spin-group">
+  <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
+  <div class="qi-spin-nav">
+  <button type="button" class="mins-up" tabindex="-1">${SVG_UP}</button>
+  <button type="button" class="mins-dn" tabindex="-1">${SVG_DN}</button>
   </div>
   </div>
-  ${charsHtml}
+  ${charsGroup}
   </div>
   </div>
-  <div class="qi-meta-row">
-  <span class="qi-meta-url">
-  <span style="display:inline-block;background:var(--surf);padding:1px 5px;border-radius:3px;margin-right:6px;border:1px solid var(--bdr2);font-size:9px;">${type === 'reading' ? 'READ' : 'WATCH'}</span>
-  ${esc(item.contentTitleNative || 'Unknown Title')}
-  </span>
+  <div class="qi-row mid-row">
+  <span class="qi-meta">${urlOrMeta} • ${title}</span>
   <input type="date" class="qi-date-input" value="${dateVal}" ${sessions.length > 1 ? 'disabled style="opacity:0.5"' : ''}/>
   </div>
   ${sessionsHtml}
-  <div class="qi-btns">
+  <div class="qi-row bot-row">
   <button class="btn btn-amber btn-sm qi-send">Send</button>
   <button class="btn btn-ghost btn-sm qi-remove">Remove</button>
   </div>`;
 
-  // Total spinners
-  const minsEl = el.querySelector<HTMLInputElement>('.qi-fields .qi-mins')!;
+  const minsEl = el.querySelector<HTMLInputElement>('.qi-mins')!;
   el.querySelector('.mins-up')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) + 1)); });
   el.querySelector('.mins-dn')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) - 1)); });
 
   if (type === 'reading') {
-    const charsEl = el.querySelector<HTMLInputElement>('.qi-fields .qi-chars')!;
+    const charsEl = el.querySelector<HTMLInputElement>('.qi-chars')!;
     el.querySelector('.chars-up')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) + 100)); });
     el.querySelector('.chars-dn')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) - 100)); });
   }
@@ -233,7 +281,8 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
       const idx = q.findIndex((x: any) => x.id === item.id);
       if (idx !== -1) {
         q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
-        q[idx].time = Math.round((q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0)) / 60);
+        const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+        q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
         if (type === 'reading') {
           q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
         }
@@ -253,11 +302,27 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   const totalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
 
-  const base = {
-    type, mediaId: type === 'reading' ? 'web-reading' : (item.channelId || "web-video"),
-    mediaData: type === 'reading' ? { title: item.contentTitleNative } : { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative },
-    description: desc, episodes: 0, pages: 0, unknownDate: false
+  // If user hasn't explicitly customized description, use the Native Title mapped from API search/Tab title
+  const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+
+  const base: any = {
+    type,
+    mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
+    description: apiTitle,
+    episodes: 0,
+    pages: 0,
+    unknownDate: false
   };
+
+  if (type === 'reading') {
+    base.volume = item.volume || 1;
+    base.mediaData = item.mediaData || {
+      contentId: "web-reading",
+      contentTitleNative: item.contentTitleNative
+    };
+  } else {
+    base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
+  }
 
   if (sessionNodes.length > 0) {
     return sessionNodes.map(node => ({
@@ -287,7 +352,6 @@ async function renderQueue() {
   queueActions.style.display = total > 0 ? 'flex' : 'none';
   queueListEl.innerHTML = total === 0 ? '<div class="empty-state">Queue is empty</div>' : '';
 
-  // Safely render each item
   rQ.forEach(item => {
     try { queueListEl.appendChild(buildItem(item, 'reading')); }
     catch (e) { console.error("Failed to render reading item", item, e); }
@@ -296,6 +360,8 @@ async function renderQueue() {
     try { queueListEl.appendChild(buildItem(item, 'video')); }
     catch (e) { console.error("Failed to render video item", item, e); }
   });
+
+  applyFilter();
 }
 
 async function sendOne(id: string, el: HTMLElement) {
@@ -308,8 +374,54 @@ async function sendOne(id: string, el: HTMLElement) {
   const btn = el.querySelector('.qi-send') as HTMLButtonElement;
   btn.disabled = true; btn.textContent = '...'; el.classList.add('sending');
 
+  if (type === 'reading') {
+    try {
+      const cfg = await configStorage.getValue() as any;
+      const apiKey = cfg.apiKey ?? '';
+
+      // 1. Sanitize the Title
+      const { query, volume } = parseTitle(item.contentTitleNative);
+
+      // 2. Fetch Media Metadata via AniList Integration
+      if (!item.mediaId || !item.mediaData?.contentId) {
+        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+          headers: { 'X-API-Key': apiKey }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const results: any[] = Array.isArray(data) ? data : (data.data ?? []);
+          if (results.length > 0) {
+            const media = results[0];
+            // Normalize nested title object into flat structure expected by payload builder
+            item.mediaData = {
+              contentId:           media.contentId,
+              contentTitleNative:  media.title?.contentTitleNative  ?? media.contentTitleNative,
+              contentTitleEnglish: media.title?.contentTitleEnglish ?? media.contentTitleEnglish,
+              contentTitleRomaji:  media.title?.contentTitleRomaji  ?? media.contentTitleRomaji,
+              contentImage:        media.contentImage,
+              coverImage:          media.coverImage,
+              chapters:            media.chapters,
+              volumes:             media.volumes,
+            };
+            item.mediaId = media.contentId;
+            item.volume = volume !== undefined ? volume : 1;
+          } else {
+            item.volume = volume || 1;
+          }
+        } else {
+          item.volume = volume || 1;
+        }
+      }
+    } catch (e) {
+      console.error("Anilist fetch error", e);
+    }
+  }
+
+  // 3. Construct the Payload Array mapped to the API schema
   const payloads = getPayloadsForItem(item, el);
+
   let success = true;
+  // 4. Dispatch the API Call
   for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
   if (success) { showStatus('✓ Sent'); removeOne(id, type); }
@@ -326,14 +438,16 @@ async function removeOne(id: string, type: 'video' | 'reading') {
 sendAllBtn.addEventListener('click', async () => {
   const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
   sendAllBtn.disabled = true;
-  for (const el of items) { await sendOne(el.dataset.id!, el); }
+  for (const el of items) {
+    if (el.style.display !== 'none') await sendOne(el.dataset.id!, el);
+  }
   sendAllBtn.disabled = false;
 });
 
 clearAllBtn.addEventListener('click', async () => {
-  if (!confirm('Clear all pending logs?')) return;
-  await videoQueueStorage.setValue([]);
-  await readingQueueStorage.setValue([]);
+  if (!confirm('Clear all pending logs in this section?')) return;
+  if (currentFilter === 'all' || currentFilter === 'video') await videoQueueStorage.setValue([]);
+  if (currentFilter === 'all' || currentFilter === 'reading') await readingQueueStorage.setValue([]);
   renderQueue();
 });
 
@@ -356,12 +470,12 @@ loadConfig();
 renderQueue();
 
 readingQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-input:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus')) {
+  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-session-chars:focus')) {
     renderQueue();
   }
 });
 videoQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-input:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus')) {
+  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-session-chars:focus')) {
     renderQueue();
   }
 });

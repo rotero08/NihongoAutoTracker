@@ -55,7 +55,12 @@
           <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
         </div>
       </div>
-      <p class="hint">Tracked videos and reading sessions. Edit details, add missing character counts, then send.</p>
+      <div class="queue-tabs">
+        <button class="q-tab active" data-filter="all">All</button>
+        <button class="q-tab" data-filter="video">Video</button>
+        <button class="q-tab" data-filter="reading">Reading</button>
+      </div>
+      <p class="hint" style="margin-top:-5px;">Tracked videos and reading sessions. Edit details before sending.</p>
       <div id="queue-list"></div>
     </section>
 
