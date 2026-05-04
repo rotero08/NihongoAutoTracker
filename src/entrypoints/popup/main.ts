@@ -1,5 +1,5 @@
 import './style.css';
-import { videoQueueStorage, configStorage } from '@/utils/storage';
+import { videoQueueStorage, readingQueueStorage, configStorage } from '@/utils/storage';
 import { submitLog } from '@/utils/api';
 
 const queueListEl  = document.getElementById('queue-list')!;
@@ -11,6 +11,27 @@ const btnSettings  = document.getElementById('btn-settings')!;
 const btnSendAll   = document.getElementById('btn-send-all')!;
 const btnClearAll  = document.getElementById('btn-clear-all')!;
 
+let currentFilter = 'all';
+
+document.querySelectorAll('.q-tab').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    document.querySelectorAll('.q-tab').forEach(b => b.classList.remove('active'));
+    const target = e.target as HTMLElement;
+    target.classList.add('active');
+    currentFilter = target.dataset.filter!;
+    applyFilter();
+  });
+});
+
+function applyFilter() {
+  const items = document.querySelectorAll('.qi');
+  items.forEach(el => {
+    const type = (el as HTMLElement).dataset.type;
+    const match = currentFilter === 'all' || currentFilter === type;
+    (el as HTMLElement).style.display = match ? 'flex' : 'none';
+  });
+}
+
 function openSettings() {
   browser.tabs.create({ url: browser.runtime.getURL('/settings.html') });
   window.close();
@@ -18,22 +39,14 @@ function openSettings() {
 btnOpen.addEventListener('click', openSettings);
 btnSettings.addEventListener('click', openSettings);
 
-function esc(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-}
+function esc(s: string) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 
-function fmtMins(secs: number): number {
-  return Math.max(1, Math.round(secs / 60));
-}
-
-function toDateValue(iso: string): string {
-  try { return new Date(iso).toISOString().split('T')[0]; } catch { return ''; }
-}
-
-function fmtDateShort(iso: string): string {
-  try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
-  catch { return ''; }
-}
+const toLocalDT = (iso: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+};
 
 function shortUrl(url: string): string {
   try {
@@ -44,136 +57,385 @@ function shortUrl(url: string): string {
   } catch { return url.slice(0, 20); }
 }
 
-// ── Send single item ──────────────────────────────────────────────────────────
-async function sendItem(item: any, el: HTMLElement): Promise<boolean> {
+function parseTitle(docTitle: string) {
+  let base = docTitle.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '').trim();
+  let title = base;
+  let volume: number | undefined = undefined;
+
+  if (/^\d+$/.test(base)) return { query: base, volume: undefined };
+
+  const volMatch = base.match(/^(.*?)[\s\-_]+(?:vol(?:ume)?\.?\s*|v|第)?(\d+)\s*(?:巻|話|章)?$/i);
+  if (volMatch && volMatch[1].trim().length > 0 && !/^\d+$/.test(volMatch[1].trim())) {
+    title = volMatch[1].trim();
+    volume = parseInt(volMatch[2], 10);
+  } else {
+    const match2 = base.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
+    if (match2) {
+      title = match2[1].trim();
+      volume = parseInt(match2[2], 10);
+    }
+  }
+  return { query: title, volume };
+}
+
+function getPayloadsForItem(item: any, el: HTMLElement) {
+  const type = el.dataset.type as 'video' | 'reading';
+  const desc = (el.querySelector('.qi-title') as HTMLInputElement).value;
+
+  const generalMins = Number((el.querySelector('.qi-time-num') as HTMLInputElement).value);
+  const generalChars = type === 'reading' ? Number((el.querySelector('.qi-chars-num') as HTMLInputElement).value) : 0;
+
+  const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
+  const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.session-num') as HTMLInputElement).value), 0);
+  const sumChars = type === 'reading' ? sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.session-chars') as HTMLInputElement).value), 0) : 0;
+
+  const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+
+  const base: any = {
+    type,
+    mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
+    description: apiTitle,
+    episodes: 0,
+    pages: 0,
+    unknownDate: false
+  };
+
+  if (type === 'reading') {
+    base.volume = item.volume || 1;
+    base.mediaData = item.mediaData || { contentId: "web-reading", contentTitleNative: item.contentTitleNative };
+  } else {
+    base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
+  }
+
+  if (sessionNodes.length === 0 || generalMins > sumMins || (type === 'reading' && generalChars > sumChars)) {
+    return[{
+      ...base,
+      time: generalMins,
+      date: new Date((el.querySelector('.qi-date') as HTMLInputElement).value).toISOString(),
+      chars: generalChars
+    }];
+  }
+
+  return sessionNodes.map(node => ({
+    ...base,
+    time: Number((node.querySelector('.session-num') as HTMLInputElement).value),
+                                   date: new Date((node.querySelector('.session-date') as HTMLInputElement).value).toISOString(),
+                                   chars: type === 'reading' ? Number((node.querySelector('.session-chars') as HTMLInputElement).value) : 0
+  }));
+}
+
+async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
+  const type = el.dataset.type as 'video' | 'reading';
+  const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+  const q = await qStorage.getValue();
+  const item = q.find((x: any) => x.id === id);
+  if (!item) return false;
+
   el.classList.add('sending');
+  const btn = el.querySelector('.qi-send') as HTMLButtonElement;
+  if(btn) btn.disabled = true;
 
-  const titleEl = el.querySelector<HTMLInputElement>('.qi-title')!;
-  const timeEl  = el.querySelector<HTMLInputElement>('.qi-time-num')!;
-  const dateEl  = el.querySelector<HTMLInputElement>('.qi-date')!;
+  if (type === 'reading') {
+    try {
+      const cfg = await configStorage.getValue() as any;
+      const { query, volume } = parseTitle(item.contentTitleNative);
+      if (!item.mediaId || !item.mediaData?.contentId) {
+        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+          headers: { 'X-API-Key': cfg.apiKey ?? '' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const results: any[] = Array.isArray(data) ? data : (data.data ?? []);
+          if (results.length > 0) {
+            const media = results[0];
+            item.mediaData = {
+              contentId: media.contentId,
+              contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
+              contentTitleEnglish: media.title?.contentTitleEnglish ?? media.contentTitleEnglish,
+              contentTitleRomaji: media.title?.contentTitleRomaji ?? media.contentTitleRomaji,
+              contentImage: media.contentImage, coverImage: media.coverImage,
+              chapters: media.chapters, volumes: media.volumes,
+            };
+            item.mediaId = media.contentId;
+            item.volume = volume !== undefined ? volume : 1;
+          } else { item.volume = volume || 1; }
+        } else { item.volume = volume || 1; }
+      }
+    } catch (e) { console.error("Anilist fetch error", e); }
+  }
 
-  const minutes = Math.max(1, parseInt(timeEl.value) || item.time);
-  const desc    = titleEl.value.trim() || item.description || item.contentTitleNative || 'Unknown';
-  const dateISO = dateEl.value ? new Date(dateEl.value).toISOString() : new Date().toISOString();
+  const payloads = getPayloadsForItem(item, el);
+  let success = true;
+  for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
-  const ok = await submitLog({
-    type:        'video',
-    mediaId:     item.channelId || 'web-video',
-    description: desc,
-    mediaData: {
-      channelId:    item.channelId || 'web-video',
-      channelTitle: item.contentTitleNative || '',
-    },
-    episodes:    0,
-    time:        minutes,
-    pages:       0,
-    date:        dateISO,
-    unknownDate: false,
-  });
-
-  if (ok) {
-    const queue = await videoQueueStorage.getValue();
-    await videoQueueStorage.setValue(queue.filter((q: any) => q.id !== item.id));
+  if (success) {
+    await qStorage.setValue(q.filter((x: any) => x.id !== id));
     el.classList.add('sent');
     setTimeout(() => { el.remove(); refreshMeta(); }, 380);
   } else {
     el.classList.remove('sending');
+    if(btn) btn.disabled = false;
   }
-  return ok;
+  return success;
 }
 
-// ── Remove single item ────────────────────────────────────────────────────────
 async function removeItem(id: string, el: HTMLElement) {
-  const queue = await videoQueueStorage.getValue();
-  await videoQueueStorage.setValue(queue.filter((q: any) => q.id !== id));
+  const type = el.dataset.type as 'video' | 'reading';
+  const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+  const q = await qStorage.getValue();
+  await qStorage.setValue(q.filter((x: any) => x.id !== id));
   el.remove();
   await refreshMeta();
 }
 
 async function refreshMeta() {
-  const queue = await videoQueueStorage.getValue();
-  queueCountEl.textContent = String(queue.length);
-  queueBulkEl.style.display = queue.length ? 'flex' : 'none';
-  if (queue.length === 0) {
+  const vQ = await videoQueueStorage.getValue();
+  const rQ = await readingQueueStorage.getValue();
+  const total = vQ.length + rQ.length;
+  queueCountEl.textContent = String(total);
+  queueBulkEl.style.display = total ? 'flex' : 'none';
+  if (total === 0) {
     queueListEl.innerHTML = '<div class="empty-msg">Queue is empty.</div>';
   }
 }
 
-// ── Build one queue item element ──────────────────────────────────────────────
-function buildItem(item: any): HTMLElement {
-  // description = video title, contentTitleNative = channel name
-  const title   = item.description || 'Unknown';
-  const channel = item.contentTitleNative || 'Unknown';
-  const link    = shortUrl(item.contentTitleEnglish || '');
-  const dateVal = toDateValue(item.date);
-  const sessions: any[] = item.sessions ?? [];
+function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
+  const isRead = type === 'reading';
+  const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
+
+  // Parity with detection logic in settings.ts
+  let channelName = '';
+  let urlDisplay = '';
+  if (isRead) {
+    channelName = 'TTU Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
+    urlDisplay = '';
+  } else {
+    channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');
+    urlDisplay = '\u2022 ' + esc(item.contentTitleEnglish || item.channelId || '');
+  }
+
+  const sessions: any[] = item.sessions ??[];
+
+  const displayMins = isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
+  const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
+  const dateVal = toLocalDT(defaultDateStr);
+  const isLinked = isRead && item.mediaId && item.mediaId !== 'web-reading';
 
   const el = document.createElement('div');
   el.className = 'qi';
   el.dataset.id = item.id;
+  el.dataset.type = type;
 
-  // Sessions — each row: dot · editable mins · editable date
-  const sessionsHtml = sessions.length > 0 ? `
-  <div class="qi-sessions">
-  ${sessions.map((s, i) => `
-    <div class="qi-session" data-sidx="${i}">
+  let sessionsHtml = '';
+  if (sessions.length > 1) {
+    // S1, S2, labels added to clarify separate sessions
+    sessionsHtml = `<div class="qi-sessions">` + sessions.map((s, i) => `
+    <div class="qi-session" data-session-id="${s.id}">
     <span class="session-dot"></span>
-    <input class="ghost-num session-num" type="number" min="1"
-    value="${fmtMins(s.secs)}" title="Session minutes" data-sidx="${i}"/>
-    <span style="font-size:9px;color:var(--dim);margin-right:2px;">min</span>
-    <input class="ghost-date session-date" type="date"
-    value="${toDateValue(s.date)}" title="${esc(fmtDateShort(s.date))}" data-sidx="${i}"/>
-    </div>`).join('')}
-    </div>` : '';
+    <span class="session-label">S${i + 1}</span>
+    <input class="ghost-num session-num" type="number" min="1" value="${Math.max(1, Math.round(s.secs / 60))}"/>
+    <span class="unit-lbl">min</span>
+    ${isRead ? `<input class="ghost-num num-chars session-chars" type="number" value="${s.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
+    <input class="ghost-date session-date" type="datetime-local" value="${toLocalDT(s.date)}" style="width:110px; margin-left:auto;"/>
+    <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:12px;">×</button>
+    </div>`).join('') + `</div>`;
+  }
 
-    el.innerHTML = `
-    <div class="qi-title-row">
-    <input class="ghost-input qi-title" type="text"
-    value="${esc(title)}" title="${esc(title)}"/>
-    <button class="qi-del" title="Remove">×</button>
-    </div>
-    <div class="qi-meta-row">
-    <input class="ghost-num qi-time-num" type="number" min="1"
-    value="${item.time}" title="Total minutes"/>
-    <span style="font-size:9px;color:var(--dim);margin-right:3px;flex-shrink:0;">min</span>
-    <span class="qi-meta-sep">·</span>
-    <div class="qi-mid">
-    <span class="qi-channel" title="${esc(channel)}">${esc(channel)}</span>
-    <span class="qi-meta-sep">·</span>
-    <span class="qi-link" title="${esc(item.contentTitleEnglish || '')}">${esc(link)}</span>
-    </div>
-    <input class="ghost-date qi-date" type="date"
-    value="${dateVal}" title="${esc(fmtDateShort(item.date))}"/>
-    <button class="qi-send">Send</button>
-    </div>
-    ${sessionsHtml}`;
+  el.innerHTML = `
+  <div class="qi-title-row">
+  <div class="qi-search-wrap">
+  <input class="ghost-input qi-title" type="text" value="${title}" title="${title}"/>
+  ${isRead ? `<div class="qi-search-dropdown"></div>` : ''}
+  </div>
+  ${isLinked ? `<span class="qi-link-status" style="color:var(--green);font-size:10px;margin-left:4px;">✓</span>` : ''}
+  <button class="qi-del" title="Remove">×</button>
+  </div>
+  <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
+  <input class="ghost-num qi-time-num" type="number" min="1" value="${displayMins}" title="Total minutes"/>
+  <span class="unit-lbl">min</span>
+  ${isRead ? `<input class="ghost-num num-chars qi-chars-num" type="number" min="0" value="${item.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
+  <span class="qi-meta-sep">·</span>
+  <div class="qi-mid">
+  <span class="qi-channel" title="${channelName} ${urlDisplay}">${channelName} ${urlDisplay}</span>
+  </div>
+  <div style="flex-basis: 100%; height: 0;"></div>
+  <input class="ghost-date qi-date" type="datetime-local" value="${dateVal}" style="width:120px; text-align:left; margin-left:0;"/>
+  <button class="qi-send" style="margin-left:auto;">Send</button>
+  </div>
+  ${sessionsHtml}
+  `;
 
-    el.querySelector('.qi-send')!.addEventListener('click', () => sendItem(item, el));
-    el.querySelector('.qi-del')!.addEventListener('click',  () => removeItem(item.id, el));
+  // Reading Search Logic
+  if (isRead) {
+    const descInput = el.querySelector('.qi-title') as HTMLInputElement;
+    const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
+    let debounceTimer: any;
+
+    descInput.addEventListener('input', () => {
+      if (item.mediaId && item.mediaId !== 'web-reading') {
+        item.mediaId = 'web-reading';
+        item.mediaData = null;
+        el.querySelector('.qi-link-status')?.remove();
+      }
+
+      clearTimeout(debounceTimer);
+      const query = descInput.value.trim();
+      if (query.length < 2) { dropdown.classList.remove('open'); return; }
+
+      debounceTimer = setTimeout(async () => {
+        dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--dim)">Searching...</div>';
+        dropdown.classList.add('open');
+
+        try {
+          const cfg = await configStorage.getValue() as any;
+          const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+            headers: { 'X-API-Key': cfg.apiKey ?? '' }
+          });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          const results = Array.isArray(data) ? data : (data.data ?? []);
+
+          if (results.length === 0) {
+            dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--dim)">No results</div>';
+            return;
+          }
+
+          dropdown.innerHTML = '';
+      results.forEach(m => {
+        const row = document.createElement('div');
+        row.className = 'qi-search-item';
+        const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+        const img = m.coverImage || m.contentImage || '';
+
+      row.innerHTML = `
+      ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
+      <div class="qi-search-info">
+      <div class="qi-search-title">${esc(native)}</div>
+      </div>
+      `;
+
+      row.addEventListener('mousedown', async (e) => {
+        e.preventDefault();
+        descInput.value = native;
+
+        const { volume } = parseTitle(native);
+        item.mediaData = {
+          contentId: m.contentId,
+          contentTitleNative: native,
+          contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish,
+          contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
+          contentImage: img, coverImage: img,
+          chapters: m.chapters, volumes: m.volumes,
+        };
+        item.mediaId = m.contentId;
+        item.volume = volume || 1;
+        item.description = native;
+
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx > -1) { q[idx] = item; await readingQueueStorage.setValue(q); }
+
+        dropdown.classList.remove('open');
+        if (!el.querySelector('.qi-link-status')) {
+          descInput.insertAdjacentHTML('afterend', `<span class="qi-link-status" style="color:var(--green);font-size:10px;margin-left:4px;">✓</span>`);
+        }
+      });
+      dropdown.appendChild(row);
+      });
+        } catch {
+          dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--red)">Failed</div>';
+        }
+      }, 500);
+    });
+
+    descInput.addEventListener('blur', () => dropdown.classList.remove('open'));
+    descInput.addEventListener('focus', () => {
+      if (dropdown.children.length > 0 && descInput.value.trim().length >= 2) dropdown.classList.add('open');
+    });
+  }
+
+  // Session limits logic
+  const minsEl = el.querySelector<HTMLInputElement>('.qi-time-num')!;
+  const charsEl = el.querySelector<HTMLInputElement>('.qi-chars-num');
+  const sessionMinsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.session-num'));
+  const sessionCharsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.session-chars'));
+
+  const updateGeneralMin = () => {
+    const sumMins = sessionMinsEls.reduce((acc, input) => acc + Number(input.value), 0);
+    minsEl.min = String(sumMins);
+    if (Number(minsEl.value) < sumMins) minsEl.value = String(sumMins);
+
+    if (charsEl) {
+      const sumChars = sessionCharsEls.reduce((acc, input) => acc + Number(input.value), 0);
+      charsEl.min = String(sumChars);
+      if (Number(charsEl.value) < sumChars) charsEl.value = String(sumChars);
+    }
+  };
+
+  updateGeneralMin();
+
+  minsEl.addEventListener('blur', () => {
+    const minVal = Number(minsEl.min || 0);
+    if (Number(minsEl.value) < minVal) minsEl.value = String(minVal);
+  });
+    sessionMinsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
+
+    if (charsEl) {
+      charsEl.addEventListener('blur', () => {
+        const minVal = Number(charsEl.min || 0);
+        if (Number(charsEl.value) < minVal) charsEl.value = String(minVal);
+      });
+        sessionCharsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
+    }
+
+    el.querySelector('.qi-send')!.addEventListener('click', () => sendItem(item.id, el));
+    el.querySelector('.qi-del')!.addEventListener('click', () => removeItem(item.id, el));
+
+    el.querySelectorAll('.qi-session-remove').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
+        const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+        const q = await targetStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx !== -1) {
+          q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
+          const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+          q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
+          if (type === 'reading') {
+            q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+          }
+          await targetStorage.setValue(q);
+          render(); // re-render
+        }
+      });
+    });
 
     return el;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
 async function render() {
-  const cfg   = await configStorage.getValue();
-  const queue = await videoQueueStorage.getValue();
+  const cfg = await configStorage.getValue();
+  const vQ = await videoQueueStorage.getValue();
+  const rQ = await readingQueueStorage.getValue();
 
   apiPillEl.textContent = cfg?.apiKey ? 'API Key ✓' : 'No API Key';
-  apiPillEl.className   = `pill ${cfg?.apiKey ? 'pill-ok' : 'pill-off'}`;
+  apiPillEl.className = `pill ${cfg?.apiKey ? 'pill-ok' : 'pill-off'}`;
 
-  queueCountEl.textContent = String(queue.length);
-  queueBulkEl.style.display = queue.length ? 'flex' : 'none';
+  const total = vQ.length + rQ.length;
+  queueCountEl.textContent = String(total);
+  queueBulkEl.style.display = total ? 'flex' : 'none';
 
-  if (queue.length === 0) {
+  if (total === 0) {
     queueListEl.innerHTML = '<div class="empty-msg">Queue is empty.</div>';
     return;
   }
 
   queueListEl.innerHTML = '';
-  [...queue].reverse().forEach((item: any) => {
-    queueListEl.appendChild(buildItem(item));
-  });
+  rQ.forEach(item => queueListEl.appendChild(buildItem(item, 'reading')));
+  vQ.forEach(item => queueListEl.appendChild(buildItem(item, 'video')));
+
+  applyFilter();
 }
 
 // ── Send All ──────────────────────────────────────────────────────────────────
@@ -181,11 +443,11 @@ btnSendAll.addEventListener('click', async () => {
   const btn = btnSendAll as HTMLButtonElement;
   btn.textContent = '…'; btn.disabled = true;
 
-  const items = [...queueListEl.querySelectorAll<HTMLElement>('.qi')];
+  const items =[...queueListEl.querySelectorAll<HTMLElement>('.qi')];
   for (const el of items) {
-    const queue = await videoQueueStorage.getValue();
-    const item  = queue.find((q: any) => q.id === el.dataset.id);
-    if (item) await sendItem(item, el);
+    if (el.style.display !== 'none') {
+      await sendItem(el.dataset.id!, el);
+    }
   }
 
   btn.textContent = 'Send All'; btn.disabled = false;
@@ -194,13 +456,18 @@ btnSendAll.addEventListener('click', async () => {
 
 // ── Clear All ─────────────────────────────────────────────────────────────────
 btnClearAll.addEventListener('click', async () => {
-  await videoQueueStorage.setValue([]);
+  if (currentFilter === 'all' || currentFilter === 'video') await videoQueueStorage.setValue([]);
+  if (currentFilter === 'all' || currentFilter === 'reading') await readingQueueStorage.setValue([]);
   await render();
 });
 
 // ── Live updates ──────────────────────────────────────────────────────────────
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes['videoQueue']) render();
+  if (area === 'local' && (changes['videoQueue'] || changes['readingQueue'])) {
+    if (!document.querySelector('.qi-title:focus, .qi-time-num:focus, .qi-chars-num:focus, .qi-date:focus, .session-num:focus, .session-chars:focus, .session-date:focus')) {
+      render();
+    }
+  }
 });
 
 render();

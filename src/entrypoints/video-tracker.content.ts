@@ -67,24 +67,23 @@ function isLikelyJapanese(): boolean {
   if (host.includes('animekai') || host.includes('crunchyroll')) return true;
 
   if (host.includes('youtube.com')) {
-    const pr = (window as any).ytInitialPlayerResponse;
-    if (pr?.videoDetails?.languageCode === 'ja') return true;
+    // 1. Check Document Title (SPA updates this reliably)
+    const docTitle = document.title.replace(/^\(\d+\)\s*/, '');
+    if ((docTitle.match(JP_RE) ??[]).length >= 1) return true;
 
-    if (pr) {
-      const tracks: any[] = pr.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-      if (tracks.some(t => t.vssId === 'a.ja' || (t.languageCode === 'ja' && t.vssId?.startsWith('a.')))) return true;
-    }
+    // 2. Check Video Title Element
+    const titleEl = document.querySelector<HTMLElement>('#title h1 yt-formatted-string, h1.ytd-watch-metadata');
+    if (titleEl && (titleEl.innerText.match(JP_RE) ??[]).length >= 1) return true;
 
-    const descEl = document.querySelector<HTMLElement>(
-      '#description-inline-expander yt-attributed-string, ytd-expandable-video-description-body-renderer'
-    );
+    // 3. Check Channel Name
+    const channelEl = document.querySelector<HTMLElement>('#owner ytd-channel-name yt-formatted-string, ytd-channel-name a');
+    if (channelEl && (channelEl.innerText.match(JP_RE) ??[]).length >= 1) return true;
+
+    // 4. Check Description
+    const descEl = document.querySelector<HTMLElement>('#description-inline-expander yt-attributed-string, ytd-expandable-video-description-body-renderer');
     if (descEl) {
-      const sample = descEl.innerText?.slice(0, 2000) ?? '';
-      if ((sample.match(JP_RE) ?? []).length >= 15) return true;
-    }
-
-    for (const s of document.querySelectorAll('script:not([src])')) {
-      if (/"languageCode"\s*:\s*"ja"/.test(s.textContent ?? '')) return true;
+      const sample = descEl.innerText?.slice(0, 1000) ?? '';
+      if ((sample.match(JP_RE) ??[]).length >= 3) return true;
     }
 
     return false;
@@ -96,13 +95,13 @@ let _jpCacheUrl = '';
 let _jpCacheResult = false;
 function isLikelyJapaneseCached(): boolean {
   const url = cleanUrl(window.location.href);
-  if (url !== _jpCacheUrl) {
+  if (url !== _jpCacheUrl || !_jpCacheResult) {
     _jpCacheResult = isLikelyJapanese();
     _jpCacheUrl = url;
   }
   return _jpCacheResult;
 }
-function invalidateJpCache() { _jpCacheUrl = ''; }
+function invalidateJpCache() { _jpCacheUrl = ''; _jpCacheResult = false; }
 
 // ── Channel ID & Name ─────────────────────────────────────────────────────────
 function getYouTubeChannelId(): string | null {
@@ -134,7 +133,7 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
 
   if (idx !== -1) {
     const item = queue[idx] as any;
-    item.sessions = item.sessions || [];
+    item.sessions = item.sessions ||[];
 
     const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
     if (sIdx >= 0) {
@@ -159,7 +158,7 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
                date: new Date().toISOString(),
                private: false, tags: [],
                  description: videoTitle,
-                 sessions: [{ id: sessionId, secs, date: new Date().toISOString() }],
+                 sessions:[{ id: sessionId, secs, date: new Date().toISOString() }],
                channelId,
     } as any);
   }
@@ -175,7 +174,7 @@ async function finalizeSession(secs: number, url: string, sessionId: string) {
   if (idx === -1) return;
 
   const item = queue[idx] as any;
-  item.sessions = item.sessions || [];
+  item.sessions = item.sessions ||[];
 
   const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
   if (sIdx >= 0) {
@@ -207,10 +206,11 @@ function injectModalStyles() {
   const style = document.createElement('style');
   style.id = 'nt-modal-styles';
   style.textContent = `
-  #nt-modal-overlay {
-  position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:2147483647;
+  #nt-modal-popup {
+  z-index:2147483647;
   display:flex; align-items:center; justify-content:center;
   font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+  cursor:default;
   }
   .nt-modal {
     background:#0d0d12; border:1px solid #222d42; border-radius:8px;
@@ -265,19 +265,27 @@ function injectModalStyles() {
   document.head.appendChild(style);
 }
 
-function showNTEditModal(data: {
+function showNTEditModal(badgeEl: HTMLElement, data: {
   channelName: string; videoTitle: string; url: string;
   totalSecs: number; showTotal: boolean; channelId: string | null;
   onToggleShowTotal: (v: boolean) => void;
 }, onConfirm: (d: any) => void) {
   injectModalStyles();
-  const overlay = document.createElement('div');
-  overlay.id = 'nt-modal-overlay';
+
+  // If already open, close it (toggle behavior)
+  const existingPopup = document.getElementById('nt-modal-popup');
+  if (existingPopup) {
+    existingPopup.remove();
+    return;
+  }
+
+  const popup = document.createElement('div');
+  popup.id = 'nt-modal-popup';
 
   const today = new Date().toISOString().split('T')[0];
   const totalMins = Math.max(1, Math.round(data.totalSecs / 60));
 
-  overlay.innerHTML = `
+  popup.innerHTML = `
   <div class="nt-modal">
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
   <div class="nt-modal-header">
@@ -321,10 +329,26 @@ function showNTEditModal(data: {
   </div>
   </div>`;
 
-  document.body.appendChild(overlay);
+  popup.addEventListener('click', e => e.stopPropagation());
 
-  const btnSession = overlay.querySelector('#nt-badge-session')!;
-  const btnTotal = overlay.querySelector('#nt-badge-total')!;
+  // Append to document.body to escape overflow bounds of video players
+  document.body.appendChild(popup);
+
+  // Position it fixed to correctly overlay the badge position globally
+  const rect = badgeEl.getBoundingClientRect();
+  popup.style.position = 'fixed';
+  popup.style.bottom = `${window.innerHeight - rect.top + 10}px`;
+  popup.style.left = `${rect.left}px`;
+
+  // Verify bounded layout right away
+  requestAnimationFrame(() => {
+    const popRect = popup.getBoundingClientRect();
+    if (popRect.left < 0) popup.style.left = '10px';
+    if (popRect.right > window.innerWidth) popup.style.left = `${window.innerWidth - popRect.width - 10}px`;
+  });
+
+  const btnSession = popup.querySelector('#nt-badge-session')!;
+  const btnTotal = popup.querySelector('#nt-badge-total')!;
 
   btnSession.addEventListener('click', () => {
     btnSession.classList.add('active'); btnTotal.classList.remove('active');
@@ -335,16 +359,26 @@ function showNTEditModal(data: {
     data.onToggleShowTotal(true);
   });
 
-  overlay.querySelector('#nt-modal-cancel')!.addEventListener('click', () => overlay.remove());
-  overlay.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
+  popup.querySelector('#nt-modal-cancel')!.addEventListener('click', () => popup.remove());
+  popup.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
     onConfirm({
       title: data.channelName,
-      desc:  (overlay.querySelector('#nt-edit-desc') as HTMLInputElement).value,
-              time:  parseInt((overlay.querySelector('#nt-edit-time')  as HTMLInputElement).value),
-              date:  new Date((overlay.querySelector('#nt-edit-date')  as HTMLInputElement).value).toISOString(),
+      desc:  (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value,
+              time:  parseInt((popup.querySelector('#nt-edit-time')  as HTMLInputElement).value),
+              date:  new Date((popup.querySelector('#nt-edit-date')  as HTMLInputElement).value).toISOString(),
     });
-    overlay.remove();
+    popup.remove();
   });
+
+  setTimeout(() => {
+    const closeListener = (e: Event) => {
+      if (!popup.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
+        popup.remove();
+        document.removeEventListener('click', closeListener);
+      }
+    };
+    document.addEventListener('click', closeListener);
+  }, 0);
 }
 
 // ── Counter ───────────────────────────────────────────────────────────────────
@@ -399,6 +433,8 @@ function ensureCounter(
 
     el = document.createElement('div');
     el.id = 'nt-status-badge';
+    el.style.position = 'relative';
+    el.style.cursor = 'pointer';
     if (containerData.isFallback) el.classList.add('nt-absolute-pill');
 
     el.innerHTML = `
@@ -407,11 +443,15 @@ function ensureCounter(
     <span class="nt-time-label">0:00</span>
     </div>`;
 
-    el.onclick = async () => {
+    el.onclick = async (e) => {
+      // Prevents popup triggers if closing it indirectly through click
+      if ((e.target as HTMLElement).closest('#nt-modal-popup')) return;
+
       const liveCfg = await configStorage.getValue() as any;
       const liveShowTotal = liveCfg.showTotalInBadge ?? true;
 
       showNTEditModal(
+        el!,
         {
           channelName: cachedChannelName, videoTitle: title, url, totalSecs, showTotal: liveShowTotal, channelId,
           onToggleShowTotal: async (v) => {
@@ -477,8 +517,7 @@ export default defineContentScript({
   cssInjectionMode: 'manifest',
 
   async main() {
-    let cachedConfig: any = {};
-    configStorage.getValue().then(c => cachedConfig = c || {});
+    let cachedConfig: any = await configStorage.getValue() || {};
 
     watchedSecs = 0;
     lastSyncSecs = 0;
@@ -490,205 +529,215 @@ export default defineContentScript({
     let currentUrl = '';
     let channelId: string | null = null;
     let cachedChannelName = '';
-let playClockStart = -1;
+    let playClockStart = -1;
 
-function flushPlayClock() {
-  if (playClockStart < 0) return;
-  const elapsed = (performance.now() - playClockStart) / 1000;
-  playClockStart = -1;
-  if (elapsed > 0 && elapsed < 7200) watchedSecs += elapsed;
-}
-
-const getLiveWatched = () =>
-watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
-
-const getTotal = () => completedSessionSecs + getLiveWatched();
-
-const attach = (vid: HTMLVideoElement) => {
-  const cleanedHref = cleanUrl(window.location.href);
-  if (trackedVideo === vid && currentUrl === cleanedHref) return;
-
-  flushPlayClock();
-  if (trackedVideo && watchedSecs >= 60 && currentUrl && !state.hasTriggered) {
-    finalizeSession(watchedSecs, currentUrl, currentSessionId);
-  }
-
-  trackedVideo     = vid;
-  currentUrl       = cleanedHref;
-  watchedSecs      = 0;
-  playClockStart   = -1;
-  lastSyncSecs     = 0;
-  lastAutoCheckSecs = 0;
-  state.hasTriggered = false;
-  channelId        = null;
-  cachedChannelName = '';
-  completedSessionSecs = 0;
-  currentSessionId = crypto.randomUUID();
-  invalidateJpCache();
-  _lastCounterPaint = 0;
-  document.getElementById('nt-status-badge')?.remove();
-
-  const tryChannel = () => {
-    if (!channelId) { const id = getYouTubeChannelId(); if (id) channelId = id; }
-    if (!cachedChannelName) { const n = getChannelNameFallback(); if (n) cachedChannelName = n; }
-  };
-  tryChannel(); setTimeout(tryChannel, 2000); setTimeout(tryChannel, 5000); setTimeout(tryChannel, 10000);
-
-  (async () => {
-    const queue = await videoQueueStorage.getValue();
-    const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
-    if (existing) {
-      const sessions: any[] = existing.sessions ?? [];
-      completedSessionSecs = sessions.reduce((a: number, s: any) => a + s.secs, 0);
+    function flushPlayClock() {
+      if (playClockStart < 0) return;
+      const elapsed = (performance.now() - playClockStart) / 1000;
+      playClockStart = -1;
+      if (elapsed > 0 && elapsed < 7200) watchedSecs += elapsed;
     }
-  })();
 
-  // Fix 4: F5 Auto-Play Bug Fix
-  if (!vid.paused && !vid.ended && vid.readyState > 2) {
-    playClockStart = performance.now();
-  }
+    const getLiveWatched = () =>
+    watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
 
-  vid.addEventListener('playing', () => {
-    playClockStart = performance.now();
-  });
+    const getTotal = () => completedSessionSecs + getLiveWatched();
 
-  vid.addEventListener('play', () => {
-    playClockStart = performance.now();
-    if (vid.currentTime < 5) state.hasTriggered = false;
-  });
+    const attach = (vid: HTMLVideoElement) => {
+      const cleanedHref = cleanUrl(window.location.href);
+      if (trackedVideo === vid && currentUrl === cleanedHref) return;
 
-    const stopClock = () => { flushPlayClock(); };
-    vid.addEventListener('pause',   stopClock);
-    vid.addEventListener('waiting', stopClock);
-    vid.addEventListener('seeking', stopClock);
+      flushPlayClock();
+      if (trackedVideo && watchedSecs >= 60 && currentUrl && !state.hasTriggered) {
+        finalizeSession(watchedSecs, currentUrl, currentSessionId);
+      }
 
-    vid.addEventListener('seeked', () => {
-      if (vid.currentTime < 5) state.hasTriggered = false;
-      if (!vid.paused && !vid.ended) playClockStart = performance.now();
-    });
+      trackedVideo     = vid;
+      currentUrl       = cleanedHref;
+      watchedSecs      = 0;
+      playClockStart   = -1;
+      lastSyncSecs     = 0;
+      lastAutoCheckSecs = 0;
+      state.hasTriggered = false;
+      channelId        = null;
+      cachedChannelName = '';
+      completedSessionSecs = 0;
+      currentSessionId = crypto.randomUUID();
+      invalidateJpCache();
+      _lastCounterPaint = 0;
+      document.getElementById('nt-status-badge')?.remove();
 
-      vid.addEventListener('timeupdate', async () => {
-        const cfg = cachedConfig;
+      const tryChannel = () => {
+        if (!channelId) { const id = getYouTubeChannelId(); if (id) channelId = id; }
+        if (!cachedChannelName) { const n = getChannelNameFallback(); if (n) cachedChannelName = n; }
+      };
+      tryChannel(); setTimeout(tryChannel, 2000); setTimeout(tryChannel, 5000); setTimeout(tryChannel, 10000);
 
-        if (!state.hasTriggered) {
-          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
+      (async () => {
+        const queue = await videoQueueStorage.getValue();
+        const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
+        if (existing) {
+          const sessions: any[] = existing.sessions ||[];
+          completedSessionSecs = sessions.reduce((a: number, s: any) => a + s.secs, 0);
         }
+      })();
 
-        if (state.hasTriggered || vid.duration <= 0) return;
+      if (!vid.paused && !vid.ended && vid.readyState > 2) {
+        playClockStart = performance.now();
+      }
 
-        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-        const liveSecs = getLiveWatched();
+      vid.addEventListener('playing', () => {
+        playClockStart = performance.now();
+      });
 
-        if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
-          lastSyncSecs = liveSecs;
-          if (isLikelyJapaneseCached() && !isMusic()) {
-            await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
-          }
-        }
+      vid.addEventListener('play', () => {
+        playClockStart = performance.now();
+        if (vid.currentTime < 5) state.hasTriggered = false;
+      });
 
-        if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
-          lastAutoCheckSecs = liveSecs;
-          if (isLikelyJapaneseCached() && !isMusic()) {
-            const threshType  = cfg.thresholdType  ?? 'percent';
-            const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-            const triggered   = threshType === 'percent'
-            ? (vid.currentTime / vid.duration) * 100 >= threshValue
-            : (liveSecs / 60) >= threshValue;
-            if (triggered) {
-              state.hasTriggered = true;
+        const stopClock = () => { flushPlayClock(); };
+        vid.addEventListener('pause',   stopClock);
+        vid.addEventListener('waiting', stopClock);
+        vid.addEventListener('seeking', stopClock);
 
-              const sessionMins = Math.max(1, Math.round(liveSecs / 60));
+        vid.addEventListener('seeked', () => {
+          if (vid.currentTime < 5) state.hasTriggered = false;
+          if (!vid.paused && !vid.ended) playClockStart = performance.now();
+        });
 
-              const ok = await submitLog({
-                type: 'video',
-                mediaId: channelId || 'web-video',
-                description: document.title,
-                mediaData: {
-                  channelId: channelId || "web-video",
-                  channelTitle: cachedChannelName || getChannelNameFallback()
-                },
-                time: sessionMins,
-                date: new Date().toISOString(),
-                                         private: false,
-                                           episodes: 0,
-                                           pages: 0,
-                                           unknownDate: false
-              });
+          vid.addEventListener('timeupdate', async () => {
+            const cfg = cachedConfig;
 
-              if (ok) {
-                toast(`✓ Auto-logged: ${sessionMins} min`);
-                removeFromQueue(currentUrl);
-              } else {
-                toast(`⚠ Auto-log failed`);
-                state.hasTriggered = false;
+            if (!state.hasTriggered) {
+              ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
+            }
+
+            if (state.hasTriggered || vid.duration <= 0) return;
+
+            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+            const liveSecs = getLiveWatched();
+
+            if (!autoOn && liveSecs >= 60 && (liveSecs - lastSyncSecs) >= 10) {
+              lastSyncSecs = liveSecs;
+              if (isLikelyJapaneseCached() && !isMusic()) {
+                await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
               }
             }
-          }
-        }
-      });
 
-      vid.addEventListener('ended', async () => {
-        flushPlayClock();
-        if (state.hasTriggered) return;
-        const cfg = cachedConfig;
-        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-        if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
-          await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-          completedSessionSecs += watchedSecs;
-          watchedSecs = 0;
-          currentSessionId = crypto.randomUUID();
-        }
-      });
+            if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
+              lastAutoCheckSecs = liveSecs;
+              if (isLikelyJapaneseCached() && !isMusic()) {
+                const threshType  = cfg.thresholdType  ?? 'percent';
+                const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
+                const triggered   = threshType === 'percent'
+                ? (vid.currentTime / vid.duration) * 100 >= threshValue
+                : (liveSecs / 60) >= threshValue;
+                if (triggered) {
+                  state.hasTriggered = true;
 
-      vid.addEventListener('emptied', async () => {
-        flushPlayClock();
-        const urlNow = cleanUrl(window.location.href);
-        if (urlNow !== currentUrl) {
-          if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
-            await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+                  const sessionMins = Math.max(1, Math.round(liveSecs / 60));
+
+                  const ok = await submitLog({
+                    type: 'video',
+                    mediaId: channelId || 'web-video',
+                    description: document.title,
+                    mediaData: {
+                      channelId: channelId || "web-video",
+                      channelTitle: cachedChannelName || getChannelNameFallback()
+                    },
+                    time: sessionMins,
+                    date: new Date().toISOString(),
+                                             private: false,
+                                               episodes: 0,
+                                               pages: 0,
+                                               unknownDate: false
+                  });
+
+                  if (ok) {
+                    toast(`✓ Auto-logged: ${sessionMins} min`);
+                    removeFromQueue(currentUrl);
+                  } else {
+                    toast(`⚠ Auto-log failed`);
+                    state.hasTriggered = false;
+                  }
+                }
+              }
+            }
+          });
+
+          vid.addEventListener('ended', async () => {
+            flushPlayClock();
+            if (state.hasTriggered) return;
+            const cfg = cachedConfig;
+            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+            if (!autoOn && isLikelyJapaneseCached() && !isMusic() && watchedSecs >= 60) {
+              await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+              completedSessionSecs += watchedSecs;
+              watchedSecs = 0;
+              currentSessionId = crypto.randomUUID();
+            }
+          });
+
+          vid.addEventListener('emptied', async () => {
+            flushPlayClock();
+            const urlNow = cleanUrl(window.location.href);
+            if (urlNow !== currentUrl) {
+              if (!state.hasTriggered && watchedSecs >= 60 && isLikelyJapaneseCached() && !isMusic()) {
+                await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+              }
+              watchedSecs = 0;
+              lastSyncSecs = 0;
+              lastAutoCheckSecs = 0;
+              state.hasTriggered = false;
+              document.getElementById('nt-status-badge')?.remove();
+            }
+          });
+    };
+
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes['config']) {
+        configStorage.getValue().then(c => {
+          if(c) {
+            cachedConfig = c;
+            const badge = document.getElementById('nt-status-badge');
+            if (badge) {
+              const shouldHide = c.hideButtons || (c.hideIfNotJapanese && !isLikelyJapaneseCached());
+              if (shouldHide) badge.remove();
+            }
           }
+        });
+      }
+
+      if (area === 'local' && changes['videoQueue']) {
+        const queue = changes['videoQueue'].newValue ||[];
+        const clean = cleanUrl(window.location.href);
+        const exists = queue.some((q: any) => q.contentTitleEnglish === clean);
+        if (!exists) {
+          completedSessionSecs = 0;
           watchedSecs = 0;
           lastSyncSecs = 0;
           lastAutoCheckSecs = 0;
           state.hasTriggered = false;
-          document.getElementById('nt-status-badge')?.remove();
+
+          if (!trackedVideo?.paused && !trackedVideo?.ended && trackedVideo?.readyState > 2) {
+            playClockStart = performance.now();
+          }
+
+          const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+          if (badgeLabel) badgeLabel.textContent = "0:00";
         }
-      });
-};
-
-browser.storage.onChanged.addListener((changes, area) => {
-  configStorage.getValue().then(c => { if(c) cachedConfig = c; });
-
-  if (area === 'local' && changes['videoQueue']) {
-    const queue = changes['videoQueue'].newValue || [];
-    const clean = cleanUrl(window.location.href);
-    const exists = queue.some((q: any) => q.contentTitleEnglish === clean);
-    if (!exists) {
-      completedSessionSecs = 0;
-      watchedSecs = 0;
-      lastSyncSecs = 0;
-      lastAutoCheckSecs = 0;
-      state.hasTriggered = false;
-
-      if (!trackedVideo?.paused && !trackedVideo?.ended && trackedVideo?.readyState > 2) {
-        playClockStart = performance.now();
       }
+    });
 
-      const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
-      if (badgeLabel) badgeLabel.textContent = "0:00";
-    }
-  }
-});
-
-setInterval(async () => {
-  const vid = document.querySelector<HTMLVideoElement>('video');
-  if (vid) {
-    attach(vid);
-    if (!state.hasTriggered) {
-      const cfg = cachedConfig;
-      ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
-    }
-  }
-}, 2000);
+    setInterval(async () => {
+      const vid = document.querySelector<HTMLVideoElement>('video');
+      if (vid) {
+        attach(vid);
+        if (!state.hasTriggered) {
+          const cfg = cachedConfig;
+          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName);
+        }
+      }
+    }, 2000);
   },
 });

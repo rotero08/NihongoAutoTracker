@@ -14,7 +14,6 @@ const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 const TTU_HOST = 'reader.ttsu.app';
 
 let currentConfig: any = {};
-configStorage.getValue().then(c => currentConfig = c || {});
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   const host = window.location.hostname;
@@ -114,7 +113,7 @@ async function liveSyncQueue() {
       existing = {
         id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
         originalTitle: title, description: title, chars: ttuState.chars, time: secs,
-        date: dateStr, private: false, tags:[],
+        date: dateStr, private: false, tags: [],
         sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
       };
       queue.push(existing);
@@ -358,420 +357,420 @@ function setupTTUChronometer() {
 
   // Isolate keyboard input so typing won't trigger reader shortcuts
   ['keydown', 'keyup', 'keypress'].forEach(evt => {
-    linkInput.addEventListener(evt, e => e.stopPropagation());
+  linkInput.addEventListener(evt, e => e.stopPropagation());
   });
 
-  const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
-  if (historyList) {
-    historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
-  }
+const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
+if (historyList) {
+  historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+}
 
-  let cachedHistoryMins = 0;
-  let cachedHistoryChars = 0;
+let cachedHistoryMins = 0;
+let cachedHistoryChars = 0;
 
-  if (globalSessionStartChar === -1) {
-    globalSessionStartChar = extractTTUCharCount() || 0;
-  }
+if (globalSessionStartChar === -1) {
+  globalSessionStartChar = extractTTUCharCount() || 0;
+}
 
-  const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-  const refreshLinkerUI = async () => {
-    const title = getTTUTitle();
-    const links = await ttuLinkStorage.getValue() || {};
-    const match = links[title];
+const refreshLinkerUI = async () => {
+  const title = getTTUTitle();
+  const links = await ttuLinkStorage.getValue() || {};
+  const match = links[title];
 
-    if (match && match.mediaId) {
-      linkerEdit.style.display = 'none';
-      linkerCompact.style.display = 'flex';
-      linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
-      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
+  if (match && match.mediaId) {
+    linkerEdit.style.display = 'none';
+    linkerCompact.style.display = 'flex';
+    linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
+    linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
 
-      if (currentConfig.ttuDirectSend) {
-        btnDirect.disabled = false;
-        btnDirect.style.opacity = '1';
-        btnDirect.style.cursor = 'pointer';
-        btnDirect.title = 'Send session to NT directly';
-      } else {
-        btnDirect.disabled = true;
-        btnDirect.style.opacity = '0.3';
-        btnDirect.style.cursor = 'not-allowed';
-        btnDirect.title = 'Direct send disabled in settings';
-      }
+    if (currentConfig.ttuDirectSend) {
+      btnDirect.disabled = false;
+      btnDirect.style.opacity = '1';
+      btnDirect.style.cursor = 'pointer';
+      btnDirect.title = 'Send session to NT directly';
     } else {
-      linkerEdit.style.display = 'flex';
-      linkerCompact.style.display = 'none';
-      linkInput.value = parseTitle(title).query;
-
       btnDirect.disabled = true;
       btnDirect.style.opacity = '0.3';
       btnDirect.style.cursor = 'not-allowed';
-      btnDirect.title = 'Match media to send directly';
+      btnDirect.title = 'Direct send disabled in settings';
     }
-  };
-
-  linkerLabelWrap.addEventListener('click', () => {
-    linkerCompact.style.display = 'none';
+  } else {
     linkerEdit.style.display = 'flex';
-    linkInput.focus();
-  });
+    linkerCompact.style.display = 'none';
+    linkInput.value = parseTitle(title).query;
 
-  wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
-    e.stopPropagation();
+    btnDirect.disabled = true;
+    btnDirect.style.opacity = '0.3';
+    btnDirect.style.cursor = 'not-allowed';
+    btnDirect.title = 'Match media to send directly';
+  }
+};
+
+linkerLabelWrap.addEventListener('click', () => {
+  linkerCompact.style.display = 'none';
+  linkerEdit.style.display = 'flex';
+  linkInput.focus();
+});
+
+wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const title = getTTUTitle();
+  const links = await ttuLinkStorage.getValue() || {};
+  delete links[title];
+  await ttuLinkStorage.setValue(links);
+
+  const queue = await readingQueueStorage.getValue();
+  const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
+  if (existing) {
+    existing.mediaId = 'web-reading';
+    existing.mediaData = null;
+    await readingQueueStorage.setValue(queue);
+  }
+
+  refreshLinkerUI();
+});
+
+let linkDebounce: any;
+const performLinkSearch = () => {
+  clearTimeout(linkDebounce);
+  const query = linkInput.value.trim();
+  if (query.length < 2) { linkResults.classList.remove('open'); return; }
+
+  linkDebounce = setTimeout(async () => {
+    linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>';
+    linkResults.classList.add('open');
+
+    try {
+      const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+        headers: { 'X-API-Key': currentConfig.apiKey ?? '' }
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      const results = Array.isArray(data) ? data : (data.data ??[]);
+
+      if (results.length === 0) {
+        linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
+        return;
+      }
+
+      linkResults.innerHTML = '';
+  results.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'nt-ttu-link-item';
+    const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+    const img = m.coverImage || m.contentImage || '';
+
+  row.innerHTML = `
+  ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
+  <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
+  `;
+
+  row.addEventListener('click', async () => {
     const title = getTTUTitle();
+    const { volume } = parseTitle(title);
+
     const links = await ttuLinkStorage.getValue() || {};
-    delete links[title];
+    links[title] = {
+      mediaId: m.contentId,
+      volume: volume || 1,
+      mediaData: {
+        contentId: m.contentId,
+        contentTitleNative: native,
+        contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
+        contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
+        contentImage: img,
+        coverImage: img,
+        chapters: m.chapters,
+        volumes: m.volumes,
+      }
+    };
     await ttuLinkStorage.setValue(links);
 
     const queue = await readingQueueStorage.getValue();
-    const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
+    const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
     if (existing) {
-      existing.mediaId = 'web-reading';
-      existing.mediaData = null;
+      existing.mediaId = m.contentId;
+      existing.volume = volume || 1;
+      existing.mediaData = links[title].mediaData;
+      existing.contentTitleNative = native;
+      existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+      existing.description = native;
       await readingQueueStorage.setValue(queue);
     }
 
+    linkResults.classList.remove('open');
     refreshLinkerUI();
+
+    if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
   });
-
-  let linkDebounce: any;
-  const performLinkSearch = () => {
-    clearTimeout(linkDebounce);
-    const query = linkInput.value.trim();
-    if (query.length < 2) { linkResults.classList.remove('open'); return; }
-
-    linkDebounce = setTimeout(async () => {
-      linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>';
-      linkResults.classList.add('open');
-
-      try {
-        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
-          headers: { 'X-API-Key': currentConfig.apiKey ?? '' }
-        });
-        if (!res.ok) throw new Error();
-        const data = await res.json();
-        const results = Array.isArray(data) ? data : (data.data ??[]);
-
-        if (results.length === 0) {
-          linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
-          return;
-        }
-
-        linkResults.innerHTML = '';
-    results.forEach(m => {
-      const row = document.createElement('div');
-      row.className = 'nt-ttu-link-item';
-      const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
-      const img = m.coverImage || m.contentImage || '';
-
-    row.innerHTML = `
-    ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
-    <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
-    `;
-
-    row.addEventListener('click', async () => {
-      const title = getTTUTitle();
-      const { volume } = parseTitle(title);
-
-      const links = await ttuLinkStorage.getValue() || {};
-      links[title] = {
-        mediaId: m.contentId,
-        volume: volume || 1,
-        mediaData: {
-          contentId: m.contentId,
-          contentTitleNative: native,
-          contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
-          contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-          contentImage: img,
-          coverImage: img,
-          chapters: m.chapters,
-          volumes: m.volumes,
-        }
-      };
-      await ttuLinkStorage.setValue(links);
-
-      const queue = await readingQueueStorage.getValue();
-      const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
-      if (existing) {
-        existing.mediaId = m.contentId;
-        existing.volume = volume || 1;
-        existing.mediaData = links[title].mediaData;
-        existing.contentTitleNative = native;
-        existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
-        existing.description = native;
-        await readingQueueStorage.setValue(queue);
-      }
-
-      linkResults.classList.remove('open');
-      refreshLinkerUI();
-
-      if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
-    });
-      linkResults.appendChild(row);
-    });
-      } catch {
-        linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
-      }
-    }, 400);
-  };
-
-  linkInput.addEventListener('input', performLinkSearch);
-  linkInput.addEventListener('focus', () => {
-    if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) {
-      linkResults.classList.add('open');
-    } else {
-      performLinkSearch();
+    linkResults.appendChild(row);
+  });
+    } catch {
+      linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
     }
-  });
-  linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
+  }, 400);
+};
 
-  const updateHistoryData = async () => {
+linkInput.addEventListener('input', performLinkSearch);
+linkInput.addEventListener('focus', () => {
+  if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) {
+    linkResults.classList.add('open');
+  } else {
+    performLinkSearch();
+  }
+});
+linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
+
+const updateHistoryData = async () => {
+  const history = await ttuHistoryStorage.getValue() || {};
+  const sessions = history[getTTUTitle()] ||[];
+
+  cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
+  cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+
+  const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
+  if (sessions.length === 0) {
+    listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
+  } else {
+    let html = '';
+    sessions.forEach((s: any) => {
+      const mins = Math.max(1, Math.round(s.timeMs / 60000));
+      const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      html += `<div class="nt-ttu-history-item"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span></div>`;
+    });
+    listEl.innerHTML = html;
+  }
+};
+
+const updateUI = () => {
+  if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
+  if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
+
+  const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
+  const totalChars = cachedHistoryChars + ttuState.chars;
+
+  // Multiply the CPM result by 60 to get CPH
+  const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
+  const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
+
+  speedVal.textContent = sessSpeed + '/h';
+  totalSpeedVal.textContent = totSpeed + '/h';
+
+  wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
+  wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
+
+  const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+  const playSvg  = 'M8 5v14l11-7z';
+
+  const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
+  const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
+
+  if (playPath) {
+    playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+    toggleBtn.title = ttuState.running ? 'Pause Timer' : 'Start Timer';
+  }
+  if (mainIconPath) {
+    mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+  }
+
+  if (currentConfig.ttuAutoSave !== false) {
+    btnLog.disabled = true;
+    btnLog.style.opacity = '0.3';
+    btnLog.style.cursor = 'not-allowed';
+    btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+  } else {
+    btnLog.disabled = false;
+    btnLog.style.opacity = '1';
+    btnLog.style.cursor = 'pointer';
+    btnLog.title = 'Save & Queue';
+  }
+};
+
+const makeEditable = (el: Element, isTime: boolean) => {
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
+    Object.assign(input.style, {
+      width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff',
+      border: '1px solid #555', borderRadius: '4px', padding: '2px 4px',
+      fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box'
+    });
+
+    const commit = () => {
+      if (isTime) {
+        const parts = input.value.split(':').map(Number);
+        let ms = 0;
+        if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+        if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+        if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
+      } else {
+        const val = parseInt(input.value.replace(/\D/g, ''));
+        if (!isNaN(val) && val >= 0) {
+          const currentCount = extractTTUCharCount() || 0;
+          let diff = currentCount - (globalSessionStartChar !== -1 ? globalSessionStartChar : 0);
+          if (diff < 0) diff = 0;
+          globalManualCharOffset = val - diff;
+          ttuState.chars = val;
+        }
+      }
+      input.replaceWith(el);
+      updateUI();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
+    el.replaceWith(input);
+    input.focus();
+    input.select();
+  });
+};
+
+makeEditable(timeVal, true);
+makeEditable(charsVal, false);
+
+btn.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  dropdown.classList.toggle('open');
+  if (dropdown.classList.contains('open')) {
+    await updateHistoryData();
+    await refreshLinkerUI();
+  }
+  updateUI();
+});
+
+btn.addEventListener('dblclick', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  ttuState.running = !ttuState.running;
+  if (ttuState.running) {
+    const currentCount = extractTTUCharCount();
+    if (currentCount !== null) {
+      const oldDiff = ttuState.chars - globalManualCharOffset;
+      globalSessionStartChar = currentCount - oldDiff;
+    }
+    globalLastTick = Date.now();
+  }
+  updateUI();
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.composedPath().includes(wrapper)) {
+    dropdown.classList.remove('open');
+  }
+});
+
+toggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  ttuState.running = !ttuState.running;
+  if (ttuState.running) {
+    const currentCount = extractTTUCharCount();
+    if (currentCount !== null) {
+      const oldDiff = ttuState.chars - globalManualCharOffset;
+      globalSessionStartChar = currentCount - oldDiff;
+    }
+    globalLastTick = Date.now();
+  }
+  updateUI();
+});
+
+wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
+  e.stopPropagation();
+  ttuState.timeMs = 0;
+  ttuState.chars = 0;
+  const currentCount = extractTTUCharCount();
+  globalSessionStartChar = currentCount !== null ? currentCount : -1;
+  globalManualCharOffset = 0;
+  updateUI();
+});
+
+btnLog.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (currentConfig.ttuAutoSave !== false) return;
+  await saveSessionAndQueue();
+  await updateHistoryData();
+  updateUI();
+});
+
+btnDirect.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
+
+  const title = getTTUTitle();
+  const links = await ttuLinkStorage.getValue() || {};
+  const linkedMedia = links[title];
+  if (!linkedMedia) return;
+
+  const secs = Math.round(ttuState.timeMs / 1000);
+  try {
+    // Direct POST payload to NihongoTracker
+    await submitLog({
+      type: 'reading',
+      mediaId: linkedMedia.mediaId,
+      mediaData: linkedMedia.mediaData,
+      description: linkedMedia.mediaData.contentTitleNative || title,
+      chars: ttuState.chars,
+      time: Math.round(secs / 60),
+                    date: new Date().toISOString(),
+                    episodes: 0,
+                    pages: 0,
+                    volume: linkedMedia.volume || 1,
+                    private: false,
+                      tags:[]
+    });
+    showToast('Sent session directly to NT!');
+
+    // Process history visually
+    const dateStr = new Date().toISOString();
+    const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
     const history = await ttuHistoryStorage.getValue() || {};
-    const sessions = history[getTTUTitle()] ||[];
+    if (!history[title]) history[title] =[];
+    history[title].push(sessionLog);
+    await ttuHistoryStorage.setValue(history);
 
-    cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
-    cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
-
-    const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
-    if (sessions.length === 0) {
-      listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
-    } else {
-      let html = '';
-      sessions.forEach((s: any) => {
-        const mins = Math.max(1, Math.round(s.timeMs / 60000));
-        const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-        html += `<div class="nt-ttu-history-item"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span></div>`;
-      });
-      listEl.innerHTML = html;
-    }
-  };
-
-  const updateUI = () => {
-    if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
-    if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
-
-    const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
-    const totalChars = cachedHistoryChars + ttuState.chars;
-
-    // Multiply the CPM result by 60 to get CPH
-    const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
-    const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
-
-    speedVal.textContent = sessSpeed + '/h';
-    totalSpeedVal.textContent = totSpeed + '/h';
-
-    wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
-    wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
-
-    const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
-    const playSvg  = 'M8 5v14l11-7z';
-
-    const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
-    const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
-
-    if (playPath) {
-      playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-      toggleBtn.title = ttuState.running ? 'Pause Timer' : 'Start Timer';
-    }
-    if (mainIconPath) {
-      mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-    }
-
-    if (currentConfig.ttuAutoSave !== false) {
-      btnLog.disabled = true;
-      btnLog.style.opacity = '0.3';
-      btnLog.style.cursor = 'not-allowed';
-      btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
-    } else {
-      btnLog.disabled = false;
-      btnLog.style.opacity = '1';
-      btnLog.style.cursor = 'pointer';
-      btnLog.title = 'Save & Queue';
-    }
-  };
-
-  const makeEditable = (el: Element, isTime: boolean) => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
-      Object.assign(input.style, {
-        width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff',
-        border: '1px solid #555', borderRadius: '4px', padding: '2px 4px',
-        fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box'
-      });
-
-      const commit = () => {
-        if (isTime) {
-          const parts = input.value.split(':').map(Number);
-          let ms = 0;
-          if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
-          if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
-          if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
-        } else {
-          const val = parseInt(input.value.replace(/\D/g, ''));
-          if (!isNaN(val) && val >= 0) {
-            const currentCount = extractTTUCharCount() || 0;
-            let diff = currentCount - (globalSessionStartChar !== -1 ? globalSessionStartChar : 0);
-            if (diff < 0) diff = 0;
-            globalManualCharOffset = val - diff;
-            ttuState.chars = val;
-          }
-        }
-        input.replaceWith(el);
-        updateUI();
-      };
-      input.addEventListener('blur', commit);
-      input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
-      el.replaceWith(input);
-      input.focus();
-      input.select();
-    });
-  };
-
-  makeEditable(timeVal, true);
-  makeEditable(charsVal, false);
-
-  btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    dropdown.classList.toggle('open');
-    if (dropdown.classList.contains('open')) {
-      await updateHistoryData();
-      await refreshLinkerUI();
-    }
-    updateUI();
-  });
-
-  btn.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    ttuState.running = !ttuState.running;
-    if (ttuState.running) {
-      const currentCount = extractTTUCharCount();
-      if (currentCount !== null) {
-        const oldDiff = ttuState.chars - globalManualCharOffset;
-        globalSessionStartChar = currentCount - oldDiff;
-      }
-      globalLastTick = Date.now();
-    }
-    updateUI();
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!e.composedPath().includes(wrapper)) {
-      dropdown.classList.remove('open');
-    }
-  });
-
-  toggleBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    ttuState.running = !ttuState.running;
-    if (ttuState.running) {
-      const currentCount = extractTTUCharCount();
-      if (currentCount !== null) {
-        const oldDiff = ttuState.chars - globalManualCharOffset;
-        globalSessionStartChar = currentCount - oldDiff;
-      }
-      globalLastTick = Date.now();
-    }
-    updateUI();
-  });
-
-  wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
-    e.stopPropagation();
+    // Hard Reset
+    ttuState.id = crypto.randomUUID();
     ttuState.timeMs = 0;
     ttuState.chars = 0;
     const currentCount = extractTTUCharCount();
     globalSessionStartChar = currentCount !== null ? currentCount : -1;
     globalManualCharOffset = 0;
-    updateUI();
-  });
+    ttuState.running = false;
 
-  btnLog.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (currentConfig.ttuAutoSave !== false) return;
-    await saveSessionAndQueue();
     await updateHistoryData();
     updateUI();
-  });
+  } catch (err) {
+    showToast('Failed to send log', true);
+  }
+});
 
-  btnDirect.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
+(window as any).ntChronoInterval = setInterval(() => {
+  if (ttuState.running && !document.hidden) {
+    const now = Date.now();
+    ttuState.timeMs += (now - globalLastTick);
 
-    const title = getTTUTitle();
-    const links = await ttuLinkStorage.getValue() || {};
-    const linkedMedia = links[title];
-    if (!linkedMedia) return;
-
-    const secs = Math.round(ttuState.timeMs / 1000);
-    try {
-      // Direct POST payload to NihongoTracker
-      await submitLog({
-        type: 'reading',
-        mediaId: linkedMedia.mediaId,
-        mediaData: linkedMedia.mediaData,
-        description: linkedMedia.mediaData.contentTitleNative || title,
-        chars: ttuState.chars,
-        time: Math.round(secs / 60),
-                      date: new Date().toISOString(),
-                      episodes: 0,
-                      pages: 0,
-                      volume: linkedMedia.volume || 1,
-                      private: false,
-                        tags:[]
-      });
-      showToast('Sent session directly to NT!');
-
-      // Process history visually
-      const dateStr = new Date().toISOString();
-      const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
-      const history = await ttuHistoryStorage.getValue() || {};
-      if (!history[title]) history[title] = [];
-      history[title].push(sessionLog);
-      await ttuHistoryStorage.setValue(history);
-
-      // Hard Reset
-      ttuState.id = crypto.randomUUID();
-      ttuState.timeMs = 0;
-      ttuState.chars = 0;
-      const currentCount = extractTTUCharCount();
-      globalSessionStartChar = currentCount !== null ? currentCount : -1;
-      globalManualCharOffset = 0;
-      ttuState.running = false;
-
-      await updateHistoryData();
-      updateUI();
-    } catch (err) {
-      showToast('Failed to send log', true);
+    const currentCount = extractTTUCharCount();
+    if (currentCount !== null) {
+      let diff = currentCount - globalSessionStartChar;
+      if (diff < 0) diff = 0;
+      ttuState.chars = diff + globalManualCharOffset;
     }
-  });
+    globalLastTick = now;
+    updateUI();
 
-  (window as any).ntChronoInterval = setInterval(() => {
-    if (ttuState.running && !document.hidden) {
-      const now = Date.now();
-      ttuState.timeMs += (now - globalLastTick);
-
-      const currentCount = extractTTUCharCount();
-      if (currentCount !== null) {
-        let diff = currentCount - globalSessionStartChar;
-        if (diff < 0) diff = 0;
-        ttuState.chars = diff + globalManualCharOffset;
-      }
-      globalLastTick = now;
-      updateUI();
-
-      if (currentConfig.ttuAutoSave !== false) {
-        liveSyncQueue();
-      }
-    } else if (ttuState.running && document.hidden) {
-      globalLastTick = Date.now();
+    if (currentConfig.ttuAutoSave !== false) {
+      liveSyncQueue();
     }
-  }, 1000);
+  } else if (ttuState.running && document.hidden) {
+    globalLastTick = Date.now();
+  }
+}, 1000);
 
-  pt.el.insertAdjacentElement(pt.pos, wrapper);
-  updateHistoryData().then(() => updateUI());
-  refreshLinkerUI();
+pt.el.insertAdjacentElement(pt.pos, wrapper);
+updateHistoryData().then(() => updateUI());
+refreshLinkerUI();
 }
 
 function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
@@ -850,62 +849,72 @@ function startTimeTracker() {
 }
 
 function buildOverlay(cfg: any) {
-  const overlay = document.createElement('div');
-  overlay.id = 'nt-overlay';
-  const handle = document.createElement('div');
-  handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.innerHTML = '⠿';
-  const timeEl = document.createElement('span');
-  timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
-  const pauseBtn = document.createElement('button');
-  pauseBtn.className = 'nt-ctrl'; pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause / Resume';
-  const resetBtn = document.createElement('button');
-  resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
-  overlay.append(handle, timeEl, pauseBtn, resetBtn);
-  document.body.appendChild(overlay);
+  let overlay = document.getElementById('nt-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'nt-overlay';
+    const handle = document.createElement('div');
+    handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.innerHTML = '⠿';
+    const timeEl = document.createElement('span');
+    timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
+    const pauseBtn = document.createElement('button');
+    pauseBtn.className = 'nt-ctrl'; pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause / Resume';
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
+    overlay.append(handle, timeEl, pauseBtn, resetBtn);
+    document.body.appendChild(overlay);
+
+    let dragging = false, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', e => {
+      dragging = true;
+      const r = overlay!.getBoundingClientRect();
+      ox = e.clientX - r.left; oy = e.clientY - r.top;
+      overlay!.style.right = ''; overlay!.style.bottom = '';
+      overlay!.style.left = r.left + 'px'; overlay!.style.top = r.top + 'px';
+      handle.style.cursor = 'grabbing'; e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.left=(e.clientX-ox)+'px'; overlay!.style.top=(e.clientY-oy)+'px'; } });
+    document.addEventListener('mouseup',  () => { if (dragging) { dragging=false; handle.style.cursor='grab'; } });
+
+    pauseBtn.addEventListener('click', () => {
+      const nt = (window as any).__nt;
+      const nowPaused = !nt.isPaused();
+      nt.pause(nowPaused);
+      pauseBtn.textContent = nowPaused ? '▶' : '⏸';
+      pauseBtn.classList.toggle('active', nowPaused);
+    });
+    resetBtn.addEventListener('click', () => { (window as any).__nt.setMs(0); });
+    timeEl.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type='text'; input.className='nt-edit';
+      input.value = fmt((window as any).__nt.getTotal()); input.placeholder='M:SS';
+    const commit = () => {
+      const parts = input.value.split(':').map(Number);
+      let ms = 0;
+      if (parts.length === 2) ms = (parts[0]*60+parts[1])*1000;
+      if (parts.length === 3) ms = (parts[0]*3600+parts[1]*60+parts[2])*1000;
+      if (!isNaN(ms) && ms >= 0) (window as any).__nt.setMs(ms);
+      input.replaceWith(timeEl);
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => { if (e.key==='Enter') input.blur(); });
+    timeEl.replaceWith(input); input.focus(); input.select();
+    });
+    setInterval(() => { timeEl.textContent = fmt((window as any).__nt.getTotal()); }, 1000);
+  }
 
   const pos = cfg.overlayPosition ?? 'top-right';
+  overlay.style.top = ''; overlay.style.bottom = ''; overlay.style.left = ''; overlay.style.right = '';
   if (pos === 'top-left')     { overlay.style.top = '16px'; overlay.style.left = '16px'; }
   if (pos === 'top-right')    { overlay.style.top = '16px'; overlay.style.right = '16px'; }
   if (pos === 'bottom-left')  { overlay.style.bottom = '16px'; overlay.style.left = '16px'; }
   if (pos === 'bottom-right') { overlay.style.bottom = '16px'; overlay.style.right = '16px'; }
 
-  let dragging = false, ox = 0, oy = 0;
-  handle.addEventListener('mousedown', e => {
-    dragging = true;
-    const r = overlay.getBoundingClientRect();
-    ox = e.clientX - r.left; oy = e.clientY - r.top;
-    overlay.style.right = ''; overlay.style.bottom = '';
-    overlay.style.left = r.left + 'px'; overlay.style.top = r.top + 'px';
-    handle.style.cursor = 'grabbing'; e.preventDefault();
-  });
-  document.addEventListener('mousemove', e => { if (dragging) { overlay.style.left=(e.clientX-ox)+'px'; overlay.style.top=(e.clientY-oy)+'px'; } });
-  document.addEventListener('mouseup',  () => { if (dragging) { dragging=false; handle.style.cursor='grab'; } });
-
-  pauseBtn.addEventListener('click', () => {
-    const nt = (window as any).__nt;
-    const nowPaused = !nt.isPaused();
-    nt.pause(nowPaused);
-    pauseBtn.textContent = nowPaused ? '▶' : '⏸';
-    pauseBtn.classList.toggle('active', nowPaused);
-  });
-  resetBtn.addEventListener('click', () => { (window as any).__nt.setMs(0); });
-  timeEl.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type='text'; input.className='nt-edit';
-    input.value = fmt((window as any).__nt.getTotal()); input.placeholder='M:SS';
-  const commit = () => {
-    const parts = input.value.split(':').map(Number);
-    let ms = 0;
-    if (parts.length === 2) ms = (parts[0]*60+parts[1])*1000;
-    if (parts.length === 3) ms = (parts[0]*3600+parts[1]*60+parts[2])*1000;
-    if (!isNaN(ms) && ms >= 0) (window as any).__nt.setMs(ms);
-    input.replaceWith(timeEl);
-  };
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', e => { if (e.key==='Enter') input.blur(); });
-  timeEl.replaceWith(input); input.focus(); input.select();
-  });
-  setInterval(() => { timeEl.textContent = fmt((window as any).__nt.getTotal()); }, 1000);
+  if (cfg.overlayPosition === 'hidden') {
+    overlay.style.display = 'none';
+  } else {
+    overlay.style.display = 'flex';
+  }
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -929,7 +938,6 @@ browser.storage.onChanged.addListener((changes, area) => {
       const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
       if (wrapper) {
         const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
-        const btnDirect = wrapper.querySelector('#nt-ttu-btn-direct') as HTMLButtonElement;
 
         if (isEnabled && currentConfig.ttuAutoSave !== false) {
           btnLog.disabled = true;
@@ -942,9 +950,16 @@ browser.storage.onChanged.addListener((changes, area) => {
           btnLog.style.cursor = 'pointer';
           btnLog.title = 'Save & Queue';
         }
-
-        // Direct send button state will be dynamically resolved inside the UI handler refreshLinkerUI
       }
+    } else {
+      isJapanesePage(newCfg).then(isJP => {
+        if (isJP && newCfg.overlayPosition !== 'hidden') {
+          buildOverlay(newCfg);
+        } else {
+          const overlay = document.getElementById('nt-overlay');
+          if (overlay) overlay.style.display = 'none';
+        }
+      });
     }
   }
 
@@ -973,6 +988,8 @@ export default defineContentScript({
   cssInjectionMode: 'manifest',
 
   async main() {
+    currentConfig = await configStorage.getValue() || {};
+
     const host = window.location.hostname;
     const cfg  = currentConfig;
     const skipSites: string[] = cfg.skipSites ??['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app'];
