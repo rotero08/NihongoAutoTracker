@@ -48,15 +48,6 @@ const toLocalDT = (iso: string) => {
   return d.toISOString().slice(0, 16);
 };
 
-function shortUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    const v = u.searchParams.get('v');
-    if (v) return `youtu.be/${v.slice(0, 8)}`;
-    return (u.hostname + u.pathname).replace('www.', '').slice(0, 22);
-  } catch { return url.slice(0, 20); }
-}
-
 function parseTitle(docTitle: string) {
   let base = docTitle.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '').trim();
   let title = base;
@@ -145,7 +136,7 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
         });
         if (res.ok) {
           const data = await res.json();
-          const results: any[] = Array.isArray(data) ? data : (data.data ?? []);
+          const results: any[] = Array.isArray(data) ? data : (data.data ??[]);
           if (results.length > 0) {
             const media = results[0];
             item.mediaData = {
@@ -203,7 +194,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const isRead = type === 'reading';
   const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
 
-  // Parity with detection logic in settings.ts
   let channelName = '';
   let urlDisplay = '';
   if (isRead) {
@@ -215,7 +205,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   }
 
   const sessions: any[] = item.sessions ??[];
-
   const displayMins = isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
   const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
   const dateVal = toLocalDT(defaultDateStr);
@@ -228,7 +217,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   let sessionsHtml = '';
   if (sessions.length > 1) {
-    // S1, S2, labels added to clarify separate sessions
     sessionsHtml = `<div class="qi-sessions">` + sessions.map((s, i) => `
     <div class="qi-session" data-session-id="${s.id}">
     <span class="session-dot"></span>
@@ -236,7 +224,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     <input class="ghost-num session-num" type="number" min="1" value="${Math.max(1, Math.round(s.secs / 60))}"/>
     <span class="unit-lbl">min</span>
     ${isRead ? `<input class="ghost-num num-chars session-chars" type="number" value="${s.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
-    <input class="ghost-date session-date" type="datetime-local" value="${toLocalDT(s.date)}" style="width:110px; margin-left:auto;"/>
+    <input class="ghost-date session-date" type="datetime-local" value="${toLocalDT(s.date)}" style="margin-left:auto;"/>
     <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:12px;">×</button>
     </div>`).join('') + `</div>`;
   }
@@ -244,10 +232,11 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   el.innerHTML = `
   <div class="qi-title-row">
   <div class="qi-search-wrap">
-  <input class="ghost-input qi-title" type="text" value="${title}" title="${title}"/>
+  ${isRead ? `<svg class="qi-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` : ''}
+  <input class="ghost-input qi-title ${isRead ? 'searchable' : ''}" type="text" value="${title}" title="${title}"/>
   ${isRead ? `<div class="qi-search-dropdown"></div>` : ''}
   </div>
-  ${isLinked ? `<span class="qi-link-status" style="color:var(--green);font-size:10px;margin-left:4px;">✓</span>` : ''}
+  ${isLinked ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : ''}
   <button class="qi-del" title="Remove">×</button>
   </div>
   <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
@@ -259,17 +248,100 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <span class="qi-channel" title="${channelName} ${urlDisplay}">${channelName} ${urlDisplay}</span>
   </div>
   <div style="flex-basis: 100%; height: 0;"></div>
-  <input class="ghost-date qi-date" type="datetime-local" value="${dateVal}" style="width:120px; text-align:left; margin-left:0;"/>
+  <input class="ghost-date qi-date" type="datetime-local" value="${dateVal}" style="text-align:left; margin-left:0;"/>
   <button class="qi-send" style="margin-left:auto;">Send</button>
   </div>
   ${sessionsHtml}
   `;
 
-  // Reading Search Logic
   if (isRead) {
     const descInput = el.querySelector('.qi-title') as HTMLInputElement;
     const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
     let debounceTimer: any;
+
+    const bindUnlink = (btn: HTMLElement) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        item.mediaId = 'web-reading';
+        item.mediaData = null;
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx > -1) { q[idx] = item; await readingQueueStorage.setValue(q); }
+        btn.remove();
+      });
+      btn.addEventListener('mouseenter', () => { btn.textContent = '✗'; btn.style.color = 'var(--red)'; });
+      btn.addEventListener('mouseleave', () => { btn.textContent = '✓'; btn.style.color = 'var(--green)'; });
+    };
+
+    const existingLink = el.querySelector('.qi-link-status') as HTMLElement;
+    if (existingLink) bindUnlink(existingLink);
+
+    const executeSearch = async (query: string) => {
+      dropdown.innerHTML = '<div style="padding:6px;text-align:center;font-size:11px;color:var(--dim)">Searching...</div>';
+      dropdown.classList.add('open');
+
+      try {
+        const cfg = await configStorage.getValue() as any;
+        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+          headers: { 'X-API-Key': cfg.apiKey ?? '' }
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const results = Array.isArray(data) ? data : (data.data ??[]);
+
+        if (results.length === 0) {
+          dropdown.innerHTML = '<div style="padding:6px;text-align:center;font-size:11px;color:var(--dim)">No results</div>';
+          return;
+        }
+
+        dropdown.innerHTML = '';
+        results.forEach(m => {
+          const row = document.createElement('div');
+          row.className = 'qi-search-item';
+          const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+          const img = m.coverImage || m.contentImage || '';
+
+        row.innerHTML = `
+        ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
+        <div class="qi-search-info">
+        <div class="qi-search-title">${esc(native)}</div>
+        </div>`;
+
+        row.addEventListener('mousedown', async (e) => {
+          e.preventDefault();
+          descInput.value = native;
+
+          const { volume } = parseTitle(native);
+          item.mediaData = {
+            contentId: m.contentId,
+            contentTitleNative: native,
+            contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish,
+            contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
+            contentImage: img, coverImage: img,
+            chapters: m.chapters, volumes: m.volumes,
+          };
+          item.mediaId = m.contentId;
+          item.volume = volume || 1;
+          item.description = native;
+
+          const q = await readingQueueStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx > -1) { q[idx] = item; await readingQueueStorage.setValue(q); }
+
+          dropdown.classList.remove('open');
+
+          if (!el.querySelector('.qi-link-status')) {
+            el.querySelector('.qi-search-wrap')!.insertAdjacentHTML('afterend', `<button class="qi-link-status" title="Unlink AniList">✓</button>`);
+            bindUnlink(el.querySelector('.qi-link-status') as HTMLElement);
+          }
+        });
+        dropdown.appendChild(row);
+        });
+      } catch {
+        dropdown.innerHTML = '<div style="padding:6px;text-align:center;font-size:11px;color:var(--red)">Failed</div>';
+      }
+    };
 
     descInput.addEventListener('input', () => {
       if (item.mediaId && item.mediaId !== 'web-reading') {
@@ -282,75 +354,19 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
       const query = descInput.value.trim();
       if (query.length < 2) { dropdown.classList.remove('open'); return; }
 
-      debounceTimer = setTimeout(async () => {
-        dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--dim)">Searching...</div>';
-        dropdown.classList.add('open');
-
-        try {
-          const cfg = await configStorage.getValue() as any;
-          const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
-            headers: { 'X-API-Key': cfg.apiKey ?? '' }
-          });
-          if (!res.ok) throw new Error();
-          const data = await res.json();
-          const results = Array.isArray(data) ? data : (data.data ?? []);
-
-          if (results.length === 0) {
-            dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--dim)">No results</div>';
-            return;
-          }
-
-          dropdown.innerHTML = '';
-      results.forEach(m => {
-        const row = document.createElement('div');
-        row.className = 'qi-search-item';
-        const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
-        const img = m.coverImage || m.contentImage || '';
-
-      row.innerHTML = `
-      ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
-      <div class="qi-search-info">
-      <div class="qi-search-title">${esc(native)}</div>
-      </div>
-      `;
-
-      row.addEventListener('mousedown', async (e) => {
-        e.preventDefault();
-        descInput.value = native;
-
-        const { volume } = parseTitle(native);
-        item.mediaData = {
-          contentId: m.contentId,
-          contentTitleNative: native,
-          contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish,
-          contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-          contentImage: img, coverImage: img,
-          chapters: m.chapters, volumes: m.volumes,
-        };
-        item.mediaId = m.contentId;
-        item.volume = volume || 1;
-        item.description = native;
-
-        const q = await readingQueueStorage.getValue();
-        const idx = q.findIndex((x: any) => x.id === item.id);
-        if (idx > -1) { q[idx] = item; await readingQueueStorage.setValue(q); }
-
-        dropdown.classList.remove('open');
-        if (!el.querySelector('.qi-link-status')) {
-          descInput.insertAdjacentHTML('afterend', `<span class="qi-link-status" style="color:var(--green);font-size:10px;margin-left:4px;">✓</span>`);
-        }
-      });
-      dropdown.appendChild(row);
-      });
-        } catch {
-          dropdown.innerHTML = '<div style="padding:5px;text-align:center;font-size:10px;color:var(--red)">Failed</div>';
-        }
-      }, 500);
+      debounceTimer = setTimeout(() => executeSearch(query), 500);
     });
 
     descInput.addEventListener('blur', () => dropdown.classList.remove('open'));
     descInput.addEventListener('focus', () => {
-      if (dropdown.children.length > 0 && descInput.value.trim().length >= 2) dropdown.classList.add('open');
+      const query = descInput.value.trim();
+      if (query.length >= 2) {
+        if (dropdown.children.length === 0) {
+          executeSearch(query);
+        } else {
+          dropdown.classList.add('open');
+        }
+      }
     });
   }
 

@@ -191,7 +191,7 @@ async function loadConfig() {
   trackTimeEl.checked = cfg.trackTime ?? false;
   allowListOnlyEl.checked = cfg.allowListOnly ?? false;
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
-  renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ??[...BUILT_IN_SKIP]);
+  renderSites(cfg.allowSites ??[...BUILT_IN_ALLOW], cfg.skipSites ??[...BUILT_IN_SKIP]);
 
   ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
   ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
@@ -339,7 +339,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <div class="qi-search-wrap" style="${type !== 'reading' ? 'display:block;flex:1' : ''}">
   ${type === 'reading' ? `<svg class="qi-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` : ''}
   <input class="qi-desc ${type === 'reading' ? 'searchable' : ''}" type="text" value="${title}" placeholder="${type === 'reading' ? 'Search AniList...' : 'Video Title'}"/>
-  ${isLinked ? `<span class="qi-link-status" title="Linked to AniList">✓</span>` : ''}
+  ${isLinked ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : ''}
   ${type === 'reading' ? `<div class="qi-search-dropdown"></div>` : ''}
   </div>
   <div style="display:flex;gap:6px;">
@@ -369,6 +369,98 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
     let debounceTimer: any;
 
+    const bindUnlink = (btn: HTMLElement) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        item.mediaId = 'web-reading';
+        item.mediaData = null;
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx > -1) { q[idx] = item; await readingQueueStorage.setValue(q); }
+        btn.remove();
+      });
+      btn.addEventListener('mouseenter', () => { btn.textContent = '✗'; btn.style.color = 'var(--red)'; });
+      btn.addEventListener('mouseleave', () => { btn.textContent = '✓'; btn.style.color = 'var(--green)'; });
+    };
+
+    const existingLink = el.querySelector('.qi-link-status') as HTMLElement;
+    if (existingLink) bindUnlink(existingLink);
+
+    const executeSearch = async (query: string) => {
+      dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">Searching AniList...</div>';
+      dropdown.classList.add('open');
+
+      try {
+        const cfg = await configStorage.getValue() as any;
+        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+          headers: { 'X-API-Key': cfg.apiKey ?? '' }
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const results = Array.isArray(data) ? data : (data.data ??[]);
+
+        if (results.length === 0) {
+          dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">No results found</div>';
+          return;
+        }
+
+        dropdown.innerHTML = '';
+        results.forEach(m => {
+          const row = document.createElement('div');
+          row.className = 'qi-search-item';
+          const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+          const eng = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+          const img = m.coverImage || m.contentImage || '';
+
+        row.innerHTML = `
+        ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
+        <div class="qi-search-info">
+        <div class="qi-search-title">${esc(native)}</div>
+        <div class="qi-search-sub">${esc(eng)}</div>
+        </div>
+        `;
+
+        row.addEventListener('mousedown', async (e) => {
+          e.preventDefault();
+          descInput.value = native;
+
+          const { volume } = parseTitle(native);
+          item.mediaData = {
+            contentId:           m.contentId,
+            contentTitleNative:  native,
+            contentTitleEnglish: eng,
+            contentTitleRomaji:  m.title?.contentTitleRomaji || m.contentTitleRomaji,
+            contentImage:        img,
+            coverImage:          img,
+            chapters:            m.chapters,
+            volumes:             m.volumes,
+          };
+          item.mediaId = m.contentId;
+          item.volume = volume || 1;
+          item.description = native;
+
+          const q = await readingQueueStorage.getValue();
+          const idx = q.findIndex((x:any) => x.id === item.id);
+          if (idx > -1) {
+            q[idx] = item;
+            await readingQueueStorage.setValue(q);
+          }
+
+          dropdown.classList.remove('open');
+
+          if (!el.querySelector('.qi-link-status')) {
+            descInput.insertAdjacentHTML('afterend', `<button class="qi-link-status" title="Unlink AniList">✓</button>`);
+            bindUnlink(el.querySelector('.qi-link-status') as HTMLElement);
+          }
+        });
+        dropdown.appendChild(row);
+        });
+      } catch {
+        dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--red)">Search failed</div>';
+      }
+    };
+
     descInput.addEventListener('input', () => {
       if (item.mediaId && item.mediaId !== 'web-reading') {
         item.mediaId = 'web-reading';
@@ -383,83 +475,18 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         return;
       }
 
-      debounceTimer = setTimeout(async () => {
-        dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">Searching AniList...</div>';
-        dropdown.classList.add('open');
-
-        try {
-          const cfg = await configStorage.getValue() as any;
-          const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
-            headers: { 'X-API-Key': cfg.apiKey ?? '' }
-          });
-          if (!res.ok) throw new Error();
-          const data = await res.json();
-          const results = Array.isArray(data) ? data : (data.data ??[]);
-
-          if (results.length === 0) {
-            dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--muted)">No results found</div>';
-            return;
-          }
-
-          dropdown.innerHTML = '';
-      results.forEach(m => {
-        const row = document.createElement('div');
-        row.className = 'qi-search-item';
-        const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
-        const eng = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
-        const img = m.coverImage || m.contentImage || '';
-
-      row.innerHTML = `
-      ${img ? `<img class="qi-search-cover" src="${img}" />` : `<div class="qi-search-cover" style="background:var(--bdr2)"></div>`}
-      <div class="qi-search-info">
-      <div class="qi-search-title">${esc(native)}</div>
-      <div class="qi-search-sub">${esc(eng)}</div>
-      </div>
-      `;
-
-      row.addEventListener('mousedown', async (e) => {
-        e.preventDefault();
-        descInput.value = native;
-
-        const { volume } = parseTitle(native);
-        item.mediaData = {
-          contentId:           m.contentId,
-          contentTitleNative:  native,
-          contentTitleEnglish: eng,
-          contentTitleRomaji:  m.title?.contentTitleRomaji || m.contentTitleRomaji,
-          contentImage:        img,
-          coverImage:          img,
-          chapters:            m.chapters,
-          volumes:             m.volumes,
-        };
-        item.mediaId = m.contentId;
-        item.volume = volume || 1;
-        item.description = native;
-
-        const q = await readingQueueStorage.getValue();
-        const idx = q.findIndex((x:any) => x.id === item.id);
-        if (idx > -1) {
-          q[idx] = item;
-          await readingQueueStorage.setValue(q);
-        }
-
-        dropdown.classList.remove('open');
-        if (!el.querySelector('.qi-link-status')) {
-          descInput.insertAdjacentHTML('afterend', `<span class="qi-link-status" title="Linked to AniList">✓</span>`);
-        }
-      });
-      dropdown.appendChild(row);
-      });
-        } catch {
-          dropdown.innerHTML = '<div style="padding:10px;text-align:center;font-size:11px;color:var(--red)">Search failed</div>';
-        }
-      }, 500);
+      debounceTimer = setTimeout(() => executeSearch(query), 500);
     });
 
     descInput.addEventListener('blur', () => dropdown.classList.remove('open'));
     descInput.addEventListener('focus', () => {
-      if (dropdown.children.length > 0 && descInput.value.trim().length >= 2) {
-        dropdown.classList.add('open');
+      const query = descInput.value.trim();
+      if (query.length >= 2) {
+        if (dropdown.children.length === 0) {
+          executeSearch(query);
+        } else {
+          dropdown.classList.add('open');
+        }
       }
     });
   }
