@@ -84,7 +84,7 @@ const allowListOnlyEl= document.getElementById('allow-list-only') as HTMLInputEl
 const queueListEl    = document.getElementById('queue-list')!;
 const queueActions   = document.getElementById('queue-actions')!;
 const navBadge       = document.getElementById('nav-badge')!;
-const sendTodayBtn   = document.getElementById('send-today-btn')!;
+const autoSendEODEl  = document.getElementById('auto-send-end-of-day') as HTMLInputElement;
 const sendAllBtn     = document.getElementById('send-all-btn')!;
 const clearAllBtn    = document.getElementById('clear-all-btn')!;
 const allowListEl    = document.getElementById('allow-list')!;
@@ -98,6 +98,7 @@ const skipAddBtn     = document.getElementById('skip-add')!;
 
 const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
 const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
+const ttuDirectSendEl= document.getElementById('ttu-direct-send') as HTMLInputElement;
 const resetReadersBtn= document.getElementById('reset-readers-btn')!;
 
 const threshSpinUp   = document.querySelector('.thresh-spin-up') as HTMLButtonElement;
@@ -139,6 +140,31 @@ function parseTitle(docTitle: string) {
   return { query: title, volume };
 }
 
+function showUnmatchedModal(): Promise<boolean> {
+  return new Promise(resolve => {
+    const modal = document.getElementById('unmatched-modal')!;
+    const cancelBtn = document.getElementById('modal-cancel')!;
+    const proceedBtn = document.getElementById('modal-proceed')!;
+    const dontWarnChk = document.getElementById('dont-warn-chk') as HTMLInputElement;
+
+    modal.classList.add('open');
+
+    const close = async (res: boolean) => {
+      modal.classList.remove('open');
+      if (dontWarnChk.checked) {
+        const cfg = await configStorage.getValue() as any;
+        await configStorage.setValue({ ...cfg, warnUntracked: false });
+      }
+      cancelBtn.onclick = null;
+      proceedBtn.onclick = null;
+      resolve(res);
+    };
+
+    cancelBtn.onclick = () => close(false);
+    proceedBtn.onclick = () => close(true);
+  });
+}
+
 // ── Config Logic ──────────────────────────────────────────────────────────────
 async function loadConfig() {
   const cfg = await configStorage.getValue() as any;
@@ -169,6 +195,9 @@ async function loadConfig() {
 
   ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
   ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
+  ttuDirectSendEl.checked = cfg.ttuDirectSend ?? false;
+
+  autoSendEODEl.checked = cfg.autoSendEndOfDay ?? false;
 }
 
 function setApiStatus(key: string) {
@@ -286,7 +315,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   let channelName = '';
   let urlDisplay = '';
   if (type === 'reading') {
-    channelName = 'TTU Reader \u2022 ' + esc(item.contentTitleNative || '');
+    channelName = 'TTU Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
     urlDisplay = '';
   } else {
     channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');
@@ -480,28 +509,34 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     }
 
     el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
-    el.querySelector('.qi-send')!.addEventListener('click', () => sendOne(item.id, el));
 
-    el.querySelectorAll('.qi-session-remove').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
-        const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
-        const q = await targetStorage.getValue();
-        const idx = q.findIndex((x: any) => x.id === item.id);
-        if (idx !== -1) {
-          q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
-          const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-          q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
-          if (type === 'reading') {
-            q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
-          }
-          await targetStorage.setValue(q);
-          renderQueue();
-        }
-      });
+    el.querySelector('.qi-send')!.addEventListener('click', async () => {
+      const btn = el.querySelector('.qi-send') as HTMLButtonElement;
+      btn.disabled = true;
+      const sent = await checkAndSend([{ id: item.id, el }], false);
+      if (!sent) btn.disabled = false;
     });
 
-    return el;
+      el.querySelectorAll('.qi-session-remove').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
+          const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+          const q = await targetStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx !== -1) {
+            q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
+            const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+            q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
+            if (type === 'reading') {
+              q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+            }
+            await targetStorage.setValue(q);
+            renderQueue();
+          }
+        });
+      });
+
+      return el;
 }
 
 // ── Payload Compiler ──────────────────────────────────────────────────────────
@@ -577,6 +612,34 @@ async function renderQueue() {
   applyFilter();
 }
 
+async function checkAndSend(items: {id: string, el: HTMLElement}[], forceBypass = false): Promise<boolean> {
+  const cfg = await configStorage.getValue() as any;
+  const warnEnabled = cfg.warnUntracked !== false;
+
+  if (warnEnabled && !forceBypass) {
+    let hasUntracked = false;
+    for (const {id, el} of items) {
+      const type = el.dataset.type;
+      const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+      const q = await qStorage.getValue();
+      const item = q.find((x: any) => x.id === id);
+      if (item && (!item.mediaId || item.mediaId === 'web-reading' || item.mediaId === 'web-video')) {
+        hasUntracked = true; break;
+      }
+    }
+
+    if (hasUntracked) {
+      const proceed = await showUnmatchedModal();
+      if (!proceed) return false;
+    }
+  }
+
+  for (const {id, el} of items) {
+    await sendOne(id, el);
+  }
+  return true;
+}
+
 async function sendOne(id: string, el: HTMLElement) {
   const type = el.dataset.type as 'video' | 'reading';
   const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
@@ -600,7 +663,7 @@ async function sendOne(id: string, el: HTMLElement) {
         });
         if (res.ok) {
           const data = await res.json();
-          const results: any[] = Array.isArray(data) ? data : (data.data ?? []);
+          const results: any[] = Array.isArray(data) ? data : (data.data ??[]);
           if (results.length > 0) {
             const media = results[0];
             item.mediaData = {
@@ -643,30 +706,11 @@ async function removeOne(id: string, type: 'video' | 'reading') {
   renderQueue();
 }
 
-sendTodayBtn.addEventListener('click', async () => {
-  const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
-  const todayStr = new Date().toLocaleDateString();
-  sendTodayBtn.disabled = true;
-  for (const el of items) {
-    if (el.style.display !== 'none') {
-      const dateInput = el.querySelector('.qi-date-input') as HTMLInputElement;
-      if (dateInput) {
-        const itemDate = new Date(dateInput.value).toLocaleDateString();
-        if (itemDate === todayStr) {
-          await sendOne(el.dataset.id!, el);
-        }
-      }
-    }
-  }
-  sendTodayBtn.disabled = false;
-});
-
 sendAllBtn.addEventListener('click', async () => {
   const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
   sendAllBtn.disabled = true;
-  for (const el of items) {
-    if (el.style.display !== 'none') await sendOne(el.dataset.id!, el);
-  }
+  const toSend = items.filter(el => el.style.display !== 'none').map(el => ({id: el.dataset.id!, el}));
+  await checkAndSend(toSend, false);
   sendAllBtn.disabled = false;
 });
 
@@ -798,14 +842,21 @@ resetOverlayBtn.addEventListener('click', async () => {
     allowListOnly: false,
     overlayPosition: 'top-right',
     allowSites: [...BUILT_IN_ALLOW],
-    skipSites: [...BUILT_IN_SKIP]
+    skipSites:[...BUILT_IN_SKIP]
   });
   loadConfig();
   showStatus('✓ Defaults Restored');
 });
 
 
-// 4. Readers
+// 4. Queue Config
+autoSendEODEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, autoSendEndOfDay: autoSendEODEl.checked });
+  showStatus('✓ EOD setting saved');
+});
+
+// 5. Readers
 ttuEnabledEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({ ...cfg, ttuEnabled: ttuEnabledEl.checked });
@@ -818,12 +869,19 @@ ttuAutoSaveEl.addEventListener('change', async () => {
   showStatus(ttuAutoSaveEl.checked ? '✓ TTU Auto-sync enabled' : '✓ TTU Auto-sync disabled');
 });
 
+ttuDirectSendEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, ttuDirectSend: ttuDirectSendEl.checked });
+  showStatus(ttuDirectSendEl.checked ? '✓ TTU Direct Send enabled' : '✓ TTU Direct Send disabled');
+});
+
 resetReadersBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({
     ...cfg,
     ttuEnabled: true,
-    ttuAutoSave: true
+    ttuAutoSave: true,
+    ttuDirectSend: false
   });
   loadConfig();
   showStatus('✓ Defaults Restored');

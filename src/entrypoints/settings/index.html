@@ -51,11 +51,22 @@
       <div class="tab-head">
         <h2>Pending Logs</h2>
         <div class="tab-actions" id="queue-actions" style="display:none">
-          <button id="send-today-btn" class="btn btn-amber btn-sm">Send Today's</button>
           <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
           <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
         </div>
       </div>
+
+      <div class="field" style="margin-bottom: 16px; background: rgba(240,180,41,.05); border: 1px solid rgba(240,180,41,.2); border-radius: 6px; padding: 12px 16px;">
+        <div class="tooltip-wrap" style="display:flex; width:100%;">
+          <label class="toggle" style="flex:1;">
+            <input type="checkbox" id="auto-send-end-of-day" class="toggle-chk"/>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Automatically send today's queued logs at end of day
+          </label>
+          <span class="tooltip">This would also send unmatched media</span>
+        </div>
+      </div>
+
       <div class="queue-tabs">
         <button class="q-tab active" data-filter="all">All</button>
         <button class="q-tab" data-filter="video">Video</button>
@@ -263,12 +274,37 @@
         </label>
       </div>
 
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="ttu-direct-send" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Directly send to NT if matched
+        </label>
+      </div>
+
       <div style="display:flex; gap:10px; margin-top: 24px;">
         <button id="reset-readers-btn" class="btn btn-ghost">Revert to Default</button>
       </div>
     </section>
 
   </main>
+</div>
+
+<!-- Modal for unmatched media warning -->
+<div id="unmatched-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Unmatched Media</h3>
+    <p>You are about to send logs for media that haven't been linked to AniList. Proceed?</p>
+    <label class="toggle" style="margin-top: 10px;">
+      <input type="checkbox" id="dont-warn-chk" class="toggle-chk"/>
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      Don't warn me again
+    </label>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
+      <button id="modal-proceed" class="btn btn-amber">Proceed</button>
+    </div>
+  </div>
 </div>
 
 <div id="status" class="status-toast hidden"></div>

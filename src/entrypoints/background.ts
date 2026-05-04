@@ -1,6 +1,7 @@
 import { defineBackground } from '#imports';
 import { submitLog, notify } from '@/utils/api';
-import { videoQueueStorage, configStorage } from '@/utils/storage';
+import { videoQueueStorage, readingQueueStorage, configStorage } from '@/utils/storage';
+import { storage } from '#imports';
 
 export default defineBackground(() => {
   // ── Context menu ───────────────────────────────────────────────────────────
@@ -68,6 +69,82 @@ export default defineBackground(() => {
                       tags:[],
     });
   });
+
+  // ── Auto-Send End Of Day Scheduled Task ────────────────────────────────────
+  browser.alarms.create('flushDaily', { periodInMinutes: 15 });
+  browser.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name === 'flushDaily') {
+      const cfg = await configStorage.getValue();
+      if (!cfg.autoSendEndOfDay) return;
+
+      const now = new Date();
+      // Execute automatically around 11:45 PM to 11:59 PM
+      if (now.getHours() === 23 && now.getMinutes() >= 45) {
+        const lastFlushDate = await storage.getItem('local:lastFlushDate');
+        const todayStr = now.toLocaleDateString();
+        if (lastFlushDate === todayStr) return; // Only process once per day
+
+        await flushTodayQueue('reading', readingQueueStorage);
+        await flushTodayQueue('video', videoQueueStorage);
+        await storage.setItem('local:lastFlushDate', todayStr);
+      }
+    }
+  });
+
+  async function flushTodayQueue(type: 'reading' | 'video', qStorage: any) {
+    const q = await qStorage.getValue();
+    const todayStr = new Date().toLocaleDateString();
+    const remaining =[];
+
+    for (const item of q) {
+      const itemDateStr = new Date(item.date).toLocaleDateString();
+      const sessionsToday = item.sessions?.filter((s:any) => new Date(s.date).toLocaleDateString() === todayStr) ||[];
+
+      const isToday = itemDateStr === todayStr || sessionsToday.length > 0;
+
+      if (!isToday) {
+        remaining.push(item);
+        continue;
+      }
+
+      const base: any = {
+        type,
+        mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
+                                description: item.description || item.contentTitleNative,
+                                episodes: 0,
+                                pages: 0,
+                                unknownDate: false,
+                                volume: item.volume || 1,
+                                mediaData: item.mediaData || (type === 'reading' ? { contentId: 'web-reading', contentTitleNative: item.contentTitleNative } : { channelId: item.channelId || 'web-video', channelTitle: item.contentTitleNative })
+      };
+
+      let payloads =[];
+      if (!item.sessions || item.sessions.length === 0) {
+        payloads =[{
+          ...base,
+          time: type === 'reading' ? Math.max(1, Math.round((item.time||0)/60)) : item.time||0,
+                                date: item.date,
+                                chars: item.chars || 0
+        }];
+      } else {
+        payloads = item.sessions.map((s:any) => ({
+          ...base,
+          time: type === 'reading' ? Math.max(1, Math.round(s.secs / 60)) : Math.max(1, Math.round(s.secs / 60)),
+                                                 date: s.date,
+                                                 chars: s.chars || 0
+        }));
+      }
+
+      let success = true;
+      for (const p of payloads) {
+        if (!(await submitLog(p))) success = false;
+      }
+      if (!success) remaining.push(item);
+    }
+
+    await qStorage.setValue(remaining);
+    refreshBadge();
+  }
 
   // ── Badge on queue updates ─────────────────────────────────────────────────
   const refreshBadge = async () => {

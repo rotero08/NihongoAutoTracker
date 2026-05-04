@@ -114,7 +114,7 @@ async function liveSyncQueue() {
       existing = {
         id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
         originalTitle: title, description: title, chars: ttuState.chars, time: secs,
-        date: dateStr, private: false, tags: [],
+        date: dateStr, private: false, tags:[],
         sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
       };
       queue.push(existing);
@@ -188,7 +188,7 @@ function injectTTUStyles() {
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 26px; height: 26px; fill: currentColor; }
 
-  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; cursor: default; }
   #nt-ttu-dropdown.open { display: flex; }
 
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
@@ -204,20 +204,25 @@ function injectTTUStyles() {
 
   .nt-ttu-controls { display: flex; gap: 8px; justify-content: center; }
   .nt-ttu-btn-icon { background: transparent; color: #aaa; border: none; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border-radius: 50%; }
-  .nt-ttu-btn-icon:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  .nt-ttu-btn-icon:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: #fff; }
   .nt-ttu-btn-icon.primary { color: #f0b429; }
   .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: #ffcc33; }
   .nt-ttu-btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
 
   .nt-ttu-linker { margin-top: 12px; border-top: 1px solid #3a3a3a; padding-top: 12px; }
-  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: #3ddc84; cursor: pointer; padding: 4px; border-radius: 4px; transition: background .15s; }
-  .nt-ttu-link-compact:hover { background: rgba(255,255,255,0.05); }
-  .nt-ttu-link-compact svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: #3ddc84; padding: 4px 6px; border-radius: 4px; transition: background .15s; background: rgba(61,220,132,0.05); }
+  .nt-ttu-link-compact-inner { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; }
+  .nt-ttu-link-compact-inner:hover { opacity: 0.8; }
+  .nt-ttu-unlink-btn { background: none; border: none; color: #f0706a; cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
+  .nt-ttu-unlink-btn:hover { opacity: 1; }
+  .nt-ttu-link-compact-inner svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
   .nt-ttu-link-edit { display: flex; flex-direction: column; gap: 6px; position: relative; }
-  .nt-ttu-link-wrap { display: flex; align-items: center; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 0 6px; }
-  .nt-ttu-link-wrap:focus-within { border-color: #f0b429; }
+  .nt-ttu-link-wrap { display: flex; align-items: center; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 0 6px; outline: none !important; }
+  .nt-ttu-link-wrap:focus-within { border-color: #f0b429; box-shadow: 0 0 0 1px transparent; }
   .nt-ttu-link-wrap svg { width: 12px; height: 12px; stroke: #999; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .nt-ttu-link-input { flex: 1; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 11px; padding: 6px; outline: none; }
+  .nt-ttu-link-input { flex: 1; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 11px; padding: 6px; outline: none !important; }
+  .nt-ttu-link-input:focus { outline: none !important; box-shadow: none !important; }
   .nt-ttu-link-results { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; display: none; }
   .nt-ttu-link-results.open { display: flex; }
   .nt-ttu-link-item { display: flex; align-items: center; gap: 8px; padding: 6px; cursor: pointer; border-radius: 4px; transition: background .15s; text-align: left; }
@@ -277,18 +282,23 @@ function setupTTUChronometer() {
   <button class="nt-ttu-btn-icon" id="nt-ttu-btn-toggle" title="Play/Pause"><svg viewBox="0 0 24 24"><path id="nt-ttu-play-path" d="M8 5v14l11-7z"/></svg></button>
   <button class="nt-ttu-btn-icon" id="nt-ttu-btn-reset" title="Reset Session"><svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
   <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-log" title="Save & Queue"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg></button>
-  <button class="nt-ttu-btn-icon" id="nt-ttu-btn-direct" title="Send session to NT directly" style="display:none; color:#3ddc84;"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+  <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-direct" title="Link to AniList to send directly" disabled style="opacity: 0.3; cursor: not-allowed;"><svg style="width: 16px; height: 16px;" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
   </div>
 
   <div class="nt-ttu-linker" id="nt-ttu-linker-sec">
   <div class="nt-ttu-link-compact" id="nt-ttu-link-compact" style="display:none">
+  <div class="nt-ttu-link-compact-inner" id="nt-ttu-link-label-wrap" title="Click to edit">
   <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg>
   <span id="nt-ttu-link-label">Linked to AniList</span>
+  </div>
+  <button id="nt-ttu-unlink-btn" class="nt-ttu-unlink-btn" title="Unlink Media">
+  <svg style="width:12px; height:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+  </button>
   </div>
   <div class="nt-ttu-link-edit" id="nt-ttu-link-edit">
   <div class="nt-ttu-link-wrap">
   <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-  <input type="text" id="nt-ttu-link-input" class="nt-ttu-link-input" placeholder="Search AniList..."/>
+  <input type="text" id="nt-ttu-link-input" class="nt-ttu-link-input" placeholder="Search AniList..." spellcheck="false"/>
   </div>
   <div class="nt-ttu-link-results" id="nt-ttu-link-results"></div>
   </div>
@@ -336,10 +346,25 @@ function setupTTUChronometer() {
   const btnDirect = wrapper.querySelector('#nt-ttu-btn-direct') as HTMLButtonElement;
 
   const linkerCompact = wrapper.querySelector('#nt-ttu-link-compact') as HTMLElement;
+  const linkerLabelWrap = wrapper.querySelector('#nt-ttu-link-label-wrap') as HTMLElement;
   const linkerEdit = wrapper.querySelector('#nt-ttu-link-edit') as HTMLElement;
   const linkLabel = wrapper.querySelector('#nt-ttu-link-label') as HTMLElement;
   const linkInput = wrapper.querySelector('#nt-ttu-link-input') as HTMLInputElement;
   const linkResults = wrapper.querySelector('#nt-ttu-link-results') as HTMLElement;
+
+  // Prevent drag/scroll interaction bugs inside results
+  linkResults.addEventListener('mousedown', e => e.preventDefault());
+  linkResults.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+
+  // Isolate keyboard input so typing won't trigger reader shortcuts
+  ['keydown', 'keyup', 'keypress'].forEach(evt => {
+    linkInput.addEventListener(evt, e => e.stopPropagation());
+  });
+
+  const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
+  if (historyList) {
+    historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+  }
 
   let cachedHistoryMins = 0;
   let cachedHistoryChars = 0;
@@ -359,23 +384,53 @@ function setupTTUChronometer() {
       linkerEdit.style.display = 'none';
       linkerCompact.style.display = 'flex';
       linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
+      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
+
       if (currentConfig.ttuDirectSend) {
-        btnDirect.style.display = 'flex';
+        btnDirect.disabled = false;
+        btnDirect.style.opacity = '1';
+        btnDirect.style.cursor = 'pointer';
+        btnDirect.title = 'Send session to NT directly';
       } else {
-        btnDirect.style.display = 'none';
+        btnDirect.disabled = true;
+        btnDirect.style.opacity = '0.3';
+        btnDirect.style.cursor = 'not-allowed';
+        btnDirect.title = 'Direct send disabled in settings';
       }
     } else {
       linkerEdit.style.display = 'flex';
       linkerCompact.style.display = 'none';
       linkInput.value = parseTitle(title).query;
-      btnDirect.style.display = 'none';
+
+      btnDirect.disabled = true;
+      btnDirect.style.opacity = '0.3';
+      btnDirect.style.cursor = 'not-allowed';
+      btnDirect.title = 'Link to AniList to send directly';
     }
   };
 
-  linkerCompact.addEventListener('click', () => {
+  linkerLabelWrap.addEventListener('click', () => {
     linkerCompact.style.display = 'none';
     linkerEdit.style.display = 'flex';
     linkInput.focus();
+  });
+
+  wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const title = getTTUTitle();
+    const links = await ttuLinkStorage.getValue() || {};
+    delete links[title];
+    await ttuLinkStorage.setValue(links);
+
+    const queue = await readingQueueStorage.getValue();
+    const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
+    if (existing) {
+      existing.mediaId = 'web-reading';
+      existing.mediaData = null;
+      await readingQueueStorage.setValue(queue);
+    }
+
+    refreshLinkerUI();
   });
 
   let linkDebounce: any;
@@ -875,6 +930,7 @@ browser.storage.onChanged.addListener((changes, area) => {
       if (wrapper) {
         const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
         const btnDirect = wrapper.querySelector('#nt-ttu-btn-direct') as HTMLButtonElement;
+
         if (isEnabled && currentConfig.ttuAutoSave !== false) {
           btnLog.disabled = true;
           btnLog.style.opacity = '0.3';
@@ -887,10 +943,7 @@ browser.storage.onChanged.addListener((changes, area) => {
           btnLog.title = 'Save & Queue';
         }
 
-        // Hide direct send button if config was dynamically turned off
-        if (btnDirect && !currentConfig.ttuDirectSend) {
-          btnDirect.style.display = 'none';
-        }
+        // Direct send button state will be dynamically resolved inside the UI handler refreshLinkerUI
       }
     }
   }

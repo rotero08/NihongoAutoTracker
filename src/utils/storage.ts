@@ -16,9 +16,12 @@ export interface TrackerConfig {
   showTotalInBadge: boolean;
   ttuEnabled: boolean; // Required explicitly for defaults to apply flawlessly
   ttuAutoSave?: boolean;
+  ttuDirectSend?: boolean;
   allowSites?: string[];
   skipSites?: string[];
   allowListOnly?: boolean;
+  warnUntracked?: boolean;
+  autoSendEndOfDay?: boolean;
 }
 
 export interface QueuedVideoLog {
@@ -76,6 +79,8 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     showTotalInBadge: true,
     ttuEnabled: true, // Defaults to ON immediately.
     ttuAutoSave: true,
+    warnUntracked: true,
+    autoSendEndOfDay: false,
   },
 });
 
