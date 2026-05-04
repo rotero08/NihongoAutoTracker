@@ -1,5 +1,4 @@
 import { storage } from '#imports';
-
 export type OverlayPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'hidden';
 export type LogMode = 'auto' | 'manual';
 
@@ -10,7 +9,11 @@ export interface TrackerConfig {
   trackTime: boolean;
   hideButtons: boolean;
   overlayPosition: OverlayPosition;
-  showTotalInBadge: boolean; // Added[cite: 3]
+  showTotalInBadge: boolean;
+  ttuEnabled?: boolean;
+  allowSites?: string[];
+  skipSites?: string[];
+  allowListOnly?: boolean;
 }
 
 export interface QueuedVideoLog {
@@ -22,8 +25,29 @@ export interface QueuedVideoLog {
   private: boolean;
   tags: string[];
   description: string;
-  channelId?: string; // Added[cite: 3]
-  sessions?: { id: string; secs: number; date: string }[]; // Added[cite: 3]
+  channelId?: string;
+  sessions?: { id: string; secs: number; date: string }[];
+}
+
+export interface QueuedReadingLog {
+  id: string;
+  type: 'reading';
+  contentTitleNative: string;
+  contentTitleEnglish: string;
+  description: string;
+  chars: number;
+  time: number;
+  date: string;
+  private: boolean;
+  tags: string[];
+  sessions?: { id: string; secs: number; chars: number; date: string }[];
+}
+
+export interface TTUHistorySession {
+  id: string;
+  date: string;
+  timeMs: number;
+  chars: number;
 }
 
 export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
@@ -39,5 +63,13 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
 });
 
 export const videoQueueStorage = storage.defineItem<QueuedVideoLog[]>('local:videoQueue', {
-  defaultValue: [],
+  defaultValue:[],
+});
+
+export const readingQueueStorage = storage.defineItem<QueuedReadingLog[]>('local:readingQueue', {
+  defaultValue:[],
+});
+
+export const ttuHistoryStorage = storage.defineItem<Record<string, TTUHistorySession[]>>('local:ttuHistory', {
+  defaultValue: {},
 });

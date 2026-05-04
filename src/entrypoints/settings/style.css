@@ -386,3 +386,14 @@ margin-bottom: 22px; transition: opacity .2s;
 }
 .status-toast.hidden { opacity: 0; pointer-events: none; }
 .status-toast.err { color: var(--red); }
+
+/* ── Added Reading Log Session Styling ──────────────────────── */
+.qi-session-chars {
+  background: transparent; border: none; border-bottom: 1px solid var(--bdr2);
+  color: var(--amber); font-family: var(--mono); font-size: 11px;
+  padding: 2px 0; outline: none; width: 55px; text-align: center;
+  -moz-appearance: textfield; transition: border-color .15s;
+}
+.qi-session-chars:focus { border-color: var(--amber); }
+.qi-session-chars::-webkit-inner-spin-button,
+.qi-session-chars::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

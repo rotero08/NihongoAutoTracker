@@ -49,13 +49,13 @@
     <!-- Queue -->
     <section class="tab active" id="tab-queue">
       <div class="tab-head">
-        <h2>Video Queue</h2>
+        <h2>Pending Logs</h2>
         <div class="tab-actions" id="queue-actions" style="display:none">
           <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
           <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
         </div>
       </div>
-      <p class="hint">Videos tracked from YouTube, Crunchyroll, AnimeKai. Edit title/time then send.</p>
+      <p class="hint">Tracked videos and reading sessions. Edit details, add missing character counts, then send.</p>
       <div id="queue-list"></div>
     </section>
 
@@ -233,6 +233,14 @@
         <label class="toggle">
           <input type="checkbox" id="ttu-enabled" class="toggle-chk" checked/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="ttu-auto-save" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Auto-sync sessions to queue in the background
         </label>
       </div>
 

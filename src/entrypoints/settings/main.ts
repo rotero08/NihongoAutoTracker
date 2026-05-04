@@ -1,5 +1,5 @@
 import './style.css';
-import { configStorage, videoQueueStorage, type QueuedVideoLog } from '@/utils/storage';
+import { configStorage, videoQueueStorage, readingQueueStorage, type QueuedVideoLog } from '@/utils/storage';
 import { submitLog } from '@/utils/api';
 
 const BUILT_IN_ALLOW =[
@@ -39,57 +39,53 @@ const apiKeyEl       = document.getElementById('api-key')        as HTMLInputEle
 const toggleKeyEl    = document.getElementById('toggle-key')!;
 const apiStatusEl    = document.getElementById('api-status')!;
 const saveApiBtn     = document.getElementById('save-api-btn')!;
-
-const autoSendEl       = document.getElementById('auto-send')      as HTMLInputElement;
-const autoConfigEl     = document.getElementById('auto-config')!;
-const threshTypeEls    = document.querySelectorAll<HTMLInputElement>('input[name="thresh-type"]');
-const threshPctEl      = document.getElementById('threshold-pct')  as HTMLInputElement;
-const threshMinEl      = document.getElementById('threshold-min')  as HTMLInputElement;
-const threshUnitEl     = document.getElementById('thresh-unit')!;
+const autoSendEl     = document.getElementById('auto-send')      as HTMLInputElement;
+const autoConfigEl   = document.getElementById('auto-config')!;
+const threshTypeEls  = document.querySelectorAll<HTMLInputElement>('input[name="thresh-type"]');
+const threshPctEl    = document.getElementById('threshold-pct')  as HTMLInputElement;
+const threshMinEl    = document.getElementById('threshold-min')  as HTMLInputElement;
+const threshUnitEl   = document.getElementById('thresh-unit')!;
 const threshSliderWrap = document.getElementById('thresh-slider-wrap')!;
-const threshMinsWrap   = document.getElementById('thresh-minutes-wrap')!;
-const hideBtnsEl       = document.getElementById('hide-buttons')   as HTMLInputElement;
-const hideJpFieldEl    = document.getElementById('hide-jp-field')!;
-const hideIfNotJpEl    = document.getElementById('hide-if-not-jp') as HTMLInputElement;
-const showTotalEl      = document.getElementById('show-total-badge') as HTMLInputElement;
-const saveVideoBtn     = document.getElementById('save-video-btn')!;
-
+const threshMinsWrap = document.getElementById('thresh-minutes-wrap')!;
+const hideBtnsEl     = document.getElementById('hide-buttons')   as HTMLInputElement;
+const hideJpFieldEl  = document.getElementById('hide-jp-field')!;
+const hideIfNotJpEl  = document.getElementById('hide-if-not-jp') as HTMLInputElement;
+const showTotalEl    = document.getElementById('show-total-badge') as HTMLInputElement;
+const saveVideoBtn   = document.getElementById('save-video-btn')!;
 const trackTimeEl    = document.getElementById('track-time')       as HTMLInputElement;
 const overlayEls     = document.querySelectorAll<HTMLInputElement>('input[name="overlay-pos"]');
 const saveOverlayBtn = document.getElementById('save-overlay-btn')!;
 const allowListOnlyEl= document.getElementById('allow-list-only') as HTMLInputElement;
+const queueListEl    = document.getElementById('queue-list')!;
+const queueActions   = document.getElementById('queue-actions')!;
+const navBadge       = document.getElementById('nav-badge')!;
+const sendAllBtn     = document.getElementById('send-all-btn')!;
+const clearAllBtn    = document.getElementById('clear-all-btn')!;
+const allowListEl    = document.getElementById('allow-list')!;
+const skipListEl     = document.getElementById('skip-list')!;
+const allowCountEl   = document.getElementById('allow-count')!;
+const skipCountEl    = document.getElementById('skip-count')!;
+const allowInputEl   = document.getElementById('allow-input') as HTMLInputElement;
+const skipInputEl    = document.getElementById('skip-input')  as HTMLInputElement;
+const allowAddBtn    = document.getElementById('allow-add')!;
+const skipAddBtn     = document.getElementById('skip-add')!;
+const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
+const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
 
-const queueListEl  = document.getElementById('queue-list')!;
-const queueActions = document.getElementById('queue-actions')!;
-const navBadge     = document.getElementById('nav-badge')!;
-const sendAllBtn   = document.getElementById('send-all-btn')!;
-const clearAllBtn  = document.getElementById('clear-all-btn')!;
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function trunc(s: string, n: number) { return s && s.length > n ? s.slice(0, n) + '…' : (s || ''); }
+const toLocalDT = (iso: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+const SVG_UP = `<svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg>`;
+const SVG_DN = `<svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg>`;
 
-const allowListEl  = document.getElementById('allow-list')!;
-const skipListEl   = document.getElementById('skip-list')!;
-const allowCountEl = document.getElementById('allow-count')!;
-const skipCountEl  = document.getElementById('skip-count')!;
-const allowInputEl = document.getElementById('allow-input') as HTMLInputElement;
-const skipInputEl  = document.getElementById('skip-input')  as HTMLInputElement;
-const allowAddBtn  = document.getElementById('allow-add')!;
-const skipAddBtn   = document.getElementById('skip-add')!;
-
-const ttuEnabledEl = document.getElementById('ttu-enabled') as HTMLInputElement;
-
-// ── Collapsible site groups ───────────────────────────────────────────────────
-document.querySelectorAll<HTMLElement>('.sites-toggle-head').forEach(head => {
-  const group = head.dataset.group!;
-  const body  = document.getElementById(`${group}-body`)!;
-  head.addEventListener('click', () => {
-    const open = head.classList.toggle('open');
-    body.classList.toggle('open', open);
-  });
-});
-
-// ── Load config ───────────────────────────────────────────────────────────────
+// ── Config Logic ──────────────────────────────────────────────────────────────
 async function loadConfig() {
   const cfg = await configStorage.getValue() as any;
-
   apiKeyEl.value = cfg.apiKey ?? '';
   setApiStatus(cfg.apiKey ?? '');
 
@@ -101,244 +97,113 @@ async function loadConfig() {
   threshTypeEls.forEach(r => { r.checked = r.value === threshType; });
   updateThreshUI(threshType, cfg);
 
-  hideBtnsEl.checked    = cfg.hideButtons       ?? false;
+  hideBtnsEl.checked = cfg.hideButtons ?? false;
   hideIfNotJpEl.checked = cfg.hideIfNotJapanese ?? false;
   updateHideJpDim(hideBtnsEl.checked);
 
   if (showTotalEl) showTotalEl.checked = cfg.showTotalInBadge ?? true;
 
-  trackTimeEl.checked      = cfg.trackTime     ?? false;
-  allowListOnlyEl.checked  = cfg.allowListOnly ?? false;
+  trackTimeEl.checked = cfg.trackTime ?? false;
+  allowListOnlyEl.checked = cfg.allowListOnly ?? false;
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
-
-  const allowSites: string[] = cfg.allowSites ?? [...BUILT_IN_ALLOW];
-  const skipSites:  string[] = cfg.skipSites  ?? [...BUILT_IN_SKIP];
-  renderSites(allowSites, skipSites);
+  renderSites(cfg.allowSites ?? [...BUILT_IN_ALLOW], cfg.skipSites ?? [...BUILT_IN_SKIP]);
 
   ttuEnabledEl.checked = cfg.ttuEnabled ?? false;
+  ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
 }
 
 function setApiStatus(key: string) {
-  apiStatusEl.textContent = key ? '● Key is configured' : '○ No key set — logs will not send';
-  apiStatusEl.className   = 'api-status ' + (key ? 'ok' : 'err');
+  apiStatusEl.textContent = key ? '● Key is configured' : '○ No key set';
+  apiStatusEl.className = 'api-status ' + (key ? 'ok' : 'err');
 }
 function updateAutoConfigDim(on: boolean) { autoConfigEl.classList.toggle('dim-block', !on); }
 function updateHideJpDim(hideBtns: boolean) { hideJpFieldEl.classList.toggle('dim-block', hideBtns); }
 function updateThreshUI(type: string, cfg?: any) {
   const isPct = type === 'percent';
-  threshSliderWrap.style.display = isPct  ? 'block' : 'none';
-  threshMinsWrap.style.display   = !isPct ? 'block' : 'none';
-  if (isPct) {
-    const v = cfg?.thresholdValue ?? cfg?.threshold ?? 95;
-    threshPctEl.value = String(v); threshUnitEl.textContent = v + '%';
-  } else {
-    const v = cfg?.thresholdValue ?? 30;
-    threshMinEl.value = String(v); threshUnitEl.textContent = v + ' min';
-  }
+  threshSliderWrap.style.display = isPct ? 'block' : 'none';
+  threshMinsWrap.style.display = !isPct ? 'block' : 'none';
+  const v = isPct ? (cfg?.thresholdValue ?? cfg?.threshold ?? 95) : (cfg?.thresholdValue ?? 30);
+  if (isPct) { threshPctEl.value = String(v); threshUnitEl.textContent = v + '%'; }
+  else { threshMinEl.value = String(v); threshUnitEl.textContent = v + ' min'; }
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
-toggleKeyEl.addEventListener('click', () => { apiKeyEl.type = apiKeyEl.type === 'password' ? 'text' : 'password'; });
-saveApiBtn.addEventListener('click', async () => {
-  const cfg = await configStorage.getValue() as any;
-  const key = apiKeyEl.value.trim();
-  await configStorage.setValue({ ...cfg, apiKey: key });
-  setApiStatus(key);
-  showStatus(key ? '✓ API Key saved' : '⚠ API Key cleared');
-});
-
-// ── Video ─────────────────────────────────────────────────────────────────────
-autoSendEl.addEventListener('change', () => updateAutoConfigDim(autoSendEl.checked));
-threshTypeEls.forEach(r => { r.addEventListener('change', () => updateThreshUI(r.value)); });
-threshPctEl.addEventListener('input', () => { threshUnitEl.textContent = threshPctEl.value + '%'; });
-threshMinEl.addEventListener('input', () => { threshUnitEl.textContent = threshMinEl.value + ' min'; });
-document.querySelector('.thresh-spin-up')!.addEventListener('click', () => {
-  threshMinEl.value = String(Math.max(1, Number(threshMinEl.value) + 1));
-  threshUnitEl.textContent = threshMinEl.value + ' min';
-});
-document.querySelector('.thresh-spin-dn')!.addEventListener('click', () => {
-  threshMinEl.value = String(Math.max(1, Number(threshMinEl.value) - 1));
-  threshUnitEl.textContent = threshMinEl.value + ' min';
-});
-hideBtnsEl.addEventListener('change', () => updateHideJpDim(hideBtnsEl.checked));
-
-saveVideoBtn.addEventListener('click', async () => {
-  const cfg  = await configStorage.getValue() as any;
-  const type = Array.from(threshTypeEls).find(r => r.checked)?.value ?? 'percent';
-  const value = type === 'percent' ? Number(threshPctEl.value) : Number(threshMinEl.value);
-  await configStorage.setValue({
-    ...cfg,
-    logMode: autoSendEl.checked ? 'auto' : 'manual',
-    autoSend: autoSendEl.checked,
-    thresholdType: type, thresholdValue: value, threshold: value,
-    hideButtons: hideBtnsEl.checked,
-    hideIfNotJapanese: hideIfNotJpEl.checked,
-    showTotalInBadge: showTotalEl?.checked ?? true,
-  });
-  showStatus('✓ Video settings saved');
-});
-
-// ── Overlay ───────────────────────────────────────────────────────────────────
-saveOverlayBtn.addEventListener('click', async () => {
-  const cfg = await configStorage.getValue() as any;
-  const pos = Array.from(overlayEls).find(r => r.checked)?.value ?? 'top-right';
-  await configStorage.setValue({ ...cfg, trackTime: trackTimeEl.checked, overlayPosition: pos, allowListOnly: allowListOnlyEl.checked });
-  showStatus('✓ Overlay settings saved');
-});
-
-// ── Readers ───────────────────────────────────────────────────────────────────
-ttuEnabledEl.addEventListener('change', async () => {
-  const cfg = await configStorage.getValue() as any;
-  await configStorage.setValue({ ...cfg, ttuEnabled: ttuEnabledEl.checked });
-  showStatus(ttuEnabledEl.checked ? '✓ TTU Reader tracking enabled' : '✓ TTU Reader tracking disabled');
-});
-
-// ── Sites ─────────────────────────────────────────────────────────────────────
-function renderSites(allowSites: string[], skipSites: string[]) {
-  allowListEl.innerHTML = '';
-  skipListEl.innerHTML  = '';
-  for (const d of allowSites) allowListEl.appendChild(buildSiteItem(d, 'allow'));
-  for (const d of skipSites)  skipListEl.appendChild(buildSiteItem(d, 'skip'));
-  allowCountEl.textContent = String(allowSites.length);
-  skipCountEl.textContent  = String(skipSites.length);
+// ── Site List Logic ───────────────────────────────────────────────────────────
+function renderSites(allow: string[], skip: string[]) {
+  allowListEl.innerHTML = ''; skipListEl.innerHTML = '';
+  allow.forEach(d => allowListEl.appendChild(buildSiteItem(d, 'allow')));
+  skip.forEach(d => skipListEl.appendChild(buildSiteItem(d, 'skip')));
+  allowCountEl.textContent = String(allow.length);
+  skipCountEl.textContent = String(skip.length);
 }
 
 function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
-  const el = document.createElement('div');
-  el.className = 'site-item';
-  const hostSpan = document.createElement('span');
-  hostSpan.className = 'site-item-host';
-  hostSpan.textContent = domain;
-  hostSpan.title = 'Click to edit';
-  hostSpan.addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.className = 'site-edit-input'; input.value = domain; input.type = 'text';
-  const commit = async () => {
-    const newVal = input.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-    if (!newVal || newVal === domain) { input.replaceWith(hostSpan); return; }
+  const el = document.createElement('div'); el.className = 'site-item';
+  const host = document.createElement('span'); host.className = 'site-item-host'; host.textContent = domain;
+  const rm = document.createElement('button'); rm.className = 'site-remove';
+  rm.innerHTML = `<svg viewBox="0 0 12 12"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>`;
+  rm.onclick = async () => {
     const cfg = await configStorage.getValue() as any;
     const key = list === 'allow' ? 'allowSites' : 'skipSites';
-    const def = list === 'allow' ? BUILT_IN_ALLOW : BUILT_IN_SKIP;
-    const current: string[] = cfg[key] ?? [...def];
-    const idx = current.indexOf(domain);
-    if (idx !== -1) current[idx] = newVal;
-    await configStorage.setValue({ ...cfg, [key]: current });
-    const fresh = await configStorage.getValue() as any;
-    renderSites(fresh.allowSites ?? [...BUILT_IN_ALLOW], fresh.skipSites ?? [...BUILT_IN_SKIP]);
-    showStatus(`✓ Updated to ${newVal}`);
+    const next = (cfg[key] ?? []).filter((d: string) => d !== domain);
+    await configStorage.setValue({ ...cfg, [key]: next });
+    loadConfig();
   };
-  input.addEventListener('blur', commit);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = domain; input.blur(); } });
-  hostSpan.replaceWith(input); input.focus(); input.select();
-  });
-  const removeBtn = document.createElement('button');
-  removeBtn.className = 'site-remove'; removeBtn.title = 'Remove';
-  removeBtn.innerHTML = `<svg viewBox="0 0 12 12"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>`;
-  removeBtn.addEventListener('click', () => removeSite(list, domain));
-  el.append(hostSpan, removeBtn);
-  return el;
+  el.append(host, rm); return el;
 }
 
-async function removeSite(list: 'allow'|'skip', domain: string) {
-  const cfg = await configStorage.getValue() as any;
-  const key = list === 'allow' ? 'allowSites' : 'skipSites';
-  const def = list === 'allow' ? BUILT_IN_ALLOW : BUILT_IN_SKIP;
-  const next = (cfg[key] ?? [...def]).filter((d: string) => d !== domain);
-  await configStorage.setValue({ ...cfg, [key]: next });
-  renderSites(
-    list === 'allow' ? next : (cfg.allowSites ?? [...BUILT_IN_ALLOW]),
-              list === 'skip'  ? next : (cfg.skipSites  ?? [...BUILT_IN_SKIP]),
-  );
-  showStatus(`✓ Removed ${domain}`);
-}
-
-async function addSite(list: 'allow'|'skip') {
-  const input = list === 'allow' ? allowInputEl : skipInputEl;
-  const raw = input.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
-  if (!raw) return;
-  const cfg = await configStorage.getValue() as any;
-  const key = list === 'allow' ? 'allowSites' : 'skipSites';
-  const def = list === 'allow' ? BUILT_IN_ALLOW : BUILT_IN_SKIP;
-  const current: string[] = cfg[key] ?? [...def];
-  if (current.includes(raw)) { showStatus('⚠ Already in list', true); return; }
-  current.push(raw);
-  await configStorage.setValue({ ...cfg, [key]: current });
-  input.value = '';
-  renderSites(
-    list === 'allow' ? current : (cfg.allowSites ?? [...BUILT_IN_ALLOW]),
-              list === 'skip'  ? current : (cfg.skipSites  ?? [...BUILT_IN_SKIP]),
-  );
-  showStatus(`✓ Added ${raw}`);
-}
-
-allowAddBtn.addEventListener('click', () => addSite('allow'));
-allowInputEl.addEventListener('keydown', e => { if (e.key === 'Enter') addSite('allow'); });
-skipAddBtn.addEventListener('click',  () => addSite('skip'));
-skipInputEl.addEventListener('keydown',  e => { if (e.key === 'Enter') addSite('skip'); });
-
-// ── Queue ─────────────────────────────────────────────────────────────────────
-async function renderQueue() {
-  const queue = await videoQueueStorage.getValue();
-  navBadge.textContent = String(queue.length);
-  navBadge.classList.toggle('hidden', queue.length === 0);
-  queueActions.style.display = queue.length > 0 ? 'flex' : 'none';
-  if (queue.length === 0) {
-    queueListEl.innerHTML = '<div class="empty-state">Queue is empty — go watch some Japanese.</div>';
-    return;
-  }
-  queueListEl.innerHTML = '';
-  queue.forEach(item => queueListEl.appendChild(buildItem(item)));
-}
-
-const SVG_UP = `<svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg>`;
-const SVG_DN = `<svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg>`;
-
-const toLocalDT = (iso: string) => {
-  const d = new Date(iso);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-};
-
-function buildItem(item: QueuedVideoLog): HTMLElement {
+// ── Queue Item UI ─────────────────────────────────────────────────────────────
+function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const el = document.createElement('div');
   el.className = 'qi';
   el.dataset.id = item.id;
+  el.dataset.type = type;
 
-  const sessions: Array<{secs: number; date: string}> = (item as any).sessions ?? [];
-  const totalMins = item.time;
-
-  // Session rows
+  const sessions: any[] = item.sessions ?? [];
   let sessionsHtml = '';
+
   if (sessions.length > 1) {
-    const rows = sessions.map((s, i) => {
-      const sMins = Math.max(1, Math.round(s.secs / 60));
-      return `<div class="qi-session" data-session-id="${s.id}">
-      <span class="qi-session-num">S${i + 1}</span>
-      <input class="qi-session-mins" type="number" value="${sMins}" min="1"/>
-      <span style="font-size:10px;color:var(--muted);flex:1">min</span>
-      <input type="datetime-local" class="qi-session-date-input" value="${toLocalDT(s.date)}" />
-      <button class="qi-session-remove" title="Remove Session" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:11px;">×</button>
-      </div>`;
-    }).join('');
-    sessionsHtml = `<div class="qi-sessions">${rows}</div>`;
+    sessionsHtml = `<div class="qi-sessions">` + sessions.map((s, i) => `
+    <div class="qi-session" data-session-id="${s.id}">
+    <span class="qi-session-num">S${i + 1}</span>
+    <input class="qi-session-mins" type="number" value="${Math.max(1, Math.round(s.secs / 60))}"/>
+    <span style="font-size:10px;color:var(--muted)">min</span>
+    ${type === 'reading' ? `<input class="qi-session-chars" type="number" value="${s.chars || 0}"/>` : ''}
+    <input type="datetime-local" class="qi-session-date-input" value="${toLocalDT(s.date)}" />
+    <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:14px;">×</button>
+    </div>`).join('') + `</div>`;
   }
 
+  const charsHtml = type === 'reading' ? `
+  <div class="qi-spinner" style="margin-left:8px;">
+  <input class="qi-input qi-chars" type="number" value="${item.chars || 0}" min="0" placeholder="Chars"/>
+  <div class="qi-spin-btns">
+  <button type="button" class="qi-spin-up chars-up" tabindex="-1">${SVG_UP}</button>
+  <button type="button" class="qi-spin-dn chars-dn" tabindex="-1">${SVG_DN}</button>
+  </div>
+  </div>` : '';
+
   const dateVal = (item.date ? item.date : new Date().toISOString()).split('T')[0];
-  const tooltip = sessions.length > 1 ? `<span class="qi-tooltip" title="If total time differs from the session sum, all time is merged into a single log to account for untracked watching.">(?)</span>` : '';
 
   el.innerHTML = `
   <div class="qi-fields">
-  <input class="qi-input qi-desc" type="text" value="${esc(item.description || '')}" placeholder="Video Title"/>
+  <input class="qi-input qi-desc" type="text" value="${esc(item.description || '')}" placeholder="${type === 'reading' ? 'Session Note / Chapter' : 'Video Title'}"/>
+  <div style="display:flex;gap:8px;">
   <div class="qi-spinner">
-  <input class="qi-input qi-mins" type="number" value="${totalMins}" min="0"/>
+  <input class="qi-input qi-mins" type="number" value="${item.time || 0}" min="0"/>
   <div class="qi-spin-btns">
-  <button type="button" class="qi-spin-up" tabindex="-1">${SVG_UP}</button>
-  <button type="button" class="qi-spin-dn" tabindex="-1">${SVG_DN}</button>
+  <button type="button" class="qi-spin-up mins-up" tabindex="-1">${SVG_UP}</button>
+  <button type="button" class="qi-spin-dn mins-dn" tabindex="-1">${SVG_DN}</button>
   </div>
+  </div>
+  ${charsHtml}
   </div>
   </div>
   <div class="qi-meta-row">
-  <span class="qi-meta-url" style="display:flex;align-items:center;">${esc(item.contentTitleNative)} • ${esc(trunc(item.contentTitleEnglish, 40))} ${tooltip}</span>
-  <input type="date" class="qi-date-input" value="${dateVal}" title="General Date" ${sessions.length > 1 ? 'disabled style="opacity:0.5"' : ''}/>
+  <span class="qi-meta-url">
+  <span style="display:inline-block;background:var(--surf);padding:1px 5px;border-radius:3px;margin-right:6px;border:1px solid var(--bdr2);font-size:9px;">${type === 'reading' ? 'READ' : 'WATCH'}</span>
+  ${esc(item.contentTitleNative || 'Unknown Title')}
+  </span>
+  <input type="date" class="qi-date-input" value="${dateVal}" ${sessions.length > 1 ? 'disabled style="opacity:0.5"' : ''}/>
   </div>
   ${sessionsHtml}
   <div class="qi-btns">
@@ -346,174 +211,157 @@ function buildItem(item: QueuedVideoLog): HTMLElement {
   <button class="btn btn-ghost btn-sm qi-remove">Remove</button>
   </div>`;
 
-  // Total spinner
+  // Total spinners
   const minsEl = el.querySelector<HTMLInputElement>('.qi-fields .qi-mins')!;
-  el.querySelector('.qi-fields .qi-spin-up')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) + 1)); });
-  el.querySelector('.qi-fields .qi-spin-dn')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) - 1)); });
+  el.querySelector('.mins-up')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) + 1)); });
+  el.querySelector('.mins-dn')!.addEventListener('click', () => { minsEl.value = String(Math.max(0, Number(minsEl.value) - 1)); });
 
-  // Inside buildItem, add listener for session removes:
+  if (type === 'reading') {
+    const charsEl = el.querySelector<HTMLInputElement>('.qi-fields .qi-chars')!;
+    el.querySelector('.chars-up')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) + 100)); });
+    el.querySelector('.chars-dn')!.addEventListener('click', () => { charsEl.value = String(Math.max(0, Number(charsEl.value) - 100)); });
+  }
+
+  el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
+  el.querySelector('.qi-send')!.addEventListener('click', () => sendOne(item.id, el));
+
   el.querySelectorAll('.qi-session-remove').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      const row = (e.target as HTMLElement).closest('.qi-session') as HTMLElement;
-      const sId = row.dataset.sessionId;
-
-      const queue = await videoQueueStorage.getValue();
-      const qIdx = queue.findIndex(q => q.id === item.id);
-      if (qIdx === -1) return;
-
-      // Filter sessions
-      queue[qIdx].sessions = queue[qIdx].sessions?.filter(s => s.id !== sId);
-
-      // Recalculate total time from remaining sessions
-      const totalSecs = queue[qIdx].sessions?.reduce((acc, s) => acc + s.secs, 0) || 0;
-      queue[qIdx].time = Math.max(1, Math.round(totalSecs / 60));
-
-      await videoQueueStorage.setValue(queue);
-      renderQueue();
-    });
-  });
-
-  // Date enforcement & syncing
-  const dateInputs = Array.from(el.querySelectorAll<HTMLInputElement>('.qi-session-date-input'));
-  const genDateInput = el.querySelector<HTMLInputElement>('.qi-date-input');
-
-  dateInputs.forEach((input, i) => {
-    input.addEventListener('change', () => {
-      // Sync general date to first session
-      if (i === 0 && genDateInput) genDateInput.value = input.value.split('T')[0];
-
-      // Ensure the next session cannot be earlier than this session
-      if (i + 1 < dateInputs.length) {
-        dateInputs[i + 1].min = input.value;
-        if (dateInputs[i + 1].value < input.value) {
-          dateInputs[i + 1].value = input.value;
+      const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
+      const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+      const q = await targetStorage.getValue();
+      const idx = q.findIndex((x: any) => x.id === item.id);
+      if (idx !== -1) {
+        q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
+        q[idx].time = Math.round((q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0)) / 60);
+        if (type === 'reading') {
+          q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
         }
+        await targetStorage.setValue(q);
+        renderQueue();
       }
     });
   });
 
-  el.querySelector('.qi-send')!.addEventListener('click',   () => sendOne(item.id, el));
-  el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id));
   return el;
 }
 
-// ── Payload Compiler ──
-function getPayloadsForItem(item: QueuedVideoLog, el: HTMLElement) {
-  const desc = el.querySelector<HTMLInputElement>('.qi-desc')?.value ?? item.description;
-  const totalMins = Number(el.querySelector<HTMLInputElement>('.qi-mins')?.value ?? item.time);
+// ── Payload Compiler ──────────────────────────────────────────────────────────
+function getPayloadsForItem(item: any, el: HTMLElement) {
+  const type = el.dataset.type as 'video' | 'reading';
+  const desc = (el.querySelector('.qi-desc') as HTMLInputElement).value;
+  const totalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
 
-  let sumSessionMins = 0;
-  const parsedSessions = sessionNodes.map(node => {
-    const m = Number(node.querySelector<HTMLInputElement>('.qi-session-mins')!.value);
-    const d = new Date(node.querySelector<HTMLInputElement>('.qi-session-date-input')!.value).toISOString();
-    sumSessionMins += m;
-    return { time: m, date: d };
-  });
-
-  const basePayload = {
-    type: "video",
-    mediaId: item.channelId || "web-video",
-    mediaData: {
-      channelId: item.channelId || "web-video",
-      channelTitle: item.contentTitleNative,
-    },
-    description: el.querySelector<HTMLInputElement>('.qi-desc')?.value ?? item.description,
-    episodes: 0, pages: 0, unknownDate: false
+  const base = {
+    type, mediaId: type === 'reading' ? 'web-reading' : (item.channelId || "web-video"),
+    mediaData: type === 'reading' ? { title: item.contentTitleNative } : { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative },
+    description: desc, episodes: 0, pages: 0, unknownDate: false
   };
 
-  // If session sum exactly matches the modified total, send each session individually!
-  if (parsedSessions.length > 0 && sumSessionMins === totalMins) {
-    return parsedSessions.map(s => ({ ...basePayload, time: s.time, date: s.date }));
-  } else {
-    // If they differ, untracked time exists. Send a single merged log.
-    const genDateInput = el.querySelector<HTMLInputElement>('.qi-date-input');
-    const mergedDate = parsedSessions.length > 0
-    ? parsedSessions[0].date
-    : (genDateInput?.value ? new Date(genDateInput.value + 'T12:00:00').toISOString() : item.date);
-
-    return [{ ...basePayload, time: totalMins, date: mergedDate }];
+  if (sessionNodes.length > 0) {
+    return sessionNodes.map(node => ({
+      ...base,
+      time: Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value),
+                                     date: new Date((node.querySelector('.qi-session-date-input') as HTMLInputElement).value).toISOString(),
+                                     chars: type === 'reading' ? Number((node.querySelector('.qi-session-chars') as HTMLInputElement).value) : 0
+    }));
   }
+
+  return [{
+    ...base,
+    time: totalMins,
+    date: new Date((el.querySelector('.qi-date-input') as HTMLInputElement).value + 'T12:00:00').toISOString(),
+    chars: type === 'reading' ? Number((el.querySelector('.qi-chars') as HTMLInputElement).value) : 0
+  }];
+}
+
+// ── Main Operations ───────────────────────────────────────────────────────────
+async function renderQueue() {
+  const vQ = await videoQueueStorage.getValue();
+  const rQ = await readingQueueStorage.getValue();
+  const total = vQ.length + rQ.length;
+
+  navBadge.textContent = String(total);
+  navBadge.classList.toggle('hidden', total === 0);
+  queueActions.style.display = total > 0 ? 'flex' : 'none';
+  queueListEl.innerHTML = total === 0 ? '<div class="empty-state">Queue is empty</div>' : '';
+
+  // Safely render each item
+  rQ.forEach(item => {
+    try { queueListEl.appendChild(buildItem(item, 'reading')); }
+    catch (e) { console.error("Failed to render reading item", item, e); }
+  });
+  vQ.forEach(item => {
+    try { queueListEl.appendChild(buildItem(item, 'video')); }
+    catch (e) { console.error("Failed to render video item", item, e); }
+  });
 }
 
 async function sendOne(id: string, el: HTMLElement) {
-  const queue = await videoQueueStorage.getValue();
-  const item  = queue.find(i => i.id === id);
+  const type = el.dataset.type as 'video' | 'reading';
+  const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+  const q = await qStorage.getValue();
+  const item = q.find((x: any) => x.id === id);
   if (!item) return;
 
-  const btn = el.querySelector<HTMLButtonElement>('.qi-send')!;
-  btn.textContent = '…'; btn.disabled = true;
-  el.classList.add('sending');
+  const btn = el.querySelector('.qi-send') as HTMLButtonElement;
+  btn.disabled = true; btn.textContent = '...'; el.classList.add('sending');
 
   const payloads = getPayloadsForItem(item, el);
-  let allOk = true;
+  let success = true;
+  for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
-  for (const p of payloads) {
-    const ok = await submitLog(p);
-    if (!ok) allOk = false;
-  }
-
-  if (allOk) {
-    showStatus('✓ Log sent successfully');
-    await removeOne(id);
-  } else {
-    el.classList.remove('sending');
-    btn.textContent = 'Send'; btn.disabled = false;
-    showStatus('⚠ Send failed', true);
-  }
+  if (success) { showStatus('✓ Sent'); removeOne(id, type); }
+  else { showStatus('⚠ Failed', true); el.classList.remove('sending'); btn.disabled = false; btn.textContent = 'Send'; }
 }
 
-async function removeOne(id: string) {
-  const q = await videoQueueStorage.getValue();
-  await videoQueueStorage.setValue(q.filter(i => i.id !== id));
+async function removeOne(id: string, type: 'video' | 'reading') {
+  const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
+  const q = await qStorage.getValue();
+  await qStorage.setValue(q.filter((x: any) => x.id !== id));
   renderQueue();
 }
 
 sendAllBtn.addEventListener('click', async () => {
-  const queue = await videoQueueStorage.getValue();
-  if (!queue.length) return;
-  (sendAllBtn as HTMLButtonElement).disabled = true;
-  (sendAllBtn as HTMLButtonElement).textContent = 'Sending…';
-  const failed: QueuedVideoLog[] = [];
-
-  for (const item of queue) {
-    const domEl = queueListEl.querySelector<HTMLElement>(`[data-id="${item.id}"]`);
-    if (!domEl) continue;
-
-    const payloads = getPayloadsForItem(item, domEl);
-    let itemOk = true;
-
-    for (const p of payloads) {
-      const ok = await submitLog(p);
-      if (!ok) itemOk = false;
-    }
-
-    if (!itemOk) failed.push(item);
-  }
-
-  await videoQueueStorage.setValue(failed);
-  (sendAllBtn as HTMLButtonElement).disabled = false;
-  (sendAllBtn as HTMLButtonElement).textContent = 'Send All';
-  const sent = queue.length - failed.length;
-  showStatus(
-    failed.length === 0 ? `✓ ${sent} video${sent !== 1 ? 's' : ''} sent` : `⚠ ${sent} sent, ${failed.length} failed`,
-    failed.length > 0,
-  );
-  renderQueue();
+  const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
+  sendAllBtn.disabled = true;
+  for (const el of items) { await sendOne(el.dataset.id!, el); }
+  sendAllBtn.disabled = false;
 });
 
 clearAllBtn.addEventListener('click', async () => {
-  const q = await videoQueueStorage.getValue();
-  if (!q.length) return;
-  if (!confirm(`Remove all ${q.length} queued video(s)?`)) return;
+  if (!confirm('Clear all pending logs?')) return;
   await videoQueueStorage.setValue([]);
+  await readingQueueStorage.setValue([]);
   renderQueue();
-  showStatus('Queue cleared');
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function esc(s: string) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
-function trunc(s: string, n: number) { return s.length > n ? s.slice(0, n) + '…' : s; }
+// Settings interactions
+apiKeyEl.onchange = () => saveApiBtn.click();
+saveApiBtn.onclick = async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, apiKey: apiKeyEl.value.trim() });
+  loadConfig(); showStatus('✓ API Key Saved');
+};
 
+ttuAutoSaveEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, ttuAutoSave: ttuAutoSaveEl.checked });
+  showStatus(ttuAutoSaveEl.checked ? '✓ TTU Auto-sync enabled' : '✓ TTU Auto-sync disabled');
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 loadConfig();
 renderQueue();
+
+readingQueueStorage.watch(() => {
+  if (!document.querySelector('.qi-input:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus')) {
+    renderQueue();
+  }
+});
+videoQueueStorage.watch(() => {
+  if (!document.querySelector('.qi-input:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus')) {
+    renderQueue();
+  }
+});
