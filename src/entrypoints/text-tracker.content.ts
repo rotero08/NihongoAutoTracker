@@ -14,6 +14,15 @@ const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 const TTU_HOST = 'reader.ttsu.app';
 
 let currentConfig: any = {};
+let websiteOverlayDismissed = false;
+
+function isWebsiteOverlaySkipped(cfg: any): boolean {
+  const host = window.location.hostname;
+  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
+  if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
+  if (skipSites.some((h: string) => host.includes(h))) return true;
+  return false;
+}
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   const host = window.location.hostname;
@@ -633,7 +642,7 @@ const updateHistoryData = async () => {
     sessions.forEach((s: any) => {
       const mins = Math.max(1, Math.round(s.timeMs / 60000));
       const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
+      html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars} chars</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
     });
     listEl.innerHTML = html;
     listEl.querySelectorAll('.nt-ttu-history-del').forEach((btn) => {
@@ -974,6 +983,12 @@ function startTimeTracker() {
 }
 
 function buildOverlay(cfg: any) {
+  if (websiteOverlayDismissed) {
+    const existing = document.getElementById('nt-overlay');
+    if (existing) existing.style.display = 'none';
+    return;
+  }
+
   let overlay = document.getElementById('nt-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -986,7 +1001,17 @@ function buildOverlay(cfg: any) {
     pauseBtn.className = 'nt-ctrl'; pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause / Resume';
     const resetBtn = document.createElement('button');
     resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
-    overlay.append(handle, timeEl, pauseBtn, resetBtn);
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'nt-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Hide overlay (until reload)';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      websiteOverlayDismissed = true;
+      overlay!.style.display = 'none';
+    });
+
+    overlay.append(handle, timeEl, pauseBtn, resetBtn, closeBtn);
     document.body.appendChild(overlay);
 
     let dragging = false, ox = 0, oy = 0;
@@ -1077,6 +1102,11 @@ browser.storage.onChanged.addListener((changes, area) => {
         }
       }
     } else {
+      if (isWebsiteOverlaySkipped(newCfg) || websiteOverlayDismissed) {
+        const overlay = document.getElementById('nt-overlay');
+        if (overlay) overlay.style.display = 'none';
+        return;
+      }
       isJapanesePage(newCfg).then(isJP => {
         if (isJP && newCfg.overlayPosition !== 'hidden') {
           buildOverlay(newCfg);
@@ -1117,7 +1147,6 @@ export default defineContentScript({
 
     const host = window.location.hostname;
     const cfg  = currentConfig;
-    const skipSites: string[] = cfg.skipSites ??['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app'];
 
     if (host.includes(TTU_HOST)) {
       const ttuEnabled = cfg.ttuEnabled ?? true;
@@ -1128,8 +1157,7 @@ export default defineContentScript({
       return;
     }
 
-    if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return;
-    if (skipSites.some((h: string) => host.includes(h))) return;
+    if (isWebsiteOverlaySkipped(cfg)) return;
 
     startTimeTracker();
     if (cfg.overlayPosition === 'hidden') return;

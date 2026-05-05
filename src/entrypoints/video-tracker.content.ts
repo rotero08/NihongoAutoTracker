@@ -359,6 +359,39 @@ function injectModalStyles() {
   .nt-form-row .nt-form-group:last-child  { flex:1; min-width:0; }
 
   .nt-modal-footer { display:flex; gap:12px; margin-top:20px; }
+  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; }
+  .nt-modal-opt input[type="checkbox"] {
+    -webkit-appearance:none;
+    appearance:none;
+    width:14px;
+    height:14px;
+    border-radius:999px;
+    border:1px solid #222d42;
+    background:#14141e;
+    display:inline-grid;
+    place-content:center;
+    margin:0;
+    cursor:pointer;
+    flex:0 0 auto;
+  }
+  .nt-modal-opt input[type="checkbox"]::after {
+    content:"";
+    width:6px;
+    height:3px;
+    border-left:2px solid transparent;
+    border-bottom:2px solid transparent;
+    transform: rotate(-45deg);
+    margin-top:-1px;
+  }
+  .nt-modal-opt input[type="checkbox"]:checked {
+    background:#F5B831;
+    border-color:#F5B831;
+  }
+  .nt-modal-opt input[type="checkbox"]:checked::after {
+    border-left-color:#fff;
+    border-bottom-color:#fff;
+  }
+  .nt-modal-opt label { cursor:pointer; user-select:none; }
   .nt-modal-footer button {
     flex:1; padding:10px; border:none; border-radius:4px; font-family:inherit;
     font-weight:bold; cursor:pointer; font-size:12px; transition:opacity .2s; box-sizing:border-box;
@@ -371,6 +404,25 @@ function injectModalStyles() {
   document.head.appendChild(style);
 }
 
+function localTodayISODate(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
+function dateInputToISO(dateStr: string): string {
+  const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(dateStr || '');
+  if (!m) return new Date().toISOString();
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+
+  // Keep local time-of-day to avoid timezone shifts.
+  const now = new Date();
+  const local = new Date(year, month - 1, day, now.getHours(), now.getMinutes(), 0, 0);
+  return local.toISOString();
+}
+
 function showNTEditModal(badgeEl: HTMLElement, data: {
   channelName: string; videoTitle: string; url: string;
   totalSecs: number; showTotal: boolean; channelId: string | null;
@@ -381,14 +433,16 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
   // If already open, close it (toggle behavior)
   const existingPopup = document.getElementById('nt-modal-popup');
   if (existingPopup) {
-    existingPopup.remove();
+    const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
+    if (typeof closer === 'function') closer(false);
+    else existingPopup.remove();
     return;
   }
 
   const popup = document.createElement('div');
   popup.id = 'nt-modal-popup';
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = localTodayISODate();
   const totalMins = Math.max(1, Math.round(data.totalSecs / 60));
 
   popup.innerHTML = `
@@ -410,10 +464,6 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
   <button id="nt-badge-total" class="nt-link-btn ${data.showTotal ? 'active' : ''}">Session / Total</button>
   </div>
 
-  <div style="font-size: 10px; color: #E57373; margin-bottom: 14px; background: rgba(229,115,115,0.1); padding: 6px 8px; border-radius: 4px; border: 1px solid rgba(229,115,115,0.2);">
-  <strong>Note:</strong> Manually logging this will clear any queued sessions for this video and restart the live tracker.
-  </div>
-
   <div class="nt-form-group">
   <div style="display:flex; justify-content:space-between; align-items:flex-end;">
   <label>VIDEO TITLE</label>
@@ -433,6 +483,11 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
   </div>
   </div>
 
+  <div class="nt-modal-opt">
+  <input type="checkbox" id="nt-clear-sessions" />
+  <label for="nt-clear-sessions">Clear sessions with this log</label>
+  </div>
+
   <div class="nt-modal-footer">
   <button id="nt-modal-cancel">Cancel</button>
   <button id="nt-modal-submit">Log Video</button>
@@ -442,12 +497,19 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
   popup.addEventListener('click', e => e.stopPropagation());
 
   let closed = false;
+  let closeListener: ((e: Event) => void) | null = null;
   const closeModal = (submitted: boolean) => {
     if (closed) return;
     closed = true;
+    if (closeListener) {
+      document.removeEventListener('click', closeListener);
+      closeListener = null;
+    }
     popup.remove();
     if (onClose) onClose(submitted);
   };
+
+  (popup as any).__ntCloseModal = closeModal;
 
   // Append to document.body to escape overflow bounds of video players
   document.body.appendChild(popup);
@@ -482,21 +544,22 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
     const timeRaw = Number((popup.querySelector('#nt-edit-time') as HTMLInputElement).value);
     const timeVal = Math.max(1, Number.isFinite(timeRaw) ? timeRaw : 1);
     const dateRaw = (popup.querySelector('#nt-edit-date') as HTMLInputElement).value;
-    const dateIso = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
+    const dateIso = dateRaw ? dateInputToISO(dateRaw) : new Date().toISOString();
+    const clearSessions = !!(popup.querySelector('#nt-clear-sessions') as HTMLInputElement | null)?.checked;
     onConfirm({
       title: data.channelName,
       desc:  (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value,
               time:  timeVal,
               date:  dateIso,
+              clearSessions,
     });
     closeModal(true);
   });
 
   setTimeout(() => {
-    const closeListener = (e: Event) => {
+    closeListener = (e: Event) => {
       if (!popup.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
         closeModal(false);
-        document.removeEventListener('click', closeListener);
       }
     };
     document.addEventListener('click', closeListener);
@@ -569,6 +632,16 @@ function ensureCounter(
     el.onclick = async (e) => {
       // Prevents popup triggers if closing it indirectly through click
       if ((e.target as HTMLElement).closest('#nt-modal-popup')) return;
+
+      // Toggle: if modal is open, close it.
+      const existingPopup = document.getElementById('nt-modal-popup');
+      if (existingPopup) {
+        const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
+        if (typeof closer === 'function') closer(false);
+        else existingPopup.remove();
+        return;
+      }
+
       if (state.isManualLogging) return;
       state.isManualLogging = true;
 
@@ -602,8 +675,12 @@ function ensureCounter(
             });
 
             if (ok) {
-              await removeFromQueue(url);
-              onReset();
+              if (final.clearSessions) {
+                await removeFromQueue(url);
+                onReset();
+              } else {
+                state.hasTriggered = false;
+              }
             } else {
               state.hasTriggered = false;
             }

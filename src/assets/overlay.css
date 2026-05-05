@@ -69,6 +69,19 @@
 .nt-ctrl:hover { color: rgba(255,255,255,0.8); }
 .nt-ctrl.active { color: #3ddc84; }
 
+/* close (hide until reload) */
+.nt-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.25);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.nt-close:hover { color: rgba(255,255,255,0.85); }
+
 /* inline time edit input */
 .nt-edit {
   background: rgba(0,0,0,0.5);
