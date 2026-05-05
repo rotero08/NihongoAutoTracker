@@ -166,6 +166,7 @@ body {
   color: var(--amber); font-weight: bold;
   padding: 0; margin: 0; width: 20px; text-align: right;
   cursor: text; border-radius: 2px; flex-shrink: 0;
+  appearance: textfield;
   -moz-appearance: textfield; transition: background .15s;
 }
 .ghost-num::-webkit-outer-spin-button,
@@ -175,6 +176,7 @@ body {
 
 /* Clarified custom text widths */
 .ghost-num.num-chars { width: 40px; color: var(--text); }
+.ghost-num.num-vol { width: 24px; color: var(--text); }
 
 .unit-lbl {
   font-size: 10px; color: var(--dim); margin-left: 3px; margin-right: 5px; flex-shrink: 0;

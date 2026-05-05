@@ -79,7 +79,7 @@ function parseTitle(docTitle: string) {
 
 function extractTTUCharCount(): number | null {
   for (const el of document.querySelectorAll('div, span')) {
-    if (el.title && el.title.toLowerCase().includes('progress')) {
+    if (el instanceof HTMLElement && el.title && el.title.toLowerCase().includes('progress')) {
       const match = el.textContent?.match(/(?:T:\s*)?([\d,]+)\s*\/\s*[\d,]+/i) || el.textContent?.match(/([\d,]+)/);
       if (match) return parseInt(match[1].replace(/,/g, ''), 10);
     }
@@ -214,14 +214,21 @@ function injectTTUStyles() {
   .nt-ttu-link-compact-inner:hover { opacity: 0.8; }
   .nt-ttu-unlink-btn { background: none; border: none; color: #f0706a; cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
   .nt-ttu-unlink-btn:hover { opacity: 1; }
+  .nt-ttu-vol-pill { background: transparent; border: none; color: #f0b429; font-family: monospace; font-size: 11px; padding: 0 6px; cursor: pointer; opacity: .95; }
+  .nt-ttu-vol-pill:hover { opacity: 1; }
+  .nt-ttu-vol-pill:active { transform: scale(0.98); }
   .nt-ttu-link-compact-inner svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 
   .nt-ttu-link-edit { display: flex; flex-direction: column; gap: 6px; position: relative; }
-  .nt-ttu-link-wrap { display: flex; align-items: center; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 0 6px; outline: none !important; }
+  .nt-ttu-link-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+  .nt-ttu-link-vol-anchor { display: flex; align-items: center; flex: 0 0 auto; }
+  .nt-ttu-link-wrap { display: flex; align-items: center; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 0 6px; outline: none !important; flex: 1; min-width: 0; max-width: 100%; box-sizing: border-box; }
   .nt-ttu-link-wrap:focus-within { border-color: #f0b429; box-shadow: 0 0 0 1px transparent; }
   .nt-ttu-link-wrap svg { width: 12px; height: 12px; stroke: #999; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .nt-ttu-link-input { flex: 1; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 11px; padding: 6px; outline: none !important; }
+  .nt-ttu-link-input { flex: 1; min-width: 0; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 11px; padding: 6px; outline: none !important; }
   .nt-ttu-link-input:focus { outline: none !important; box-shadow: none !important; }
+  .nt-ttu-vol-input { width: 36px; background: transparent; border: none; border-bottom: 1px solid rgba(240,180,41,.45); color: #f0b429; font-family: monospace; font-size: 11px; text-align: right; outline: none !important; padding: 0 2px; }
+  .nt-ttu-vol-input:focus { border-bottom-color: rgba(240,180,41,.9); }
   .nt-ttu-link-results { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; display: none; }
   .nt-ttu-link-results.open { display: flex; }
   .nt-ttu-link-item { display: flex; align-items: center; gap: 8px; padding: 6px; cursor: pointer; border-radius: 4px; transition: background .15s; text-align: left; }
@@ -234,7 +241,9 @@ function injectTTUStyles() {
   .nt-ttu-history summary { padding: 10px 12px; cursor: pointer; color: #aaa; outline: none; user-select: none; transition: background 0.2s; }
   .nt-ttu-history summary:hover { background: #2f2f2f; color: #fff; }
   .nt-ttu-history-list { max-height: 140px; overflow-y: auto; padding: 0 12px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
-  .nt-ttu-history-item { display: flex; justify-content: space-between; color: #bbb; background: #1c1c1c; padding: 6px 8px; border-radius: 4px; }
+  .nt-ttu-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #bbb; background: #1c1c1c; padding: 6px 8px; border-radius: 4px; }
+  .nt-ttu-history-del { background: none; border: none; color: #f0706a; cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; opacity: .75; }
+  .nt-ttu-history-del:hover { opacity: 1; }
   `;
   document.head.appendChild(s);
 }
@@ -290,14 +299,18 @@ function setupTTUChronometer() {
   <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg>
   <span id="nt-ttu-link-label">Linked to AniList</span>
   </div>
+  <button type="button" id="nt-ttu-vol-pill" class="nt-ttu-vol-pill" title="Volume">Vol 1</button>
   <button id="nt-ttu-unlink-btn" class="nt-ttu-unlink-btn" title="Unlink Media">
   <svg style="width:12px; height:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
   </button>
   </div>
   <div class="nt-ttu-link-edit" id="nt-ttu-link-edit">
+  <div class="nt-ttu-link-edit-row">
   <div class="nt-ttu-link-wrap">
   <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
   <input type="text" id="nt-ttu-link-input" class="nt-ttu-link-input" placeholder="Search AniList..." spellcheck="false"/>
+  </div>
+  <div class="nt-ttu-link-vol-anchor" id="nt-ttu-vol-anchor"></div>
   </div>
   <div class="nt-ttu-link-results" id="nt-ttu-link-results"></div>
   </div>
@@ -350,6 +363,8 @@ function setupTTUChronometer() {
   const linkLabel = wrapper.querySelector('#nt-ttu-link-label') as HTMLElement;
   const linkInput = wrapper.querySelector('#nt-ttu-link-input') as HTMLInputElement;
   const linkResults = wrapper.querySelector('#nt-ttu-link-results') as HTMLElement;
+  const volPill = wrapper.querySelector('#nt-ttu-vol-pill') as HTMLButtonElement;
+  const volAnchor = wrapper.querySelector('#nt-ttu-vol-anchor') as HTMLElement;
 
   // Prevent drag/scroll interaction bugs inside results
   linkResults.addEventListener('mousedown', e => e.preventDefault());
@@ -384,6 +399,12 @@ const refreshLinkerUI = async () => {
     linkerCompact.style.display = 'flex';
     linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
     linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
+    const v = Math.max(1, Number(match.volume || 1));
+    volPill.textContent = `Vol ${v}`;
+    const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
+    if (unlinkBtn && volPill.parentElement !== linkerCompact) {
+      linkerCompact.insertBefore(volPill, unlinkBtn);
+    }
 
     if (currentConfig.ttuDirectSend) {
       btnDirect.disabled = false;
@@ -400,6 +421,12 @@ const refreshLinkerUI = async () => {
     linkerEdit.style.display = 'flex';
     linkerCompact.style.display = 'none';
     linkInput.value = parseTitle(title).query;
+    const { volume } = parseTitle(title);
+    const v = Math.max(1, Number(volume || Number((volPill.textContent || '').replace(/\D/g, '')) || 1));
+    volPill.textContent = `Vol ${v}`;
+    if (volAnchor && volPill.parentElement !== volAnchor) {
+      volAnchor.appendChild(volPill);
+    }
 
     btnDirect.disabled = true;
     btnDirect.style.opacity = '0.3';
@@ -408,9 +435,75 @@ const refreshLinkerUI = async () => {
   }
 };
 
+const getVolFromPill = () => {
+  const n = Number((volPill.textContent || '').replace(/\D/g, ''));
+  return Math.max(1, Number.isFinite(n) && n > 0 ? n : 1);
+};
+
+volPill.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  if ((volPill as any)._editing) return;
+  (volPill as any)._editing = true;
+
+  const current = getVolFromPill();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.className = 'nt-ttu-vol-input';
+  input.value = String(current);
+
+  volPill.style.display = 'none';
+  volPill.insertAdjacentElement('afterend', input);
+  input.focus();
+  input.select();
+
+  const cleanup = () => {
+    input.remove();
+    volPill.style.display = '';
+    (volPill as any)._editing = false;
+  };
+
+  const commit = async () => {
+    const next = Math.max(1, Number(String(input.value || '').replace(/\D/g, '')) || 1);
+    volPill.textContent = `Vol ${next}`;
+
+    const title = getTTUTitle();
+    const links = await ttuLinkStorage.getValue() || {};
+    if (links[title]) {
+      links[title].volume = next;
+      await ttuLinkStorage.setValue(links);
+    }
+
+    const queue = await readingQueueStorage.getValue();
+    const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
+    if (existing) {
+      existing.volume = next;
+      await readingQueueStorage.setValue(queue);
+    }
+  };
+
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      void commit().finally(cleanup);
+    }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      cleanup();
+    }
+  });
+  input.addEventListener('blur', () => { void commit().finally(cleanup); });
+});
+
 linkerLabelWrap.addEventListener('click', () => {
   linkerCompact.style.display = 'none';
   linkerEdit.style.display = 'flex';
+  if (volAnchor && volPill.parentElement !== volAnchor) {
+    volAnchor.appendChild(volPill);
+  }
   linkInput.focus();
 });
 
@@ -456,7 +549,7 @@ const performLinkSearch = () => {
       }
 
       linkResults.innerHTML = '';
-  results.forEach(m => {
+  results.forEach((m: any) => {
     const row = document.createElement('div');
     row.className = 'nt-ttu-link-item';
     const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
@@ -470,11 +563,13 @@ const performLinkSearch = () => {
   row.addEventListener('click', async () => {
     const title = getTTUTitle();
     const { volume } = parseTitle(title);
+    const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
+    volPill.textContent = `Vol ${selectedVolume}`;
 
     const links = await ttuLinkStorage.getValue() || {};
     links[title] = {
       mediaId: m.contentId,
-      volume: volume || 1,
+      volume: selectedVolume,
       mediaData: {
         contentId: m.contentId,
         contentTitleNative: native,
@@ -492,7 +587,7 @@ const performLinkSearch = () => {
     const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
     if (existing) {
       existing.mediaId = m.contentId;
-      existing.volume = volume || 1;
+      existing.volume = selectedVolume;
       existing.mediaData = links[title].mediaData;
       existing.contentTitleNative = native;
       existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
@@ -538,9 +633,32 @@ const updateHistoryData = async () => {
     sessions.forEach((s: any) => {
       const mins = Math.max(1, Math.round(s.timeMs / 60000));
       const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      html += `<div class="nt-ttu-history-item"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span></div>`;
+      html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars}c</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
     });
     listEl.innerHTML = html;
+    listEl.querySelectorAll('.nt-ttu-history-del').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const row = (e.currentTarget as HTMLElement).closest('.nt-ttu-history-item') as HTMLElement | null;
+        const sessionId = row?.dataset.sessionId;
+        if (!sessionId) return;
+        const currentTitle = getTTUTitle();
+        const historyNow = await ttuHistoryStorage.getValue() || {};
+        const curr = historyNow[currentTitle] || [];
+        historyNow[currentTitle] = curr.filter((s: any) => s.id !== sessionId);
+        await ttuHistoryStorage.setValue(historyNow);
+
+        // If this past session is still represented in the queue, delete that queued log too.
+        const q = await readingQueueStorage.getValue();
+        const filtered = q.filter((item: any) => !((item.sessions || []).some((s: any) => s.id === sessionId)));
+        if (filtered.length !== q.length) {
+          await readingQueueStorage.setValue(filtered);
+        }
+
+        await updateHistoryData();
+        updateUI();
+      });
+    });
   }
 };
 
@@ -569,7 +687,7 @@ const updateUI = () => {
 
   if (playPath) {
     playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-    toggleBtn.title = ttuState.running ? 'Pause Timer' : 'Start Timer';
+    toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer');
   }
   if (mainIconPath) {
     mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
@@ -706,7 +824,7 @@ btnDirect.addEventListener('click', async (e) => {
   const secs = Math.round(ttuState.timeMs / 1000);
   try {
     // Direct POST payload to NihongoTracker
-    await submitLog({
+    const ok = await submitLog({
       type: 'reading',
       mediaId: linkedMedia.mediaId,
       mediaData: linkedMedia.mediaData,
@@ -720,7 +838,7 @@ btnDirect.addEventListener('click', async (e) => {
                     private: false,
                       tags:[]
     });
-    showToast('Sent session directly to NT!');
+    if (!ok) return;
 
     // Process history visually
     const dateStr = new Date().toISOString();
@@ -827,13 +945,20 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       if (nt && nt.getTotal) sendResponse({ minutes: Math.floor(nt.getTotal() / 60000) });
     }
     if (req.action === 'SHOW_TOAST') {
-      showToast(`${req.title}: ${req.message}`, req.title.toLowerCase().includes('fail') || req.title.toLowerCase().includes('error'));
+      const g = globalThis as any;
+      if (!g.__nt_toastSink) g.__nt_toastSink = 'ttu';
+      if (g.__nt_toastSink !== 'ttu') return;
+      const text = req.message ? `${req.title}: ${req.message}` : String(req.title || '');
+      showToast(text, String(req.title || '').toLowerCase().includes('fail') || String(req.title || '').toLowerCase().includes('error'));
     }
   });
 }
 window.addEventListener('message', (event) => {
   if (event.data?.action === 'SHOW_TOAST') {
-    showToast(`${event.data.title}: ${event.data.message}`, event.data.title.toLowerCase().includes('fail') || event.data.title.toLowerCase().includes('error'));
+    const title = String(event.data.title || '');
+    const msg = event.data.message;
+    const text = msg ? `${title}: ${msg}` : title;
+    showToast(text, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
   }
 });
 
@@ -919,13 +1044,13 @@ function buildOverlay(cfg: any) {
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['config']) {
-    const newCfg = changes['config'].newValue || {};
-    const oldCfg = changes['config'].oldValue || {};
+    const newCfg: any = changes['config'].newValue || {};
+    const oldCfg: any = changes['config'].oldValue || {};
     currentConfig = newCfg;
 
     if (window.location.hostname.includes(TTU_HOST)) {
-      const wasEnabled = oldCfg.ttuEnabled ?? true;
-      const isEnabled = newCfg.ttuEnabled ?? true;
+      const wasEnabled = (oldCfg as any).ttuEnabled ?? true;
+      const isEnabled = (newCfg as any).ttuEnabled ?? true;
 
       if (!isEnabled && wasEnabled) {
         const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -964,7 +1089,7 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 
   if (area === 'local' && changes['readingQueue']) {
-    const queue = changes['readingQueue'].newValue ||[];
+    const queue = (changes['readingQueue'].newValue as any[]) || [];
     const title = getTTUTitle();
     const exists = queue.some((q: any) => q.originalTitle === title || q.contentTitleNative === title);
 

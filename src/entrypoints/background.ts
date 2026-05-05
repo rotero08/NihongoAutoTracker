@@ -1,5 +1,5 @@
 import { defineBackground } from '#imports';
-import { submitLog, notify } from '@/utils/api';
+import { resolveVideoChannelMedia, submitLog, notify } from '@/utils/api';
 import { videoQueueStorage, readingQueueStorage, configStorage } from '@/utils/storage';
 import { storage } from '#imports';
 
@@ -13,12 +13,15 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'NOTIFY') {
-      browser.notifications.create({
-        type: 'basic',
-        iconUrl: '/icon/48.png',
-        title: msg.title,
-        message: msg.message,
-      });
+      browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+        if (tabs[0]?.id) {
+          browser.tabs.sendMessage(tabs[0].id, {
+            action: 'SHOW_TOAST',
+            title: msg.title,
+            message: msg.message,
+          }).catch(() => null);
+        }
+      }).catch(() => null);
     }
   });
 
@@ -117,6 +120,19 @@ export default defineBackground(() => {
                                 volume: item.volume || 1,
                                 mediaData: item.mediaData || (type === 'reading' ? { contentId: 'web-reading', contentTitleNative: item.contentTitleNative } : { channelId: item.channelId || 'web-video', channelTitle: item.contentTitleNative })
       };
+
+      if (type === 'video' && (item.channelId || item.mediaData?.channelId)) {
+        const media = await resolveVideoChannelMedia({
+          channelId: item.mediaData?.channelId || item.channelId,
+          channelTitle: item.mediaData?.channelTitle || item.contentTitleNative,
+        });
+        base.mediaData = {
+          channelId: item.mediaData?.channelId || item.channelId || 'web-video',
+          channelTitle: media.channelTitle || item.mediaData?.channelTitle || item.contentTitleNative,
+          ...(media.channelImage ? { channelImage: media.channelImage } : {}),
+          ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
+        };
+      }
 
       let payloads =[];
       if (!item.sessions || item.sessions.length === 0) {

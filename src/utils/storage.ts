@@ -9,6 +9,8 @@ export interface TrackerConfig {
   threshold: number;
   thresholdType?: 'percent' | 'time';
   thresholdValue?: number;
+  queueThresholdType?: 'percent' | 'time';
+  queueThresholdValue?: number;
   trackTime: boolean;
   hideButtons: boolean;
   hideIfNotJapanese?: boolean;
@@ -35,6 +37,7 @@ export interface QueuedVideoLog {
   tags: string[];
   description: string;
   channelId?: string;
+  mediaData?: any;
   sessions?: { id: string; secs: number; date: string }[];
 }
 
@@ -74,6 +77,8 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     apiKey: '',
     logMode: 'manual',
     threshold: 95,
+    queueThresholdType: 'time',
+    queueThresholdValue: 1,
     trackTime: true,
     hideButtons: false,
     hideMusic: false,

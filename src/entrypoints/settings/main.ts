@@ -1,6 +1,6 @@
 import './style.css';
-import { configStorage, videoQueueStorage, readingQueueStorage, type QueuedVideoLog } from '@/utils/storage';
-import { submitLog } from '@/utils/api';
+import { configStorage, videoQueueStorage, readingQueueStorage, type QueuedReadingLog, type QueuedVideoLog } from '@/utils/storage';
+import { resolveVideoChannelMedia, submitLog } from '@/utils/api';
 
 const BUILT_IN_ALLOW =[
   'nhk.or.jp','nhk.jp','news.yahoo.co.jp','yomiuri.co.jp','asahi.com','mainichi.jp',
@@ -58,7 +58,7 @@ function showStatus(msg: string, err = false) {
 const apiKeyEl       = document.getElementById('api-key')        as HTMLInputElement;
 const toggleKeyEl    = document.getElementById('toggle-key')!;
 const apiStatusEl    = document.getElementById('api-status')!;
-const saveApiBtn     = document.getElementById('save-api-btn')!;
+const saveApiBtn     = document.getElementById('save-api-btn') as HTMLButtonElement;
 const autoSendEl     = document.getElementById('auto-send')      as HTMLInputElement;
 const autoConfigEl   = document.getElementById('auto-config')!;
 const threshTypeEls  = document.querySelectorAll<HTMLInputElement>('input[name="thresh-type"]');
@@ -67,6 +67,12 @@ const threshMinEl    = document.getElementById('threshold-min')  as HTMLInputEle
 const threshUnitEl   = document.getElementById('thresh-unit')!;
 const threshSliderWrap = document.getElementById('thresh-slider-wrap')!;
 const threshMinsWrap = document.getElementById('thresh-minutes-wrap')!;
+const queueThreshTypeEls = document.querySelectorAll<HTMLInputElement>('input[name="queue-thresh-type"]');
+const queueThreshPctEl = document.getElementById('queue-threshold-pct') as HTMLInputElement;
+const queueThreshMinEl = document.getElementById('queue-threshold-min') as HTMLInputElement;
+const queueThreshUnitEl = document.getElementById('queue-thresh-unit')!;
+const queueThreshSliderWrap = document.getElementById('queue-thresh-slider-wrap')!;
+const queueThreshMinsWrap = document.getElementById('queue-thresh-minutes-wrap')!;
 const hideBtnsEl     = document.getElementById('hide-buttons')   as HTMLInputElement;
 const hideJpFieldEl  = document.getElementById('hide-jp-field')!;
 const hideIfNotJpEl  = document.getElementById('hide-if-not-jp') as HTMLInputElement;
@@ -74,37 +80,39 @@ const hideMusicEl    = document.getElementById('hide-music')     as HTMLInputEle
 const hideMusicFieldEl = document.getElementById('hide-music-field')!;
 
 const showTotalEl    = document.getElementById('show-total-badge') as HTMLSelectElement;
-const saveVideoBtn   = document.getElementById('save-video-btn')!;
-const resetVideoBtn  = document.getElementById('reset-video-btn')!;
+const saveVideoBtn   = document.getElementById('save-video-btn') as HTMLButtonElement;
+const resetVideoBtn  = document.getElementById('reset-video-btn') as HTMLButtonElement;
 
 const trackTimeEl    = document.getElementById('track-time')       as HTMLInputElement;
 const overlayEls     = document.querySelectorAll<HTMLInputElement>('input[name="overlay-pos"]');
-const saveOverlayBtn = document.getElementById('save-overlay-btn')!;
-const resetOverlayBtn= document.getElementById('reset-overlay-btn')!;
+const saveOverlayBtn = document.getElementById('save-overlay-btn') as HTMLButtonElement;
+const resetOverlayBtn= document.getElementById('reset-overlay-btn') as HTMLButtonElement;
 const allowListOnlyEl= document.getElementById('allow-list-only') as HTMLInputElement;
 
 const queueListEl    = document.getElementById('queue-list')!;
 const queueActions   = document.getElementById('queue-actions')!;
 const navBadge       = document.getElementById('nav-badge')!;
 const autoSendEODEl  = document.getElementById('auto-send-end-of-day') as HTMLInputElement;
-const sendAllBtn     = document.getElementById('send-all-btn')!;
-const clearAllBtn    = document.getElementById('clear-all-btn')!;
+const sendAllBtn     = document.getElementById('send-all-btn') as HTMLButtonElement;
+const clearAllBtn    = document.getElementById('clear-all-btn') as HTMLButtonElement;
 const allowListEl    = document.getElementById('allow-list')!;
 const skipListEl     = document.getElementById('skip-list')!;
 const allowCountEl   = document.getElementById('allow-count')!;
 const skipCountEl    = document.getElementById('skip-count')!;
 const allowInputEl   = document.getElementById('allow-input') as HTMLInputElement;
 const skipInputEl    = document.getElementById('skip-input')  as HTMLInputElement;
-const allowAddBtn    = document.getElementById('allow-add')!;
-const skipAddBtn     = document.getElementById('skip-add')!;
+const allowAddBtn    = document.getElementById('allow-add') as HTMLButtonElement;
+const skipAddBtn     = document.getElementById('skip-add') as HTMLButtonElement;
 
 const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
 const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
 const ttuDirectSendEl= document.getElementById('ttu-direct-send') as HTMLInputElement;
-const resetReadersBtn= document.getElementById('reset-readers-btn')!;
+const resetReadersBtn= document.getElementById('reset-readers-btn') as HTMLButtonElement;
 
-const threshSpinUp   = document.querySelector('.thresh-spin-up') as HTMLButtonElement;
-const threshSpinDn   = document.querySelector('.thresh-spin-dn') as HTMLButtonElement;
+const threshSpinUp   = threshMinsWrap.querySelector('.thresh-spin-up') as HTMLButtonElement;
+const threshSpinDn   = threshMinsWrap.querySelector('.thresh-spin-dn') as HTMLButtonElement;
+const queueThreshSpinUp = queueThreshMinsWrap.querySelector('.queue-thresh-spin-up') as HTMLButtonElement;
+const queueThreshSpinDn = queueThreshMinsWrap.querySelector('.queue-thresh-spin-dn') as HTMLButtonElement;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -173,13 +181,17 @@ async function loadConfig() {
   apiKeyEl.value = cfg.apiKey ?? '';
   setApiStatus(cfg.apiKey ?? '');
 
-  const autoSend = cfg.autoSend ?? (cfg.logMode === 'auto') ?? false;
+  const autoSend = cfg.autoSend ?? (cfg.logMode === 'auto');
   autoSendEl.checked = autoSend;
   updateAutoConfigDim(autoSend);
 
-  const threshType = cfg.thresholdType ?? 'percent';
+  const threshType = cfg.thresholdType ?? 'time';
   threshTypeEls.forEach(r => { r.checked = r.value === threshType; });
   updateThreshUI(threshType, cfg);
+
+  const queueThreshType = cfg.queueThresholdType ?? 'time';
+  queueThreshTypeEls.forEach(r => { r.checked = r.value === queueThreshType; });
+  updateQueueThreshUI(queueThreshType, cfg);
 
   hideBtnsEl.checked = cfg.hideButtons ?? false;
   hideIfNotJpEl.checked = cfg.hideIfNotJapanese ?? false;
@@ -220,8 +232,9 @@ function updateThreshUI(type: string, cfg?: any) {
   threshMinsWrap.style.display = !isPct ? 'block' : 'none';
 
   if (cfg) {
-    const vPct = (cfg.thresholdType === 'percent' || !cfg.thresholdType) ? (cfg.thresholdValue ?? cfg.threshold ?? 95) : 95;
-    const vMin = cfg.thresholdType === 'time' ? (cfg.thresholdValue ?? 30) : 30;
+    const cfgType = cfg.thresholdType ?? type;
+    const vPct = cfgType === 'percent' ? (cfg.thresholdValue ?? cfg.threshold ?? 95) : 95;
+    const vMin = cfgType === 'time' ? (cfg.thresholdValue ?? cfg.threshold ?? 30) : 30;
     threshPctEl.value = String(vPct);
     threshMinEl.value = String(vMin);
   }
@@ -230,6 +243,25 @@ function updateThreshUI(type: string, cfg?: any) {
     threshUnitEl.textContent = threshPctEl.value + '%';
   } else {
     threshUnitEl.textContent = threshMinEl.value + ' min';
+  }
+}
+
+function updateQueueThreshUI(type: string, cfg?: any) {
+  const isPct = type === 'percent';
+  queueThreshSliderWrap.style.display = isPct ? 'block' : 'none';
+  queueThreshMinsWrap.style.display = !isPct ? 'block' : 'none';
+
+  if (cfg) {
+    const vPct = cfg.queueThresholdType === 'percent' ? (cfg.queueThresholdValue ?? 5) : 5;
+    const vMin = cfg.queueThresholdType === 'time' ? (cfg.queueThresholdValue ?? 1) : 1;
+    queueThreshPctEl.value = String(vPct);
+    queueThreshMinEl.value = String(vMin);
+  }
+
+  if (isPct) {
+    queueThreshUnitEl.textContent = queueThreshPctEl.value + '%';
+  } else {
+    queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min';
   }
 }
 
@@ -291,6 +323,26 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   return el;
 }
 
+async function ensureVideoMediaData(item: any) {
+  const channelId = item.channelId || item.mediaData?.channelId;
+  const channelTitle = item.mediaData?.channelTitle || item.channelTitle || item.contentTitleNative;
+  if (item.mediaData?.channelImage && item.mediaData?.channelDescription) return;
+  if (!channelId && !channelTitle) return;
+
+  const media = await resolveVideoChannelMedia({ channelId, channelTitle });
+  item.mediaData = {
+    ...(item.mediaData || {}),
+    channelId: channelId || media.channelId || item.channelId || 'web-video',
+    channelTitle: media.channelTitle || channelTitle || item.channelTitle || item.contentTitleNative,
+    ...(media.channelImage ? { channelImage: media.channelImage } : {}),
+    ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
+  };
+
+  if (!item.channelId && (media.channelId || channelId)) {
+    item.channelId = media.channelId || channelId;
+  }
+}
+
 // ── Queue Item UI ─────────────────────────────────────────────────────────────
 function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const el = document.createElement('div');
@@ -318,7 +370,9 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const dateVal = toLocalDT(defaultDateStr);
 
   const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
-  const isLinked = type === 'reading' && item.mediaId && item.mediaId !== 'web-reading';
+  const isLinked = type === 'reading'
+    ? !!(item.mediaId && item.mediaId !== 'web-reading')
+    : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
 
   let channelName = '';
   let urlDisplay = '';
@@ -342,15 +396,22 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     </div>`;
   }
 
+  let volumeGroup = '';
+  if (type === 'reading') {
+    const volVal = Math.max(1, Number(item.volume || 1));
+    volumeGroup = `<button type="button" class="qi-vol-pill" title="Volume">Vol ${volVal}</button>`;
+  }
+
   el.innerHTML = `
   <div class="qi-row top-row">
   <div class="qi-search-wrap" style="${type !== 'reading' ? 'display:block;flex:1' : ''}">
   ${type === 'reading' ? `<svg class="qi-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` : ''}
   <input class="qi-desc ${type === 'reading' ? 'searchable' : ''}" type="text" value="${title}" placeholder="${type === 'reading' ? 'Search AniList...' : 'Video Title'}"/>
-  ${isLinked ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : ''}
+  ${isLinked ? (type === 'reading' ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : `<span class="qi-link-status video-matched" title="Matched" style="cursor:default;color:var(--green);position:absolute;right:8px;top:50%;transform:translateY(-50%)">✓</span>`) : ''}
   ${type === 'reading' ? `<div class="qi-search-dropdown"></div>` : ''}
   </div>
   <div style="display:flex;gap:6px;">
+  ${volumeGroup}
   <div class="qi-spin-group">
   <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
   <div class="qi-spin-nav">
@@ -372,6 +433,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>`;
 
   const descInput = el.querySelector('.qi-desc') as HTMLInputElement;
+  const volPill = el.querySelector<HTMLButtonElement>('.qi-vol-pill');
 
   if (type === 'reading') {
     const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
@@ -414,7 +476,25 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         }
 
         dropdown.innerHTML = '';
-        results.forEach(m => {
+        interface AniListSearchResultTitle {
+          contentTitleNative?: string;
+          contentTitleEnglish?: string;
+          contentTitleRomaji?: string;
+        }
+
+        interface AniListSearchResult {
+          contentId: string | number;
+          title?: AniListSearchResultTitle;
+          contentTitleNative?: string;
+          contentTitleEnglish?: string;
+          contentTitleRomaji?: string;
+          coverImage?: string;
+          contentImage?: string;
+          chapters?: number;
+          volumes?: number;
+        }
+
+        results.forEach((m: AniListSearchResult) => {
           const row = document.createElement('div');
           row.className = 'qi-search-item';
           const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
@@ -429,7 +509,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         </div>
         `;
 
-        row.addEventListener('mousedown', async (e) => {
+        row.addEventListener('mousedown', async (e: MouseEvent) => {
           e.preventDefault();
           descInput.value = native;
 
@@ -447,6 +527,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           item.mediaId = m.contentId;
           item.volume = volume || 1;
           item.description = native;
+          if (volPill) volPill.textContent = `Vol ${Math.max(1, Number(item.volume || 1))}`;
 
           const q = await readingQueueStorage.getValue();
           const idx = q.findIndex((x:any) => x.id === item.id);
@@ -543,6 +624,64 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         sessionCharsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
     }
 
+    if (volPill) {
+      const getVol = () => {
+        const raw = String(volPill.textContent || '').replace(/\D/g, '');
+        return Math.max(1, Number(raw) || 1);
+      };
+      const persistVolume = async (next: number) => {
+        item.volume = next;
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx !== -1) {
+          q[idx].volume = next;
+          await readingQueueStorage.setValue(q);
+        }
+      };
+
+      volPill.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if ((volPill as any)._editing) return;
+        (volPill as any)._editing = true;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.className = 'qi-vol-input';
+        input.value = String(getVol());
+
+        volPill.style.display = 'none';
+        volPill.insertAdjacentElement('afterend', input);
+        input.focus();
+        input.select();
+
+        const cleanup = () => {
+          input.remove();
+          volPill.style.display = '';
+          (volPill as any)._editing = false;
+        };
+
+        const commit = async () => {
+          const next = Math.max(1, Number(String(input.value || '').replace(/\D/g, '')) || 1);
+          volPill.textContent = `Vol ${next}`;
+          await persistVolume(next);
+        };
+
+        input.addEventListener('keydown', (ke) => {
+          if (ke.key === 'Enter') {
+            ke.preventDefault();
+            void commit().finally(cleanup);
+          }
+          if (ke.key === 'Escape') {
+            ke.preventDefault();
+            cleanup();
+          }
+        });
+        input.addEventListener('blur', () => { void commit().finally(cleanup); });
+      });
+    }
+
     el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
 
     el.querySelector('.qi-send')!.addEventListener('click', async () => {
@@ -555,18 +694,30 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
       el.querySelectorAll('.qi-session-remove').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
-          const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
-          const q = await targetStorage.getValue();
-          const idx = q.findIndex((x: any) => x.id === item.id);
-          if (idx !== -1) {
-            q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
-            const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-            q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
-            if (type === 'reading') {
-              q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+          if (type === 'reading') {
+            const q = await readingQueueStorage.getValue();
+            const idx = q.findIndex((x: any) => x.id === item.id);
+            if (idx !== -1) {
+              const sessions = q[idx].sessions ?? [];
+              q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
+              const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+              q[idx].time = totalSecs;
+              const readingItem = q[idx] as QueuedReadingLog;
+              readingItem.chars = (readingItem.sessions ?? []).reduce((a: any, b: any) => a + (b.chars || 0), 0);
+              await readingQueueStorage.setValue(q);
+              renderQueue();
             }
-            await targetStorage.setValue(q);
-            renderQueue();
+          } else {
+            const q = await videoQueueStorage.getValue();
+            const idx = q.findIndex((x: any) => x.id === item.id);
+            if (idx !== -1) {
+              const sessions = q[idx].sessions ?? [];
+              q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
+              const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+              q[idx].time = Math.round(totalSecs / 60);
+              await videoQueueStorage.setValue(q);
+              renderQueue();
+            }
           }
         });
       });
@@ -581,6 +732,12 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
 
   const generalMins = Number((el.querySelector('.qi-mins') as HTMLInputElement).value);
   const generalChars = type === 'reading' ? Number((el.querySelector('.qi-chars') as HTMLInputElement).value) : 0;
+  const volInput = el.querySelector<HTMLInputElement>('.qi-vol-input');
+  const volPill = el.querySelector<HTMLButtonElement>('.qi-vol-pill');
+  const volRaw = volInput?.value ?? volPill?.textContent ?? '';
+  const selectedVolume = type === 'reading'
+    ? Math.max(1, Number(String(volRaw).replace(/\D/g, '')) || Number(item.volume || 1) || 1)
+    : undefined;
 
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
   const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value), 0);
@@ -598,7 +755,7 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   };
 
   if (type === 'reading') {
-    base.volume = item.volume || 1;
+    base.volume = selectedVolume || 1;
     base.mediaData = item.mediaData || {
       contentId: "web-reading",
       contentTitleNative: item.contentTitleNative
@@ -658,7 +815,12 @@ async function checkAndSend(items: {id: string, el: HTMLElement}[], forceBypass 
       const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
       const q = await qStorage.getValue();
       const item = q.find((x: any) => x.id === id);
-      if (item && (!item.mediaId || item.mediaId === 'web-reading' || item.mediaId === 'web-video')) {
+      const mediaId = item && 'mediaId' in item ? item.mediaId : undefined;
+      const isVideo = type === 'video';
+      const hasMatch = isVideo
+        ? !!(((item as QueuedVideoLog)?.channelId && (item as QueuedVideoLog).channelId !== 'web-video') || ((item as QueuedVideoLog)?.mediaData?.channelId && (item as QueuedVideoLog)!.mediaData!.channelId !== 'web-video'))
+        : !!(mediaId && mediaId !== 'web-reading' && mediaId !== 'web-video');
+      if (item && !hasMatch) {
         hasUntracked = true; break;
       }
     }
@@ -691,8 +853,9 @@ async function sendOne(id: string, el: HTMLElement) {
       const apiKey = cfg.apiKey ?? '';
 
       const { query, volume } = parseTitle(item.contentTitleNative);
+      const readingItem = item as any;
 
-      if (!item.mediaId || !item.mediaData?.contentId) {
+      if (!readingItem.mediaId || !readingItem.mediaData?.contentId) {
         const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
           headers: { 'X-API-Key': apiKey }
         });
@@ -701,7 +864,7 @@ async function sendOne(id: string, el: HTMLElement) {
           const results: any[] = Array.isArray(data) ? data : (data.data ??[]);
           if (results.length > 0) {
             const media = results[0];
-            item.mediaData = {
+            readingItem.mediaData = {
               contentId:           media.contentId,
               contentTitleNative:  media.title?.contentTitleNative  ?? media.contentTitleNative,
               contentTitleEnglish: media.title?.contentTitleEnglish ?? media.contentTitleEnglish,
@@ -711,17 +874,25 @@ async function sendOne(id: string, el: HTMLElement) {
               chapters:            media.chapters,
               volumes:             media.volumes,
             };
-            item.mediaId = media.contentId;
-            item.volume = volume !== undefined ? volume : 1;
+            readingItem.mediaId = media.contentId;
+            readingItem.volume = volume !== undefined ? volume : 1;
           } else {
-            item.volume = volume || 1;
+            readingItem.volume = volume || 1;
           }
         } else {
-          item.volume = volume || 1;
+          readingItem.volume = volume || 1;
         }
       }
     } catch (e) {
       console.error("Anilist fetch error", e);
+    }
+  }
+
+  if (type === 'video') {
+    try {
+      await ensureVideoMediaData(item);
+    } catch (e) {
+      console.error('Video channel fetch error', e);
     }
   }
 
@@ -737,7 +908,7 @@ async function sendOne(id: string, el: HTMLElement) {
 async function removeOne(id: string, type: 'video' | 'reading') {
   const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
   const q = await qStorage.getValue();
-  await qStorage.setValue(q.filter((x: any) => x.id !== id));
+  await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
   renderQueue();
 }
 
@@ -792,16 +963,39 @@ if (threshSpinDn) {
   });
 }
 
+queueThreshTypeEls.forEach(r => r.addEventListener('change', () => {
+  if (r.checked) updateQueueThreshUI(r.value);
+}));
+
+queueThreshPctEl.addEventListener('input', () => { queueThreshUnitEl.textContent = queueThreshPctEl.value + '%'; });
+queueThreshMinEl.addEventListener('input', () => { queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min'; });
+if (queueThreshSpinUp) {
+  queueThreshSpinUp.addEventListener('click', () => {
+    queueThreshMinEl.value = String(Number(queueThreshMinEl.value) + 1);
+    queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min';
+  });
+}
+if (queueThreshSpinDn) {
+  queueThreshSpinDn.addEventListener('click', () => {
+    queueThreshMinEl.value = String(Math.max(1, Number(queueThreshMinEl.value) - 1));
+    queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min';
+  });
+}
+
 saveVideoBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   const tType = Array.from(threshTypeEls).find(r => r.checked)?.value || 'percent';
   const tVal = tType === 'percent' ? Number(threshPctEl.value) : Number(threshMinEl.value);
+  const qtType = Array.from(queueThreshTypeEls).find(r => r.checked)?.value || 'time';
+  const qtVal = qtType === 'percent' ? Number(queueThreshPctEl.value) : Number(queueThreshMinEl.value);
   await configStorage.setValue({
     ...cfg,
     autoSend: autoSendEl.checked,
     logMode: autoSendEl.checked ? 'auto' : 'manual',
     thresholdType: tType,
     thresholdValue: tVal,
+    queueThresholdType: qtType,
+    queueThresholdValue: qtVal,
     hideButtons: hideBtnsEl.checked,
     hideIfNotJapanese: hideIfNotJpEl.checked,
     hideMusic: hideMusicEl.checked,
@@ -818,6 +1012,8 @@ resetVideoBtn.addEventListener('click', async () => {
     logMode: 'manual',
     thresholdType: 'percent',
     thresholdValue: 95,
+    queueThresholdType: 'time',
+    queueThresholdValue: 1,
     hideButtons: false,
     hideIfNotJapanese: false,
     hideMusic: false,
@@ -929,12 +1125,12 @@ loadConfig();
 renderQueue();
 
 readingQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-session-chars:focus')) {
+  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-vol:focus, .qi-session-chars:focus')) {
     renderQueue();
   }
 });
 videoQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-session-chars:focus')) {
+  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-vol:focus, .qi-session-chars:focus')) {
     renderQueue();
   }
 });

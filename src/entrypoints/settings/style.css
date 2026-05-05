@@ -122,13 +122,22 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .qi-search-sub { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .qi-spin-group { display: flex; align-items: center; background: rgba(255,255,255,.03); border: 1px solid var(--bdr); border-radius: 4px; padding: 2px 6px; gap: 4px; }
-.qi-spin-group input { width: 44px; background: transparent; border: none; color: var(--text); font-family: var(--mono); text-align: right; outline: none; -moz-appearance: textfield; font-size: 13px; font-weight: 600; padding: 0; }
+.qi-spin-group input { width: 44px; background: transparent; border: none; color: var(--text); font-family: var(--mono); text-align: right; outline: none; appearance: textfield; -webkit-appearance: textfield; -moz-appearance: textfield; font-size: 13px; font-weight: 600; padding: 0; }
 .qi-spin-group input.qi-chars { width: 56px; color: var(--amber); }
+.qi-spin-group input.qi-vol { width: 28px; color: var(--text); }
+.qi-vol-group { background: rgba(255,255,255,.02); }
 .qi-spin-group input::-webkit-inner-spin-button, .qi-spin-group input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .qi-spin-nav { display: flex; flex-direction: column; justify-content: center; }
 .qi-spin-nav button { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 1px 2px; display: flex; align-items: center; justify-content: center; }
 .qi-spin-nav button:hover { color: var(--amber); }
 .qi-spin-nav svg { width: 8px; height: 8px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; }
+
+/* Inline volume editing (no box) */
+.qi-vol-pill { background: transparent; border: none; color: var(--amber); font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 2px 4px; cursor: pointer; opacity: .95; align-self: center; }
+.qi-vol-pill:hover { opacity: 1; }
+.qi-vol-pill:active { transform: scale(0.98); }
+.qi-vol-input { width: 36px; background: transparent; border: none; border-bottom: 1px solid rgba(240,180,41,.45); color: var(--amber); font-family: var(--mono); font-size: 12px; font-weight: 700; text-align: right; outline: none; padding: 0 2px; align-self: center; }
+.qi-vol-input:focus { border-bottom-color: rgba(240,180,41,.9); }
 
 .qi-meta { font-family: var(--mono); white-space: nowrap; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; flex: 1; color: var(--muted); cursor: text; user-select: text; }
 .qi-meta::-webkit-scrollbar { display: none; }
@@ -139,10 +148,10 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .qi-sessions { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--bdr); }
 .qi-session { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,.02); padding: 4px 8px; border-radius: 4px; }
 .qi-session-num { font-family: var(--mono); font-size: 10px; color: rgba(240,180,41,.6); font-weight: 700; flex-shrink: 0; min-width: 20px; }
-.qi-session-mins { background: transparent; border: none; border-bottom: 1px solid var(--bdr2); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 2px 0; outline: none; width: 28px; text-align: center; -moz-appearance: textfield; transition: border-color .15s; }
+.qi-session-mins { background: transparent; border: none; border-bottom: 1px solid var(--bdr2); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 2px 0; outline: none; width: 28px; text-align: center; appearance: textfield; -moz-appearance: textfield; transition: border-color .15s; }
 .qi-session-mins:focus { border-color: var(--amber); }
 .qi-session-mins::-webkit-inner-spin-button, .qi-session-mins::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-.qi-session-chars { background: transparent; border: none; border-bottom: 1px solid var(--bdr2); color: var(--amber); font-family: var(--mono); font-size: 11px; padding: 2px 0; outline: none; width: 55px; text-align: center; -moz-appearance: textfield; transition: border-color .15s; }
+.qi-session-chars { background: transparent; border: none; border-bottom: 1px solid var(--bdr2); color: var(--amber); font-family: var(--mono); font-size: 11px; padding: 2px 0; outline: none; width: 55px; text-align: center; appearance: textfield; -moz-appearance: textfield; transition: border-color .15s; }
 .qi-session-chars:focus { border-color: var(--amber); }
 .qi-session-chars::-webkit-inner-spin-button, .qi-session-chars::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .qi-session-date-input { background: transparent; border: 1px solid transparent; color: var(--muted); font-family: var(--mono); font-size: 10px; outline: none; cursor: pointer; border-radius: 3px; padding: 2px 4px; transition: color .15s; color-scheme: dark; flex: 1; text-align: right; }
@@ -198,7 +207,7 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .slider-ticks { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px; color: var(--muted); }
 #thresh-minutes-wrap { display: none; }
 .thresh-spinner { position: relative; display: flex; }
-.thresh-spinner .input { padding-right: 28px; -moz-appearance: textfield; }
+.thresh-spinner .input { padding-right: 28px; appearance: textfield; -moz-appearance: textfield; }
 .thresh-spinner .input::-webkit-inner-spin-button, .thresh-spinner .input::-webkit-outer-spin-button { -webkit-appearance: none; }
 .thresh-spin-btns { position: absolute; right: 0; top: 0; bottom: 0; width: 24px; display: flex; flex-direction: column; border-left: 1px solid var(--bdr); }
 .thresh-spin-up, .thresh-spin-dn { flex: 1; background: var(--surf2); border: none; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: color .12s, background .12s; padding: 0; }

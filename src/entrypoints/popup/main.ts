@@ -1,6 +1,6 @@
 import './style.css';
 import { videoQueueStorage, readingQueueStorage, configStorage } from '@/utils/storage';
-import { submitLog } from '@/utils/api';
+import { resolveVideoChannelMedia, submitLog } from '@/utils/api';
 
 const queueListEl  = document.getElementById('queue-list')!;
 const queueCountEl = document.getElementById('queue-count')!;
@@ -69,12 +69,36 @@ function parseTitle(docTitle: string) {
   return { query: title, volume };
 }
 
+async function ensureVideoMediaData(item: any) {
+  const channelId = item.channelId || item.mediaData?.channelId;
+  const channelTitle = item.mediaData?.channelTitle || item.channelTitle || item.contentTitleNative;
+  if (item.mediaData?.channelImage && item.mediaData?.channelDescription) return;
+  if (!channelId && !channelTitle) return;
+
+  const media = await resolveVideoChannelMedia({ channelId, channelTitle });
+  item.mediaData = {
+    ...(item.mediaData || {}),
+    channelId: channelId || media.channelId || item.channelId || 'web-video',
+    channelTitle: media.channelTitle || channelTitle || item.channelTitle || item.contentTitleNative,
+    ...(media.channelImage ? { channelImage: media.channelImage } : {}),
+    ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
+  };
+
+  if (!item.channelId && (media.channelId || channelId)) {
+    item.channelId = media.channelId || channelId;
+  }
+}
+
 function getPayloadsForItem(item: any, el: HTMLElement) {
   const type = el.dataset.type as 'video' | 'reading';
   const desc = (el.querySelector('.qi-title') as HTMLInputElement).value;
 
   const generalMins = Number((el.querySelector('.qi-time-num') as HTMLInputElement).value);
   const generalChars = type === 'reading' ? Number((el.querySelector('.qi-chars-num') as HTMLInputElement).value) : 0;
+  const volumeEl = el.querySelector('.qi-vol') as HTMLInputElement | null;
+  const selectedVolume = type === 'reading'
+    ? Math.max(1, Number(volumeEl?.value || item.volume || 1))
+    : undefined;
 
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
   const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.session-num') as HTMLInputElement).value), 0);
@@ -92,7 +116,7 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   };
 
   if (type === 'reading') {
-    base.volume = item.volume || 1;
+    base.volume = selectedVolume || 1;
     base.mediaData = item.mediaData || { contentId: "web-reading", contentTitleNative: item.contentTitleNative };
   } else {
     base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
@@ -128,9 +152,10 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
 
   if (type === 'reading') {
     try {
+      const readingItem = item as any;
       const cfg = await configStorage.getValue() as any;
-      const { query, volume } = parseTitle(item.contentTitleNative);
-      if (!item.mediaId || !item.mediaData?.contentId) {
+      const { query, volume } = parseTitle(readingItem.contentTitleNative);
+      if (!readingItem.mediaId || !readingItem.mediaData?.contentId) {
         const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
           headers: { 'X-API-Key': cfg.apiKey ?? '' }
         });
@@ -139,7 +164,7 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
           const results: any[] = Array.isArray(data) ? data : (data.data ??[]);
           if (results.length > 0) {
             const media = results[0];
-            item.mediaData = {
+            readingItem.mediaData = {
               contentId: media.contentId,
               contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
               contentTitleEnglish: media.title?.contentTitleEnglish ?? media.contentTitleEnglish,
@@ -147,12 +172,20 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
               contentImage: media.contentImage, coverImage: media.coverImage,
               chapters: media.chapters, volumes: media.volumes,
             };
-            item.mediaId = media.contentId;
-            item.volume = volume !== undefined ? volume : 1;
-          } else { item.volume = volume || 1; }
-        } else { item.volume = volume || 1; }
+            readingItem.mediaId = media.contentId;
+            readingItem.volume = volume !== undefined ? volume : 1;
+          } else { readingItem.volume = volume || 1; }
+        } else { readingItem.volume = volume || 1; }
       }
     } catch (e) { console.error("Anilist fetch error", e); }
+  }
+
+  if (type === 'video') {
+    try {
+      await ensureVideoMediaData(item);
+    } catch (e) {
+      console.error('Video channel fetch error', e);
+    }
   }
 
   const payloads = getPayloadsForItem(item, el);
@@ -160,7 +193,7 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
   for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
   if (success) {
-    await qStorage.setValue(q.filter((x: any) => x.id !== id));
+  await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
     el.classList.add('sent');
     setTimeout(() => { el.remove(); refreshMeta(); }, 380);
   } else {
@@ -174,7 +207,7 @@ async function removeItem(id: string, el: HTMLElement) {
   const type = el.dataset.type as 'video' | 'reading';
   const qStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
   const q = await qStorage.getValue();
-  await qStorage.setValue(q.filter((x: any) => x.id !== id));
+  await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
   el.remove();
   await refreshMeta();
 }
@@ -206,9 +239,12 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   const sessions: any[] = item.sessions ??[];
   const displayMins = isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
+  const volumeVal = Math.max(1, Number(item.volume || 1));
   const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
   const dateVal = toLocalDT(defaultDateStr);
-  const isLinked = isRead && item.mediaId && item.mediaId !== 'web-reading';
+  const isLinked = isRead
+    ? !!(item.mediaId && item.mediaId !== 'web-reading')
+    : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
 
   const el = document.createElement('div');
   el.className = 'qi';
@@ -236,13 +272,14 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <input class="ghost-input qi-title ${isRead ? 'searchable' : ''}" type="text" value="${title}" title="${title}"/>
   ${isRead ? `<div class="qi-search-dropdown"></div>` : ''}
   </div>
-  ${isLinked ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : ''}
+  ${isLinked ? (isRead ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : `<span class="qi-link-status" title="Matched" style="cursor:default">✓</span>`) : ''}
   <button class="qi-del" title="Remove">×</button>
   </div>
   <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
   <input class="ghost-num qi-time-num" type="number" min="1" value="${displayMins}" title="Total minutes"/>
   <span class="unit-lbl">min</span>
   ${isRead ? `<input class="ghost-num num-chars qi-chars-num" type="number" min="0" value="${item.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
+  ${isRead ? `<input class="ghost-num num-vol qi-vol" type="number" min="1" value="${volumeVal}" title="Volume"/><span class="unit-lbl">vol</span>` : ''}
   <span class="qi-meta-sep">·</span>
   <div class="qi-mid">
   <span class="qi-channel" title="${channelName} ${urlDisplay}">${channelName} ${urlDisplay}</span>
@@ -257,6 +294,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   if (isRead) {
     const descInput = el.querySelector('.qi-title') as HTMLInputElement;
     const dropdown = el.querySelector('.qi-search-dropdown') as HTMLElement;
+    const volumeEl = el.querySelector<HTMLInputElement>('.qi-vol');
     let debounceTimer: any;
 
     const bindUnlink = (btn: HTMLElement) => {
@@ -296,7 +334,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         }
 
         dropdown.innerHTML = '';
-        results.forEach(m => {
+        results.forEach((m: any) => {
           const row = document.createElement('div');
           row.className = 'qi-search-item';
           const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
@@ -324,6 +362,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           item.mediaId = m.contentId;
           item.volume = volume || 1;
           item.description = native;
+          if (volumeEl) volumeEl.value = String(item.volume || 1);
 
           const q = await readingQueueStorage.getValue();
           const idx = q.findIndex((x: any) => x.id === item.id);
@@ -373,6 +412,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   // Session limits logic
   const minsEl = el.querySelector<HTMLInputElement>('.qi-time-num')!;
   const charsEl = el.querySelector<HTMLInputElement>('.qi-chars-num');
+  const volumeInputEl = el.querySelector<HTMLInputElement>('.qi-vol');
   const sessionMinsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.session-num'));
   const sessionCharsEls = Array.from(el.querySelectorAll<HTMLInputElement>('.session-chars'));
 
@@ -404,24 +444,59 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         sessionCharsEls.forEach(input => input.addEventListener('input', updateGeneralMin));
     }
 
+    if (volumeInputEl) {
+      const clampVolume = () => {
+        const next = Math.max(1, Number(volumeInputEl.value) || 1);
+        volumeInputEl.value = String(next);
+        return next;
+      };
+      const persistVolume = async (next: number) => {
+        item.volume = next;
+        const q = await readingQueueStorage.getValue();
+        const idx = q.findIndex((x: any) => x.id === item.id);
+        if (idx !== -1) {
+          q[idx].volume = next;
+          await readingQueueStorage.setValue(q);
+        }
+      };
+
+      volumeInputEl.addEventListener('blur', () => { void persistVolume(clampVolume()); });
+      volumeInputEl.addEventListener('change', () => { void persistVolume(clampVolume()); });
+    }
+
     el.querySelector('.qi-send')!.addEventListener('click', () => sendItem(item.id, el));
     el.querySelector('.qi-del')!.addEventListener('click', () => removeItem(item.id, el));
 
     el.querySelectorAll('.qi-session-remove').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
-        const targetStorage = type === 'reading' ? readingQueueStorage : videoQueueStorage;
-        const q = await targetStorage.getValue();
-        const idx = q.findIndex((x: any) => x.id === item.id);
-        if (idx !== -1) {
-          q[idx].sessions = q[idx].sessions.filter((s: any) => s.id !== sId);
-          const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-          q[idx].time = type === 'reading' ? totalSecs : Math.round(totalSecs / 60);
-          if (type === 'reading') {
-            q[idx].chars = q[idx].sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+        if (type === 'reading') {
+          const q = await readingQueueStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx !== -1) {
+            const entry = q[idx];
+            if (!entry) return;
+            const sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sId);
+            entry.sessions = sessions;
+            const totalSecs = sessions.reduce((a: any, b: any) => a + b.secs, 0);
+            entry.time = totalSecs;
+            (entry as { chars: number }).chars = sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
+            await readingQueueStorage.setValue(q);
+            render(); // re-render
           }
-          await targetStorage.setValue(q);
-          render(); // re-render
+        } else {
+          const q = await videoQueueStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx !== -1) {
+            const entry = q[idx];
+            if (!entry) return;
+            const sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sId);
+            entry.sessions = sessions;
+            const totalSecs = sessions.reduce((a: any, b: any) => a + b.secs, 0);
+            entry.time = Math.round(totalSecs / 60);
+            await videoQueueStorage.setValue(q);
+            render(); // re-render
+          }
         }
       });
     });
@@ -480,7 +555,7 @@ btnClearAll.addEventListener('click', async () => {
 // ── Live updates ──────────────────────────────────────────────────────────────
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && (changes['videoQueue'] || changes['readingQueue'])) {
-    if (!document.querySelector('.qi-title:focus, .qi-time-num:focus, .qi-chars-num:focus, .qi-date:focus, .session-num:focus, .session-chars:focus, .session-date:focus')) {
+    if (!document.querySelector('.qi-title:focus, .qi-time-num:focus, .qi-chars-num:focus, .qi-vol:focus, .qi-date:focus, .session-num:focus, .session-chars:focus, .session-date:focus')) {
       render();
     }
   }
