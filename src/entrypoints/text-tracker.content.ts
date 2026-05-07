@@ -87,6 +87,7 @@ function parseTitle(docTitle: string) {
 }
 
 function extractTTUCharCount(): number | null {
+  // 1. Try to read the exact UI first if it's enabled
   for (const el of document.querySelectorAll('div, span')) {
     if (el instanceof HTMLElement && el.title && el.title.toLowerCase().includes('progress')) {
       const match = el.textContent?.match(/(?:T:\s*)?([\d,]+)\s*\/\s*[\d,]+/i) || el.textContent?.match(/([\d,]+)/);
@@ -100,7 +101,91 @@ function extractTTUCharCount(): number | null {
       if (match) return parseInt(match[1].replace(/,/g, ''), 10);
     }
   }
-  return null;
+
+  // 2. NATIVE FALLBACK: Calculate from the DOM when the UI is hidden
+  try {
+    const readerContainer = document.querySelector('.book-content') ||
+    document.querySelector('[data-ref="container"]') ||
+    document.querySelector('.reader-container') ||
+    document.querySelector('article') ||
+    document.body;
+
+    const pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, div')).filter(el => {
+      // Ignore tracker UI elements and TTU nav menus
+      if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
+
+      // Prevent double-counting parent containers by only taking leaf text blocks
+      if (el.tagName === 'DIV' || el.tagName === 'LI') {
+        const hasBlockChildren = Array.from(el.children).some(child =>['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE'].includes(child.tagName)
+        );
+        if (hasBlockChildren) return false;
+      }
+      return (el.textContent || '').trim().length > 0;
+    });
+
+    if (pTags.length === 0) return null;
+
+    // Determine TTU text direction mode to figure out how the text is scrolling
+    const writingMode = getComputedStyle(readerContainer).writingMode || getComputedStyle(document.body).writingMode;
+    const isVerticalRL = writingMode === 'vertical-rl';
+    const isVerticalLR = writingMode === 'vertical-lr';
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let exploredChars = 0;
+
+    // Fast character counter mirroring TTU's `getCharacterCount(node)`
+    const getTextLength = (node: Element) => {
+      // Cache the result directly on the node so we don't recalculate thousands of paragraphs every second
+      const cached = node.getAttribute('data-nt-chars');
+      if (cached) return parseInt(cached, 10);
+
+      let text = '';
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        const parentTag = n.parentElement?.tagName;
+        // Exclude furigana ruby text so we don't double count characters
+        if (parentTag === 'RT' || parentTag === 'RP') continue;
+        text += n.nodeValue || '';
+      }
+      // Remove whitespace and zero-width spaces
+      const len = text.replace(/[\s\u200B-\u200D\uFEFF]/g, '').length;
+      node.setAttribute('data-nt-chars', len.toString());
+      return len;
+    };
+
+    for (let i = 0; i < pTags.length; i++) {
+      const el = pTags[i];
+      const rect = el.getBoundingClientRect();
+
+      // Skip elements that are completely unrendered/hidden
+      if (rect.width === 0 || rect.height === 0) continue;
+
+      let isExplored = false;
+
+      // Determine if the text has reached the reading point based on block progression geometry
+      if (isVerticalRL) {
+        // Japanese Vertical RTL: block progression moves to the right.
+        // Elements that are being read or have been read have their right edge > 0.
+        isExplored = rect.right > -10;
+      } else if (isVerticalLR) {
+        // Vertical LTR (Rare): block progression moves left. Left edge < viewport width.
+        isExplored = rect.left < vw + 10;
+      } else {
+        // Horizontal LTR: block progression moves up. Top edge < viewport height.
+        isExplored = rect.top < vh + 10;
+      }
+
+      if (isExplored) {
+        exploredChars += getTextLength(el);
+      }
+    }
+
+    return exploredChars > 0 ? exploredChars : null;
+  } catch (err) {
+    return null; // Silent fail out of bounds just returns null
+  }
 }
 
 async function liveSyncQueue() {
