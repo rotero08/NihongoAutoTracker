@@ -18,7 +18,7 @@ let websiteOverlayDismissed = false;
 
 function isWebsiteOverlaySkipped(cfg: any): boolean {
   const host = window.location.hostname;
-  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
+  const skipSites: string[] = cfg?.skipSites ??['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
   if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
   if (skipSites.some((h: string) => host.includes(h))) return true;
   return false;
@@ -109,7 +109,7 @@ function extractTTUCharCount(): number | null {
     const vh = window.innerHeight;
 
     let exploredChars = 0;
-    let debugTextList: string[] = [];
+    let debugTextList: string[] =[];
 
     const getCleanedData = (node: Element) => {
       let text = '';
@@ -122,12 +122,14 @@ function extractTTUCharCount(): number | null {
 
       // STRICT PUNCTUATION DELETE: Keep only Letters (\p{L}) and Numbers (\p{N}).
       // This removes brackets, periods, tildes (～), etc.
-      const matches = text.match(/[\p{L}\p{N}]/gu) || [];
+      const matches = text.match(/[\p{L}\p{N}]/gu) ||[];
       return {
         count: matches.length,
         chars: matches.join('')
       };
     };
+
+    const isWhispersyncActive = document.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
 
     for (let i = 0; i < pTags.length; i++) {
       const el = pTags[i];
@@ -156,6 +158,36 @@ function extractTTUCharCount(): number | null {
         if (data.count > 0) {
           exploredChars += data.count;
           debugTextList.push(data.chars);
+        }
+      } else if (isWhispersyncActive) {
+        // Partially explored <p>, accurately check inner whispersync chunks to allow live counting
+        const wSpans = Array.from(el.querySelectorAll("[class^='ttu-whispersync-line-highlight-']")).filter(
+          span => !span.parentElement?.closest("[class^='ttu-whispersync-line-highlight-']")
+        );
+
+        for (let j = 0; j < wSpans.length; j++) {
+          const span = wSpans[j];
+          const spanRect = span.getBoundingClientRect();
+
+          if (spanRect.width === 0 || spanRect.height === 0) continue;
+
+          let isSpanExplored = false;
+
+          if (isVerticalRL) {
+            isSpanExplored = spanRect.left >= (vw - 10);
+          } else if (isVerticalLR) {
+            isSpanExplored = spanRect.right <= 10;
+          } else {
+            isSpanExplored = spanRect.bottom <= 10;
+          }
+
+          if (isSpanExplored) {
+            const data = getCleanedData(span);
+            if (data.count > 0) {
+              exploredChars += data.count;
+              debugTextList.push(data.chars);
+            }
+          }
         }
       }
     }
@@ -258,13 +290,13 @@ function injectTTUStyles() {
   const s = document.createElement('style');
   s.id = 'nt-ttu-styles';
   s.textContent = `
-  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 9999; font-family: sans-serif; align-items: center; flex-shrink: 0; margin-right: 4px; }
-  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 6px; color: #f0b429; transition: all 0.15s ease; align-items: center; justify-content: center; user-select: none; }
-  #nt-ttu-chrono-btn:hover { color: #ffcc33 !important; filter: brightness(1.3); }
+  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 40; font-family: sans-serif; align-items: center; justify-content: center; flex-shrink: 0; width: 2rem; height: 100%; }
+  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 0; width: 100%; height: 100%; color: #f0b429; transition: opacity 0.15s ease; align-items: center; justify-content: center; user-select: none; }
+  #nt-ttu-chrono-btn:hover { opacity: 0.7; color: #ffcc33 !important; }
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
-  #nt-ttu-chrono-btn svg { width: 26px; height: 26px; fill: currentColor; }
+  #nt-ttu-chrono-btn svg { width: 1.7rem; height: 1.7rem; fill: currentColor; }
 
-  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left; cursor: default; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; }
   #nt-ttu-dropdown.open { display: flex; }
 
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
@@ -449,540 +481,548 @@ function setupTTUChronometer() {
 
   // Isolate keyboard input so typing won't trigger reader shortcuts
   ['keydown', 'keyup', 'keypress'].forEach(evt => {
-  linkInput.addEventListener(evt, e => e.stopPropagation());
+    linkInput.addEventListener(evt, e => e.stopPropagation());
   });
 
-const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
-if (historyList) {
-  historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
-}
+  const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
+  if (historyList) {
+    historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
+  }
 
-let cachedHistoryMins = 0;
-let cachedHistoryChars = 0;
+  let cachedHistoryMins = 0;
+  let cachedHistoryChars = 0;
 
-if (globalSessionStartChar === -1) {
-  globalSessionStartChar = extractTTUCharCount() || 0;
-}
+  if (globalSessionStartChar === -1) {
+    globalSessionStartChar = extractTTUCharCount() || 0;
+  }
 
-const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-const refreshLinkerUI = async () => {
-  const title = getTTUTitle();
-  const links = await ttuLinkStorage.getValue() || {};
-  const match = links[title];
+  const refreshLinkerUI = async () => {
+    const title = getTTUTitle();
+    const links = await ttuLinkStorage.getValue() || {};
+    const match = links[title];
 
-  if (match && match.mediaId) {
-    linkerEdit.style.display = 'none';
-    linkerCompact.style.display = 'flex';
-    linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
-    linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
-    const v = Math.max(1, Number(match.volume || 1));
-    volPill.textContent = `Vol ${v}`;
-    const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
-    if (unlinkBtn && volPill.parentElement !== linkerCompact) {
-      linkerCompact.insertBefore(volPill, unlinkBtn);
-    }
+    if (match && match.mediaId) {
+      linkerEdit.style.display = 'none';
+      linkerCompact.style.display = 'flex';
+      linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
+      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
+      const v = Math.max(1, Number(match.volume || 1));
+      volPill.textContent = `Vol ${v}`;
+      const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
+      if (unlinkBtn && volPill.parentElement !== linkerCompact) {
+        linkerCompact.insertBefore(volPill, unlinkBtn);
+      }
 
-    if (currentConfig.ttuDirectSend) {
-      btnDirect.disabled = false;
-      btnDirect.style.opacity = '1';
-      btnDirect.style.cursor = 'pointer';
-      btnDirect.title = 'Send session to NT directly';
+      if (currentConfig.ttuDirectSend) {
+        btnDirect.disabled = false;
+        btnDirect.style.opacity = '1';
+        btnDirect.style.cursor = 'pointer';
+        btnDirect.title = 'Send session to NT directly';
+      } else {
+        btnDirect.disabled = true;
+        btnDirect.style.opacity = '0.3';
+        btnDirect.style.cursor = 'not-allowed';
+        btnDirect.title = 'Direct send disabled in settings';
+      }
     } else {
+      linkerEdit.style.display = 'flex';
+      linkerCompact.style.display = 'none';
+      linkInput.value = parseTitle(title).query;
+      const { volume } = parseTitle(title);
+      const v = Math.max(1, Number(volume || Number((volPill.textContent || '').replace(/\D/g, '')) || 1));
+      volPill.textContent = `Vol ${v}`;
+      if (volAnchor && volPill.parentElement !== volAnchor) {
+        volAnchor.appendChild(volPill);
+      }
+
       btnDirect.disabled = true;
       btnDirect.style.opacity = '0.3';
       btnDirect.style.cursor = 'not-allowed';
-      btnDirect.title = 'Direct send disabled in settings';
-    }
-  } else {
-    linkerEdit.style.display = 'flex';
-    linkerCompact.style.display = 'none';
-    linkInput.value = parseTitle(title).query;
-    const { volume } = parseTitle(title);
-    const v = Math.max(1, Number(volume || Number((volPill.textContent || '').replace(/\D/g, '')) || 1));
-    volPill.textContent = `Vol ${v}`;
-    if (volAnchor && volPill.parentElement !== volAnchor) {
-      volAnchor.appendChild(volPill);
-    }
-
-    btnDirect.disabled = true;
-    btnDirect.style.opacity = '0.3';
-    btnDirect.style.cursor = 'not-allowed';
-    btnDirect.title = 'Match media to send directly';
-  }
-};
-
-const getVolFromPill = () => {
-  const n = Number((volPill.textContent || '').replace(/\D/g, ''));
-  return Math.max(1, Number.isFinite(n) && n > 0 ? n : 1);
-};
-
-volPill.addEventListener('click', async (e) => {
-  e.stopPropagation();
-  if ((volPill as any)._editing) return;
-  (volPill as any)._editing = true;
-
-  const current = getVolFromPill();
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.inputMode = 'numeric';
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  input.className = 'nt-ttu-vol-input';
-  input.value = String(current);
-
-  volPill.style.display = 'none';
-  volPill.insertAdjacentElement('afterend', input);
-  input.focus();
-  input.select();
-
-  const cleanup = () => {
-    input.remove();
-    volPill.style.display = '';
-    (volPill as any)._editing = false;
-  };
-
-  const commit = async () => {
-    const next = Math.max(1, Number(String(input.value || '').replace(/\D/g, '')) || 1);
-    volPill.textContent = `Vol ${next}`;
-
-    const title = getTTUTitle();
-    const links = await ttuLinkStorage.getValue() || {};
-    if (links[title]) {
-      links[title].volume = next;
-      await ttuLinkStorage.setValue(links);
-    }
-
-    const queue = await readingQueueStorage.getValue();
-    const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
-    if (existing) {
-      existing.volume = next;
-      await readingQueueStorage.setValue(queue);
+      btnDirect.title = 'Match media to send directly';
     }
   };
 
-  input.addEventListener('keydown', (ev) => {
-    ev.stopPropagation();
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      void commit().finally(cleanup);
-    }
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      cleanup();
-    }
+  const getVolFromPill = () => {
+    const n = Number((volPill.textContent || '').replace(/\D/g, ''));
+    return Math.max(1, Number.isFinite(n) && n > 0 ? n : 1);
+  };
+
+  volPill.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if ((volPill as any)._editing) return;
+    (volPill as any)._editing = true;
+
+    const current = getVolFromPill();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.className = 'nt-ttu-vol-input';
+    input.value = String(current);
+
+    volPill.style.display = 'none';
+    volPill.insertAdjacentElement('afterend', input);
+    input.focus();
+    input.select();
+
+    const cleanup = () => {
+      input.remove();
+      volPill.style.display = '';
+      (volPill as any)._editing = false;
+    };
+
+    const commit = async () => {
+      const next = Math.max(1, Number(String(input.value || '').replace(/\D/g, '')) || 1);
+      volPill.textContent = `Vol ${next}`;
+
+      const title = getTTUTitle();
+      const links = await ttuLinkStorage.getValue() || {};
+      if (links[title]) {
+        links[title].volume = next;
+        await ttuLinkStorage.setValue(links);
+      }
+
+      const queue = await readingQueueStorage.getValue();
+      const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
+      if (existing) {
+        existing.volume = next;
+        await readingQueueStorage.setValue(queue);
+      }
+    };
+
+    input.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        void commit().finally(cleanup);
+      }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        cleanup();
+      }
+    });
+    input.addEventListener('blur', () => { void commit().finally(cleanup); });
   });
-  input.addEventListener('blur', () => { void commit().finally(cleanup); });
-});
 
-linkerLabelWrap.addEventListener('click', () => {
-  linkerCompact.style.display = 'none';
-  linkerEdit.style.display = 'flex';
+  linkerLabelWrap.addEventListener('click', () => {
+    linkerCompact.style.display = 'none';
+    linkerEdit.style.display = 'flex';
   if (volAnchor && volPill.parentElement !== volAnchor) {
     volAnchor.appendChild(volPill);
   }
   linkInput.focus();
-});
+  });
 
-wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
-  e.stopPropagation();
-  const title = getTTUTitle();
-  const links = await ttuLinkStorage.getValue() || {};
-  delete links[title];
-  await ttuLinkStorage.setValue(links);
-
-  const queue = await readingQueueStorage.getValue();
-  const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
-  if (existing) {
-    existing.mediaId = 'web-reading';
-    existing.mediaData = null;
-    await readingQueueStorage.setValue(queue);
-  }
-
-  refreshLinkerUI();
-});
-
-let linkDebounce: any;
-const performLinkSearch = () => {
-  clearTimeout(linkDebounce);
-  const query = linkInput.value.trim();
-  if (query.length < 2) { linkResults.classList.remove('open'); return; }
-
-  linkDebounce = setTimeout(async () => {
-    linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>';
-    linkResults.classList.add('open');
-
-    try {
-      const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
-        headers: { 'X-API-Key': currentConfig.apiKey ?? '' }
-      });
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      const results = Array.isArray(data) ? data : (data.data ??[]);
-
-      if (results.length === 0) {
-        linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
-        return;
-      }
-
-      linkResults.innerHTML = '';
-  results.forEach((m: any) => {
-    const row = document.createElement('div');
-    row.className = 'nt-ttu-link-item';
-    const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
-    const img = m.coverImage || m.contentImage || '';
-
-  row.innerHTML = `
-  ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
-  <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
-  `;
-
-  row.addEventListener('click', async () => {
+  wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const title = getTTUTitle();
-    const { volume } = parseTitle(title);
-    const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
-    volPill.textContent = `Vol ${selectedVolume}`;
-
     const links = await ttuLinkStorage.getValue() || {};
-    links[title] = {
-      mediaId: m.contentId,
-      volume: selectedVolume,
-      mediaData: {
-        contentId: m.contentId,
-        contentTitleNative: native,
-        contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
-        contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-        contentImage: img,
-        coverImage: img,
-        chapters: m.chapters,
-        volumes: m.volumes,
-      }
-    };
+    delete links[title];
     await ttuLinkStorage.setValue(links);
 
     const queue = await readingQueueStorage.getValue();
-    const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
+    const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
     if (existing) {
-      existing.mediaId = m.contentId;
-      existing.volume = selectedVolume;
-      existing.mediaData = links[title].mediaData;
-      existing.contentTitleNative = native;
-      existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
-      existing.description = native;
+      existing.mediaId = 'web-reading';
+      existing.mediaData = null;
       await readingQueueStorage.setValue(queue);
     }
 
-    linkResults.classList.remove('open');
     refreshLinkerUI();
-
-    if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
   });
-    linkResults.appendChild(row);
-  });
-    } catch {
-      linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
-    }
-  }, 400);
-};
 
-linkInput.addEventListener('input', performLinkSearch);
-linkInput.addEventListener('focus', () => {
-  if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) {
-    linkResults.classList.add('open');
-  } else {
-    performLinkSearch();
-  }
-});
-linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
+  let linkDebounce: any;
+  const performLinkSearch = () => {
+    clearTimeout(linkDebounce);
+    const query = linkInput.value.trim();
+    if (query.length < 2) { linkResults.classList.remove('open'); return; }
 
-const updateHistoryData = async () => {
-  const history = await ttuHistoryStorage.getValue() || {};
-  const sessions = history[getTTUTitle()] ||[];
+    linkDebounce = setTimeout(async () => {
+      linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>';
+      linkResults.classList.add('open');
 
-  cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
-  cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+      try {
+        const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
+          headers: { 'X-API-Key': currentConfig.apiKey ?? '' }
+        });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const results = Array.isArray(data) ? data : (data.data ??[]);
 
-  const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
-  if (sessions.length === 0) {
-    listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
-  } else {
-    let html = '';
-    sessions.forEach((s: any) => {
-      const mins = Math.max(1, Math.round(s.timeMs / 60000));
-      const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars} chars</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
-    });
-    listEl.innerHTML = html;
-    listEl.querySelectorAll('.nt-ttu-history-del').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const row = (e.currentTarget as HTMLElement).closest('.nt-ttu-history-item') as HTMLElement | null;
-        const sessionId = row?.dataset.sessionId;
-        if (!sessionId) return;
-        const currentTitle = getTTUTitle();
-        const historyNow = await ttuHistoryStorage.getValue() || {};
-        const curr = historyNow[currentTitle] || [];
-        historyNow[currentTitle] = curr.filter((s: any) => s.id !== sessionId);
-        await ttuHistoryStorage.setValue(historyNow);
-
-        // If this past session is still represented in the queue, delete that queued log too.
-        const q = await readingQueueStorage.getValue();
-        const filtered = q.filter((item: any) => !((item.sessions || []).some((s: any) => s.id === sessionId)));
-        if (filtered.length !== q.length) {
-          await readingQueueStorage.setValue(filtered);
+        if (results.length === 0) {
+          linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
+          return;
         }
 
-        await updateHistoryData();
-        updateUI();
-      });
-    });
-  }
-};
+        linkResults.innerHTML = '';
+    results.forEach((m: any) => {
+      const row = document.createElement('div');
+      row.className = 'nt-ttu-link-item';
+      const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+      const img = m.coverImage || m.contentImage || '';
 
-const updateUI = () => {
-  if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
-  if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
+    row.innerHTML = `
+    ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
+    <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
+    `;
 
-  const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
-  const totalChars = cachedHistoryChars + ttuState.chars;
+    row.addEventListener('click', async () => {
+      const title = getTTUTitle();
+      const { volume } = parseTitle(title);
+      const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
+      volPill.textContent = `Vol ${selectedVolume}`;
 
-  // Multiply the CPM result by 60 to get CPH
-  const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
-  const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
-
-  speedVal.textContent = sessSpeed + '/h';
-  totalSpeedVal.textContent = totSpeed + '/h';
-
-  wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
-  wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
-
-  const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
-  const playSvg  = 'M8 5v14l11-7z';
-
-  const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
-  const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
-
-  if (playPath) {
-    playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-    toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer');
-  }
-  if (mainIconPath) {
-    mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-  }
-
-  if (currentConfig.ttuAutoSave !== false) {
-    btnLog.disabled = true;
-    btnLog.style.opacity = '0.3';
-    btnLog.style.cursor = 'not-allowed';
-    btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
-  } else {
-    btnLog.disabled = false;
-    btnLog.style.opacity = '1';
-    btnLog.style.cursor = 'pointer';
-    btnLog.title = 'Save & Queue';
-  }
-};
-
-const makeEditable = (el: Element, isTime: boolean) => {
-  el.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
-    Object.assign(input.style, {
-      width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff',
-      border: '1px solid #555', borderRadius: '4px', padding: '2px 4px',
-      fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box'
-    });
-
-    const commit = () => {
-      if (isTime) {
-        const parts = input.value.split(':').map(Number);
-        let ms = 0;
-        if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
-        if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
-        if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
-      } else {
-        const val = parseInt(input.value.replace(/\D/g, ''));
-        if (!isNaN(val) && val >= 0) {
-          const currentCount = extractTTUCharCount() || 0;
-          let diff = currentCount - (globalSessionStartChar !== -1 ? globalSessionStartChar : 0);
-          if (diff < 0) diff = 0;
-          globalManualCharOffset = val - diff;
-          ttuState.chars = val;
+      const links = await ttuLinkStorage.getValue() || {};
+      links[title] = {
+        mediaId: m.contentId,
+        volume: selectedVolume,
+        mediaData: {
+          contentId: m.contentId,
+          contentTitleNative: native,
+          contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
+          contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
+          contentImage: img,
+          coverImage: img,
+          chapters: m.chapters,
+          volumes: m.volumes,
         }
+      };
+      await ttuLinkStorage.setValue(links);
+
+      const queue = await readingQueueStorage.getValue();
+      const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
+      if (existing) {
+        existing.mediaId = m.contentId;
+        existing.volume = selectedVolume;
+        existing.mediaData = links[title].mediaData;
+        existing.contentTitleNative = native;
+        existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+        existing.description = native;
+        await readingQueueStorage.setValue(queue);
       }
-      input.replaceWith(el);
-      updateUI();
-    };
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
-    el.replaceWith(input);
-    input.focus();
-    input.select();
-  });
-};
 
-makeEditable(timeVal, true);
-makeEditable(charsVal, false);
+      linkResults.classList.remove('open');
+      refreshLinkerUI();
 
-btn.addEventListener('click', async (e) => {
-  e.stopPropagation();
-  dropdown.classList.toggle('open');
-  if (dropdown.classList.contains('open')) {
-    await updateHistoryData();
-    await refreshLinkerUI();
-  }
-  updateUI();
-});
-
-btn.addEventListener('dblclick', (e) => {
-  e.stopPropagation();
-  e.preventDefault();
-  ttuState.running = !ttuState.running;
-  if (ttuState.running) {
-    const currentCount = extractTTUCharCount();
-    if (currentCount !== null) {
-      const oldDiff = ttuState.chars - globalManualCharOffset;
-      globalSessionStartChar = currentCount - oldDiff;
-    }
-    globalLastTick = Date.now();
-  }
-  updateUI();
-});
-
-document.addEventListener('click', (e) => {
-  if (!e.composedPath().includes(wrapper)) {
-    dropdown.classList.remove('open');
-  }
-});
-
-toggleBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  ttuState.running = !ttuState.running;
-  if (ttuState.running) {
-    const currentCount = extractTTUCharCount();
-    if (currentCount !== null) {
-      const oldDiff = ttuState.chars - globalManualCharOffset;
-      globalSessionStartChar = currentCount - oldDiff;
-    }
-    globalLastTick = Date.now();
-  }
-  updateUI();
-});
-
-wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
-  e.stopPropagation();
-  ttuState.timeMs = 0;
-  ttuState.chars = 0;
-  const currentCount = extractTTUCharCount();
-  globalSessionStartChar = currentCount !== null ? currentCount : -1;
-  globalManualCharOffset = 0;
-  updateUI();
-});
-
-btnLog.addEventListener('click', async (e) => {
-  e.stopPropagation();
-  if (currentConfig.ttuAutoSave !== false) return;
-  await saveSessionAndQueue();
-  await updateHistoryData();
-  updateUI();
-});
-
-btnDirect.addEventListener('click', async (e) => {
-  e.stopPropagation();
-  if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
-
-  const title = getTTUTitle();
-  const links = await ttuLinkStorage.getValue() || {};
-  const linkedMedia = links[title];
-  if (!linkedMedia) return;
-
-  const secs = Math.round(ttuState.timeMs / 1000);
-  try {
-    // Direct POST payload to NihongoTracker
-    const ok = await submitLog({
-      type: 'reading',
-      mediaId: linkedMedia.mediaId,
-      mediaData: linkedMedia.mediaData,
-      description: linkedMedia.mediaData.contentTitleNative || title,
-      chars: ttuState.chars,
-      time: Math.round(secs / 60),
-                    date: new Date().toISOString(),
-                    episodes: 0,
-                    pages: 0,
-                    volume: linkedMedia.volume || 1,
-                    private: false,
-                      tags:[]
+      if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
     });
-    if (!ok) return;
+      linkResults.appendChild(row);
+    });
+      } catch {
+        linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
+      }
+    }, 400);
+  };
 
-    // Process history visually
-    const dateStr = new Date().toISOString();
-    const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
+  linkInput.addEventListener('input', performLinkSearch);
+  linkInput.addEventListener('focus', () => {
+    if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) {
+      linkResults.classList.add('open');
+    } else {
+      performLinkSearch();
+    }
+  });
+  linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
+
+  const updateHistoryData = async () => {
     const history = await ttuHistoryStorage.getValue() || {};
-    if (!history[title]) history[title] =[];
-    history[title].push(sessionLog);
-    await ttuHistoryStorage.setValue(history);
+    const sessions = history[getTTUTitle()] ||[];
 
-    // Hard Reset
-    ttuState.id = crypto.randomUUID();
+    cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
+    cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+
+    const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
+    if (sessions.length === 0) {
+      listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
+    } else {
+      let html = '';
+      sessions.forEach((s: any) => {
+        const mins = Math.max(1, Math.round(s.timeMs / 60000));
+        const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars} chars</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
+      });
+      listEl.innerHTML = html;
+      listEl.querySelectorAll('.nt-ttu-history-del').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const row = (e.currentTarget as HTMLElement).closest('.nt-ttu-history-item') as HTMLElement | null;
+          const sessionId = row?.dataset.sessionId;
+          if (!sessionId) return;
+          const currentTitle = getTTUTitle();
+          const historyNow = await ttuHistoryStorage.getValue() || {};
+          const curr = historyNow[currentTitle] || [];
+          historyNow[currentTitle] = curr.filter((s: any) => s.id !== sessionId);
+          await ttuHistoryStorage.setValue(historyNow);
+
+          // If this past session is still represented in the queue, delete that queued log too.
+          const q = await readingQueueStorage.getValue();
+          const filtered = q.filter((item: any) => !((item.sessions ||[]).some((s: any) => s.id === sessionId)));
+          if (filtered.length !== q.length) {
+            await readingQueueStorage.setValue(filtered);
+          }
+
+          await updateHistoryData();
+          updateUI();
+        });
+      });
+    }
+  };
+
+  const updateUI = () => {
+    if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
+    if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
+
+    const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
+    const totalChars = cachedHistoryChars + ttuState.chars;
+
+    // Multiply the CPM result by 60 to get CPH
+    const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
+    const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
+
+    speedVal.textContent = sessSpeed + '/h';
+    totalSpeedVal.textContent = totSpeed + '/h';
+
+    wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
+    wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
+
+    const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
+    const playSvg  = 'M8 5v14l11-7z';
+
+    const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
+    const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
+
+    if (playPath) {
+      playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+      toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer');
+    }
+    if (mainIconPath) {
+      mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
+    }
+
+    if (currentConfig.ttuAutoSave !== false) {
+      btnLog.disabled = true;
+      btnLog.style.opacity = '0.3';
+      btnLog.style.cursor = 'not-allowed';
+      btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+    } else {
+      btnLog.disabled = false;
+      btnLog.style.opacity = '1';
+      btnLog.style.cursor = 'pointer';
+      btnLog.title = 'Save & Queue';
+    }
+  };
+
+  const makeEditable = (el: Element, isTime: boolean) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
+      Object.assign(input.style, {
+        width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff',
+        border: '1px solid #555', borderRadius: '4px', padding: '2px 4px',
+        fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box'
+      });
+
+      const commit = () => {
+        if (isTime) {
+          const parts = input.value.split(':').map(Number);
+          let ms = 0;
+          if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+          if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+          if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
+        } else {
+          const val = parseInt(input.value.replace(/\D/g, ''));
+          if (!isNaN(val) && val >= 0) {
+            const currentCount = extractTTUCharCount() || 0;
+            let diff = currentCount - (globalSessionStartChar !== -1 ? globalSessionStartChar : 0);
+            if (diff < 0) diff = 0;
+            globalManualCharOffset = val - diff;
+            ttuState.chars = val;
+          }
+        }
+        input.replaceWith(el);
+        updateUI();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
+      el.replaceWith(input);
+      input.focus();
+      input.select();
+    });
+  };
+
+  makeEditable(timeVal, true);
+  makeEditable(charsVal, false);
+
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+    if (dropdown.classList.contains('open')) {
+      await updateHistoryData();
+      await refreshLinkerUI();
+    }
+    updateUI();
+  });
+
+  btn.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    ttuState.running = !ttuState.running;
+    if (ttuState.running) {
+      const currentCount = extractTTUCharCount();
+      if (currentCount !== null) {
+        const oldDiff = ttuState.chars - globalManualCharOffset;
+        globalSessionStartChar = currentCount - oldDiff;
+      }
+      globalLastTick = Date.now();
+    }
+    updateUI();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.composedPath().includes(wrapper)) {
+      dropdown.classList.remove('open');
+    }
+  });
+
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ttuState.running = !ttuState.running;
+    if (ttuState.running) {
+      const currentCount = extractTTUCharCount();
+      if (currentCount !== null) {
+        const oldDiff = ttuState.chars - globalManualCharOffset;
+        globalSessionStartChar = currentCount - oldDiff;
+      }
+      globalLastTick = Date.now();
+    }
+    updateUI();
+  });
+
+  wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
+    e.stopPropagation();
     ttuState.timeMs = 0;
     ttuState.chars = 0;
     const currentCount = extractTTUCharCount();
     globalSessionStartChar = currentCount !== null ? currentCount : -1;
     globalManualCharOffset = 0;
-    ttuState.running = false;
+    updateUI();
+  });
 
+  btnLog.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (currentConfig.ttuAutoSave !== false) return;
+    await saveSessionAndQueue();
     await updateHistoryData();
     updateUI();
-  } catch (err) {
-    showToast('Failed to send log', true);
-  }
-});
+  });
 
-(window as any).ntChronoInterval = setInterval(() => {
-  if (ttuState.running && !document.hidden) {
-    const now = Date.now();
-    ttuState.timeMs += (now - globalLastTick);
+  btnDirect.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
 
-    const currentCount = extractTTUCharCount();
-    if (currentCount !== null) {
-      let diff = currentCount - globalSessionStartChar;
-      if (diff < 0) diff = 0;
-      ttuState.chars = diff + globalManualCharOffset;
+    const title = getTTUTitle();
+    const links = await ttuLinkStorage.getValue() || {};
+    const linkedMedia = links[title];
+    if (!linkedMedia) return;
+
+    const secs = Math.round(ttuState.timeMs / 1000);
+    try {
+      // Direct POST payload to NihongoTracker
+      const ok = await submitLog({
+        type: 'reading',
+        mediaId: linkedMedia.mediaId,
+        mediaData: linkedMedia.mediaData,
+        description: linkedMedia.mediaData.contentTitleNative || title,
+        chars: ttuState.chars,
+        time: Math.round(secs / 60),
+                                 date: new Date().toISOString(),
+                                 episodes: 0,
+                                 pages: 0,
+                                 volume: linkedMedia.volume || 1,
+                                 private: false,
+                                   tags:[]
+      });
+      if (!ok) return;
+
+      // Process history visually
+      const dateStr = new Date().toISOString();
+      const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
+      const history = await ttuHistoryStorage.getValue() || {};
+      if (!history[title]) history[title] =[];
+      history[title].push(sessionLog);
+      await ttuHistoryStorage.setValue(history);
+
+      // Hard Reset
+      ttuState.id = crypto.randomUUID();
+      ttuState.timeMs = 0;
+      ttuState.chars = 0;
+      const currentCount = extractTTUCharCount();
+      globalSessionStartChar = currentCount !== null ? currentCount : -1;
+      globalManualCharOffset = 0;
+      ttuState.running = false;
+
+      await updateHistoryData();
+      updateUI();
+    } catch (err) {
+      showToast('Failed to send log', true);
     }
-    globalLastTick = now;
-    updateUI();
+  });
 
-    if (currentConfig.ttuAutoSave !== false) {
-      liveSyncQueue();
+  (window as any).ntChronoInterval = setInterval(() => {
+    if (ttuState.running && !document.hidden) {
+      const now = Date.now();
+      ttuState.timeMs += (now - globalLastTick);
+
+      const currentCount = extractTTUCharCount();
+      if (currentCount !== null) {
+        let diff = currentCount - globalSessionStartChar;
+        if (diff < 0) diff = 0;
+        ttuState.chars = diff + globalManualCharOffset;
+      }
+      globalLastTick = now;
+      updateUI();
+
+      if (currentConfig.ttuAutoSave !== false) {
+        liveSyncQueue();
+      }
+    } else if (ttuState.running && document.hidden) {
+      globalLastTick = Date.now();
     }
-  } else if (ttuState.running && document.hidden) {
-    globalLastTick = Date.now();
-  }
-}, 1000);
+  }, 1000);
 
-pt.el.insertAdjacentElement(pt.pos, wrapper);
-updateHistoryData().then(() => updateUI());
-refreshLinkerUI();
+  pt.el.insertAdjacentElement(pt.pos, wrapper);
+  updateHistoryData().then(() => updateUI());
+  refreshLinkerUI();
 }
 
 function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
   const footer = document.getElementById('ttu-page-footer');
-  if (footer) {
-    const lastElement = footer.lastElementChild;
-    if (lastElement && lastElement.tagName === 'DIV') {
-      return { el: lastElement, pos: 'beforebegin' };
-    }
-    return { el: footer, pos: 'beforeend' };
+  if (!footer) return null;
+
+  // The native left group of buttons is a flex container.
+  // Whispersync might add its own container before it.
+  // We want to be in the same container as the native TTU buttons to align perfectly.
+  const flexGroups = Array.from(footer.children).filter(el =>
+  el.classList.contains('flex') &&
+  !el.classList.contains('fixed') &&
+  !el.classList.contains('absolute') &&
+  el.id !== 'nt-ttu-chrono-wrapper'
+  );
+
+  if (flexGroups.length > 0) {
+    // Append to the last available in-flow flex group (usually the native one)
+    const targetGroup = flexGroups[flexGroups.length - 1];
+    return { el: targetGroup, pos: 'beforeend' };
   }
 
-  const completeBookBtn = document.querySelector('[title="Complete Book"]');
-  if (completeBookBtn) return { el: completeBookBtn, pos: 'beforebegin' };
-  return null;
+  return { el: footer, pos: 'afterbegin' };
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -1187,7 +1227,7 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 
   if (area === 'local' && changes['readingQueue']) {
-    const queue = (changes['readingQueue'].newValue as any[]) || [];
+    const queue = (changes['readingQueue'].newValue as any[]) ||[];
     const title = getTTUTitle();
     const exists = queue.some((q: any) => q.originalTitle === title || q.contentTitleNative === title);
 
