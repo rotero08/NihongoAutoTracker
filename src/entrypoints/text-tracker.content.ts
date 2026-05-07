@@ -87,34 +87,20 @@ function parseTitle(docTitle: string) {
 }
 
 function extractTTUCharCount(): number | null {
-  // 1. Try to read the exact UI first if it's enabled
-  for (const el of document.querySelectorAll('div, span')) {
-    if (el instanceof HTMLElement && el.title && el.title.toLowerCase().includes('progress')) {
-      const match = el.textContent?.match(/(?:T:\s*)?([\d,]+)\s*\/\s*[\d,]+/i) || el.textContent?.match(/([\d,]+)/);
-      if (match) return parseInt(match[1].replace(/,/g, ''), 10);
-    }
-  }
-  const footerEls = document.querySelectorAll('div');
-  for (const el of footerEls) {
-    if (el.textContent && el.children.length === 0) {
-      const match = el.textContent.match(/^([\d,]+)\s*\/\s*[\d,]+$/);
-      if (match) return parseInt(match[1].replace(/,/g, ''), 10);
-    }
-  }
-
-  // 2. NATIVE FALLBACK: Calculate from the DOM when the UI is hidden
   try {
+    // Find the main container holding the book text
     const readerContainer = document.querySelector('.book-content') ||
     document.querySelector('[data-ref="container"]') ||
     document.querySelector('.reader-container') ||
     document.querySelector('article') ||
     document.body;
 
+    // Grab all elements that could contain paragraph text
     const pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, div')).filter(el => {
-      // Ignore tracker UI elements and TTU nav menus
+      // Ignore our extension's UI and TTU's menus
       if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
 
-      // Prevent double-counting parent containers by only taking leaf text blocks
+      // Prevent double-counting by ensuring we only count the lowest-level text blocks
       if (el.tagName === 'DIV' || el.tagName === 'LI') {
         const hasBlockChildren = Array.from(el.children).some(child =>['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE'].includes(child.tagName)
         );
@@ -125,7 +111,7 @@ function extractTTUCharCount(): number | null {
 
     if (pTags.length === 0) return null;
 
-    // Determine TTU text direction mode to figure out how the text is scrolling
+    // Figure out the scrolling/reading direction
     const writingMode = getComputedStyle(readerContainer).writingMode || getComputedStyle(document.body).writingMode;
     const isVerticalRL = writingMode === 'vertical-rl';
     const isVerticalLR = writingMode === 'vertical-lr';
@@ -134,9 +120,9 @@ function extractTTUCharCount(): number | null {
 
     let exploredChars = 0;
 
-    // Fast character counter mirroring TTU's `getCharacterCount(node)`
+    // Fast character counter mirroring TTU's internal logic
     const getTextLength = (node: Element) => {
-      // Cache the result directly on the node so we don't recalculate thousands of paragraphs every second
+      // Cache so we don't recalculate thousands of paragraphs every second
       const cached = node.getAttribute('data-nt-chars');
       if (cached) return parseInt(cached, 10);
 
@@ -145,35 +131,34 @@ function extractTTUCharCount(): number | null {
       let n;
       while ((n = walker.nextNode())) {
         const parentTag = n.parentElement?.tagName;
-        // Exclude furigana ruby text so we don't double count characters
+        // Ignore furigana (ruby text) so we don't double count
         if (parentTag === 'RT' || parentTag === 'RP') continue;
         text += n.nodeValue || '';
       }
-      // Remove whitespace and zero-width spaces
+      // Remove whitespace and invisible zero-width spaces
       const len = text.replace(/[\s\u200B-\u200D\uFEFF]/g, '').length;
       node.setAttribute('data-nt-chars', len.toString());
       return len;
     };
 
+    // Calculate progression based purely on visual bounding boxes
     for (let i = 0; i < pTags.length; i++) {
       const el = pTags[i];
       const rect = el.getBoundingClientRect();
 
-      // Skip elements that are completely unrendered/hidden
+      // Skip elements hidden by the browser or unmounted by paginated modes
       if (rect.width === 0 || rect.height === 0) continue;
 
       let isExplored = false;
-
-      // Determine if the text has reached the reading point based on block progression geometry
       if (isVerticalRL) {
-        // Japanese Vertical RTL: block progression moves to the right.
-        // Elements that are being read or have been read have their right edge > 0.
+        // Japanese Vertical RTL: As you scroll left, read text moves to the right.
+        // Future unread text is offscreen to the left (rect.right < 0).
         isExplored = rect.right > -10;
       } else if (isVerticalLR) {
-        // Vertical LTR (Rare): block progression moves left. Left edge < viewport width.
+        // Vertical LTR (Rare): Read text moves left, unread is offscreen to the right.
         isExplored = rect.left < vw + 10;
       } else {
-        // Horizontal LTR: block progression moves up. Top edge < viewport height.
+        // Horizontal LTR: Read text moves up, unread is offscreen at the bottom.
         isExplored = rect.top < vh + 10;
       }
 
@@ -184,7 +169,8 @@ function extractTTUCharCount(): number | null {
 
     return exploredChars > 0 ? exploredChars : null;
   } catch (err) {
-    return null; // Silent fail out of bounds just returns null
+    // If the DOM is completely detached or mid-load, safely return null to pause tracking
+    return null;
   }
 }
 
