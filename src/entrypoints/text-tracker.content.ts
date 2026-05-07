@@ -88,30 +88,20 @@ function parseTitle(docTitle: string) {
 
 function extractTTUCharCount(): number | null {
   try {
-    // Find the main container holding the book text
     const readerContainer = document.querySelector('.book-content') ||
     document.querySelector('[data-ref="container"]') ||
     document.querySelector('.reader-container') ||
     document.querySelector('article') ||
     document.body;
 
-    // Grab all elements that could contain paragraph text
-    const pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, div')).filter(el => {
-      // Ignore our extension's UI and TTU's menus
+    // Use semantic tags to avoid the "div slicing" issue in paginated mode
+    const pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
       if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-
-      // Prevent double-counting by ensuring we only count the lowest-level text blocks
-      if (el.tagName === 'DIV' || el.tagName === 'LI') {
-        const hasBlockChildren = Array.from(el.children).some(child =>['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE'].includes(child.tagName)
-        );
-        if (hasBlockChildren) return false;
-      }
       return (el.textContent || '').trim().length > 0;
     });
 
     if (pTags.length === 0) return null;
 
-    // Figure out the scrolling/reading direction
     const writingMode = getComputedStyle(readerContainer).writingMode || getComputedStyle(document.body).writingMode;
     const isVerticalRL = writingMode === 'vertical-rl';
     const isVerticalLR = writingMode === 'vertical-lr';
@@ -119,57 +109,64 @@ function extractTTUCharCount(): number | null {
     const vh = window.innerHeight;
 
     let exploredChars = 0;
+    let debugTextList: string[] = [];
 
-    // Fast character counter mirroring TTU's internal logic
-    const getTextLength = (node: Element) => {
-      // Cache so we don't recalculate thousands of paragraphs every second
-      const cached = node.getAttribute('data-nt-chars');
-      if (cached) return parseInt(cached, 10);
-
+    const getCleanedData = (node: Element) => {
       let text = '';
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
       let n;
       while ((n = walker.nextNode())) {
-        const parentTag = n.parentElement?.tagName;
-        // Ignore furigana (ruby text) so we don't double count
-        if (parentTag === 'RT' || parentTag === 'RP') continue;
+        if (n.parentElement?.closest('rt, rp')) continue; // Ignore Furigana
         text += n.nodeValue || '';
       }
-      // Remove whitespace and invisible zero-width spaces
-      const len = text.replace(/[\s\u200B-\u200D\uFEFF]/g, '').length;
-      node.setAttribute('data-nt-chars', len.toString());
-      return len;
+
+      // STRICT PUNCTUATION DELETE: Keep only Letters (\p{L}) and Numbers (\p{N}).
+      // This removes brackets, periods, tildes (～), etc.
+      const matches = text.match(/[\p{L}\p{N}]/gu) || [];
+      return {
+        count: matches.length,
+        chars: matches.join('')
+      };
     };
 
-    // Calculate progression based purely on visual bounding boxes
     for (let i = 0; i < pTags.length; i++) {
       const el = pTags[i];
       const rect = el.getBoundingClientRect();
 
-      // Skip elements hidden by the browser or unmounted by paginated modes
       if (rect.width === 0 || rect.height === 0) continue;
 
       let isExplored = false;
+
       if (isVerticalRL) {
-        // Japanese Vertical RTL: As you scroll left, read text moves to the right.
-        // Future unread text is offscreen to the left (rect.right < 0).
-        isExplored = rect.right > -10;
+        // TRAILING EDGE (Vertical RL):
+        // In TTU, read text moves to the RIGHT.
+        // A block is "read" only when its LEFT edge has passed the RIGHT side of the screen.
+        isExplored = rect.left >= (vw - 10);
       } else if (isVerticalLR) {
-        // Vertical LTR (Rare): Read text moves left, unread is offscreen to the right.
-        isExplored = rect.left < vw + 10;
+        // Text leaves through the left
+        isExplored = rect.right <= 10;
       } else {
-        // Horizontal LTR: Read text moves up, unread is offscreen at the bottom.
-        isExplored = rect.top < vh + 10;
+        // TRAILING EDGE (Horizontal):
+        // Text moves up. A block is "read" when its BOTTOM edge has passed the TOP of the screen.
+        isExplored = rect.bottom <= 10;
       }
 
       if (isExplored) {
-        exploredChars += getTextLength(el);
+        const data = getCleanedData(el);
+        if (data.count > 0) {
+          exploredChars += data.count;
+          debugTextList.push(data.chars);
+        }
       }
     }
 
-    return exploredChars > 0 ? exploredChars : null;
+    // Console log the exact array of characters being counted
+    if (debugTextList.length > 0) {
+      console.log(`[NT-Tracker] Total: ${exploredChars} | Blocks:`, debugTextList);
+    }
+
+    return exploredChars;
   } catch (err) {
-    // If the DOM is completely detached or mid-load, safely return null to pause tracking
     return null;
   }
 }
