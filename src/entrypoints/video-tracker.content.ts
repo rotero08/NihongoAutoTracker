@@ -23,16 +23,16 @@ function toast(msg: string, err = false) {
     background: err ? '#1a0f0f' : '#0f1a0f',
     color: err ? '#f0706a' : '#3ddc84',
     border: `1px solid ${err ? 'rgba(240,112,106,.4)' : 'rgba(61,220,132,.4)'}`,
-    borderRadius: '5px',
-    padding: '9px 15px',
-    fontFamily: "'Courier New',monospace",
-    fontSize: '13px',
-    boxShadow: '0 4px 20px rgba(0,0,0,.6)',
-    writingMode: 'horizontal-tb',
-    direction: 'ltr',
-    textAlign: 'left',
-    lineHeight: '1.4',
-    pointerEvents: 'none',
+                borderRadius: '5px',
+                padding: '9px 15px',
+                fontFamily: "'Courier New',monospace",
+                fontSize: '13px',
+                boxShadow: '0 4px 20px rgba(0,0,0,.6)',
+                writingMode: 'horizontal-tb',
+                direction: 'ltr',
+                textAlign: 'left',
+                lineHeight: '1.4',
+                pointerEvents: 'none',
   });
   el.textContent = msg;
   document.body.appendChild(el);
@@ -68,6 +68,11 @@ function cleanUrl(url: string): string {
     }
     return u.origin + u.pathname;
   } catch { return url; }
+}
+
+function stripVideoTitle(title: string): string {
+  // Removes Youtube notification counts like "(1)" and " - YouTube" suffix
+  return title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
 }
 
 function isMusic(): boolean {
@@ -231,6 +236,7 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
   const queue = await videoQueueStorage.getValue();
   const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
   const mediaData = await getChannelMediaData(channelId, channelName);
+  const finalTitle = stripVideoTitle(videoTitle);
 
   if (idx !== -1) {
     const item = queue[idx] as any;
@@ -246,13 +252,14 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
 
     const completedSecs = item.sessions.reduce((a: number, s: any) => a + s.secs, 0);
     item.time = Math.max(1, Math.round(completedSecs / 60));
-    item.description = videoTitle;
+    item.description = finalTitle;
     item.contentTitleNative = channelName;
     if (channelId && !item.channelId) item.channelId = channelId;
     item.mediaData = {
       ...(item.mediaData || {}),
       ...mediaData,
     };
+    item.mediaId = item.mediaData?.channelId || item.channelId || item.mediaId || "web-video";
     delete item._currentSecs;
   } else {
     queue.push({
@@ -262,10 +269,11 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
                time: Math.max(1, Math.round(secs / 60)),
                date: new Date().toISOString(),
                private: false, tags: [],
-                 description: videoTitle,
+                 description: finalTitle,
                  sessions:[{ id: sessionId, secs, date: new Date().toISOString() }],
                channelId,
-                 mediaData,
+               mediaId: mediaData?.channelId || channelId || "web-video",
+               mediaData,
     } as any);
   }
   await videoQueueStorage.setValue([...queue]);
@@ -509,61 +517,61 @@ function showNTEditModal(badgeEl: HTMLElement, data: {
     if (onClose) onClose(submitted);
   };
 
-  (popup as any).__ntCloseModal = closeModal;
+    (popup as any).__ntCloseModal = closeModal;
 
-  // Append to document.body to escape overflow bounds of video players
-  document.body.appendChild(popup);
+    // Append to document.body to escape overflow bounds of video players
+    document.body.appendChild(popup);
 
-  // Position it fixed to correctly overlay the badge position globally
-  const rect = badgeEl.getBoundingClientRect();
-  popup.style.position = 'fixed';
-  popup.style.bottom = `${window.innerHeight - rect.top + 10}px`;
-  popup.style.left = `${rect.left}px`;
+    // Position it fixed to correctly overlay the badge position globally
+    const rect = badgeEl.getBoundingClientRect();
+    popup.style.position = 'fixed';
+    popup.style.bottom = `${window.innerHeight - rect.top + 10}px`;
+    popup.style.left = `${rect.left}px`;
 
-  // Verify bounded layout right away
-  requestAnimationFrame(() => {
-    const popRect = popup.getBoundingClientRect();
-    if (popRect.left < 0) popup.style.left = '10px';
-    if (popRect.right > window.innerWidth) popup.style.left = `${window.innerWidth - popRect.width - 10}px`;
-  });
-
-  const btnSession = popup.querySelector('#nt-badge-session')!;
-  const btnTotal = popup.querySelector('#nt-badge-total')!;
-
-  btnSession.addEventListener('click', () => {
-    btnSession.classList.add('active'); btnTotal.classList.remove('active');
-    data.onToggleShowTotal(false);
-  });
-  btnTotal.addEventListener('click', () => {
-    btnTotal.classList.add('active'); btnSession.classList.remove('active');
-    data.onToggleShowTotal(true);
-  });
-
-  popup.querySelector('#nt-modal-cancel')!.addEventListener('click', () => closeModal(false));
-  popup.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
-    const timeRaw = Number((popup.querySelector('#nt-edit-time') as HTMLInputElement).value);
-    const timeVal = Math.max(1, Number.isFinite(timeRaw) ? timeRaw : 1);
-    const dateRaw = (popup.querySelector('#nt-edit-date') as HTMLInputElement).value;
-    const dateIso = dateRaw ? dateInputToISO(dateRaw) : new Date().toISOString();
-    const clearSessions = !!(popup.querySelector('#nt-clear-sessions') as HTMLInputElement | null)?.checked;
-    onConfirm({
-      title: data.channelName,
-      desc:  (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value,
-              time:  timeVal,
-              date:  dateIso,
-              clearSessions,
+    // Verify bounded layout right away
+    requestAnimationFrame(() => {
+      const popRect = popup.getBoundingClientRect();
+      if (popRect.left < 0) popup.style.left = '10px';
+      if (popRect.right > window.innerWidth) popup.style.left = `${window.innerWidth - popRect.width - 10}px`;
     });
-    closeModal(true);
-  });
 
-  setTimeout(() => {
-    closeListener = (e: Event) => {
-      if (!popup.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
-        closeModal(false);
-      }
-    };
-    document.addEventListener('click', closeListener);
-  }, 0);
+    const btnSession = popup.querySelector('#nt-badge-session')!;
+    const btnTotal = popup.querySelector('#nt-badge-total')!;
+
+    btnSession.addEventListener('click', () => {
+      btnSession.classList.add('active'); btnTotal.classList.remove('active');
+      data.onToggleShowTotal(false);
+    });
+    btnTotal.addEventListener('click', () => {
+      btnTotal.classList.add('active'); btnSession.classList.remove('active');
+      data.onToggleShowTotal(true);
+    });
+
+    popup.querySelector('#nt-modal-cancel')!.addEventListener('click', () => closeModal(false));
+    popup.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
+      const timeRaw = Number((popup.querySelector('#nt-edit-time') as HTMLInputElement).value);
+      const timeVal = Math.max(1, Number.isFinite(timeRaw) ? timeRaw : 1);
+      const dateRaw = (popup.querySelector('#nt-edit-date') as HTMLInputElement).value;
+      const dateIso = dateRaw ? dateInputToISO(dateRaw) : new Date().toISOString();
+      const clearSessions = !!(popup.querySelector('#nt-clear-sessions') as HTMLInputElement | null)?.checked;
+      onConfirm({
+        title: data.channelName,
+        desc:  (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value,
+                time:  timeVal,
+                date:  dateIso,
+                clearSessions,
+      });
+      closeModal(true);
+    });
+
+    setTimeout(() => {
+      closeListener = (e: Event) => {
+        if (!popup.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) {
+          closeModal(false);
+        }
+      };
+      document.addEventListener('click', closeListener);
+    }, 0);
 }
 
 // ── Counter ───────────────────────────────────────────────────────────────────
@@ -648,11 +656,12 @@ function ensureCounter(
       const liveCfg = await configStorage.getValue() as any;
       const liveShowTotal = liveCfg.showTotalInBadge ?? true;
       const channelName = cachedChannelName || getChannelNameFallback();
+      const finalTitle = stripVideoTitle(title);
 
       showNTEditModal(
         el!,
         {
-          channelName, videoTitle: title, url, totalSecs, showTotal: liveShowTotal, channelId,
+          channelName, videoTitle: finalTitle, url, totalSecs, showTotal: liveShowTotal, channelId,
           onToggleShowTotal: async (v) => {
             const c = await configStorage.getValue() as any;
             await configStorage.setValue({ ...c, showTotalInBadge: v });
@@ -664,7 +673,7 @@ function ensureCounter(
             const mediaData = await getChannelMediaData(channelId, final.title);
             const ok = await submitLog({
               type: "video",
-              mediaId: channelId || "web-video",
+              mediaId: mediaData.channelId || channelId || "web-video",
               description: final.desc,
               mediaData,
               episodes: 0,
@@ -861,11 +870,12 @@ export default defineContentScript({
 
                     const sessionMins = Math.max(1, Math.round(liveSecs / 60));
                     const mediaData = await getChannelMediaData(channelId, cachedChannelName || getChannelNameFallback());
+                    const finalTitle = stripVideoTitle(document.title);
 
                     const ok = await submitLog({
                       type: 'video',
-                      mediaId: channelId || 'web-video',
-                      description: document.title,
+                      mediaId: mediaData.channelId || channelId || "web-video",
+                      description: finalTitle,
                       mediaData,
                       time: sessionMins,
                       date: new Date().toISOString(),
@@ -930,35 +940,35 @@ export default defineContentScript({
         }
 
         if (area === 'local' && changes['videoQueue']) {
-          const queue = Array.isArray(changes['videoQueue'].newValue) ? changes['videoQueue'].newValue : [];
-        const clean = cleanUrl(window.location.href);
-        const exists = queue.some((q: any) => q.contentTitleEnglish === clean);
-        if (!exists) {
-          completedSessionSecs = 0;
-          watchedSecs = 0;
-          lastSyncSecs = 0;
-          lastAutoCheckSecs = 0;
-          state.hasTriggered = false;
+          const queue = Array.isArray(changes['videoQueue'].newValue) ? changes['videoQueue'].newValue :[];
+          const clean = cleanUrl(window.location.href);
+          const exists = queue.some((q: any) => q.contentTitleEnglish === clean);
+          if (!exists) {
+            completedSessionSecs = 0;
+            watchedSecs = 0;
+            lastSyncSecs = 0;
+            lastAutoCheckSecs = 0;
+            state.hasTriggered = false;
 
-          if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2) {
-            playClockStart = performance.now();
+            if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2) {
+              playClockStart = performance.now();
+            }
+
+            const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+            if (badgeLabel) badgeLabel.textContent = "0:00";
           }
-
-          const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
-          if (badgeLabel) badgeLabel.textContent = "0:00";
         }
-      }
-    });
+      });
 
-    setInterval(async () => {
-      const vid = document.querySelector<HTMLVideoElement>('video');
-      if (vid) {
-        attach(vid);
-        if (!state.hasTriggered) {
-          const cfg = cachedConfig;
-          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
+      setInterval(async () => {
+        const vid = document.querySelector<HTMLVideoElement>('video');
+        if (vid) {
+          attach(vid);
+          if (!state.hasTriggered) {
+            const cfg = cachedConfig;
+            ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
+          }
         }
-      }
-    }, 2000);
+      }, 2000);
   },
 });

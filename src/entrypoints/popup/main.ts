@@ -69,6 +69,10 @@ function parseTitle(docTitle: string) {
   return { query: title, volume };
 }
 
+function stripVideoTitle(title: string): string {
+  return title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
+}
+
 async function ensureVideoMediaData(item: any) {
   const channelId = item.channelId || item.mediaData?.channelId;
   const channelTitle = item.mediaData?.channelTitle || item.channelTitle || item.contentTitleNative;
@@ -78,7 +82,7 @@ async function ensureVideoMediaData(item: any) {
   const media = await resolveVideoChannelMedia({ channelId, channelTitle });
   item.mediaData = {
     ...(item.mediaData || {}),
-    channelId: channelId || media.channelId || item.channelId || 'web-video',
+    channelId: media.channelId || channelId || item.channelId || 'web-video',
     channelTitle: media.channelTitle || channelTitle || item.channelTitle || item.contentTitleNative,
     ...(media.channelImage ? { channelImage: media.channelImage } : {}),
     ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
@@ -97,18 +101,18 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   const generalChars = type === 'reading' ? Number((el.querySelector('.qi-chars-num') as HTMLInputElement).value) : 0;
   const volumeEl = el.querySelector('.qi-vol') as HTMLInputElement | null;
   const selectedVolume = type === 'reading'
-    ? Math.max(1, Number(volumeEl?.value || item.volume || 1))
-    : undefined;
+  ? Math.max(1, Number(volumeEl?.value || item.volume || 1))
+  : undefined;
 
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
   const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.session-num') as HTMLInputElement).value), 0);
   const sumChars = type === 'reading' ? sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.session-chars') as HTMLInputElement).value), 0) : 0;
 
-  const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+  let apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+  if (type === 'video') apiTitle = stripVideoTitle(apiTitle);
 
   const base: any = {
     type,
-    mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
     description: apiTitle,
     episodes: 0,
     pages: 0,
@@ -116,9 +120,11 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   };
 
   if (type === 'reading') {
+    base.mediaId = item.mediaId || 'web-reading';
     base.volume = selectedVolume || 1;
     base.mediaData = item.mediaData || { contentId: "web-reading", contentTitleNative: item.contentTitleNative };
   } else {
+    base.mediaId = item.mediaData?.channelId || item.channelId || 'web-video';
     base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
   }
 
@@ -193,7 +199,7 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
   for (const p of payloads) { if (!(await submitLog(p))) success = false; }
 
   if (success) {
-  await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
+    await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
     el.classList.add('sent');
     setTimeout(() => { el.remove(); refreshMeta(); }, 380);
   } else {
@@ -225,7 +231,8 @@ async function refreshMeta() {
 
 function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const isRead = type === 'reading';
-  const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
+  const rawTitle = item.description || item.contentTitleNative || 'Unknown Title';
+  const title = esc(type === 'video' ? stripVideoTitle(rawTitle) : rawTitle);
 
   let channelName = '';
   let urlDisplay = '';
@@ -243,8 +250,8 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
   const dateVal = toLocalDT(defaultDateStr);
   const isLinked = isRead
-    ? !!(item.mediaId && item.mediaId !== 'web-reading')
-    : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
+  ? !!(item.mediaId && item.mediaId !== 'web-reading')
+  : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
 
   const el = document.createElement('div');
   el.className = 'qi';
@@ -476,7 +483,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           if (idx !== -1) {
             const entry = q[idx];
             if (!entry) return;
-            const sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sId);
+            const sessions = (entry.sessions ??[]).filter((s: any) => s.id !== sId);
             entry.sessions = sessions;
             const totalSecs = sessions.reduce((a: any, b: any) => a + b.secs, 0);
             entry.time = totalSecs;
@@ -490,7 +497,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           if (idx !== -1) {
             const entry = q[idx];
             if (!entry) return;
-            const sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sId);
+            const sessions = (entry.sessions ??[]).filter((s: any) => s.id !== sId);
             entry.sessions = sessions;
             const totalSecs = sessions.reduce((a: any, b: any) => a + b.secs, 0);
             entry.time = Math.round(totalSecs / 60);

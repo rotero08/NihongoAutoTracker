@@ -259,10 +259,9 @@ function updateQueueThreshUI(type: string, cfg?: any) {
   }
 
   if (isPct) {
-    queueThreshUnitEl.textContent = queueThreshPctEl.value + '%';
-  } else {
-    queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min';
-  }
+    queueThreshUnitEl.textContent = queueThreshPctEl.value + '%';} else {
+      queueThreshUnitEl.textContent = queueThreshMinEl.value + ' min';
+    }
 }
 
 // ── Site List Logic ───────────────────────────────────────────────────────────
@@ -332,7 +331,7 @@ async function ensureVideoMediaData(item: any) {
   const media = await resolveVideoChannelMedia({ channelId, channelTitle });
   item.mediaData = {
     ...(item.mediaData || {}),
-    channelId: channelId || media.channelId || item.channelId || 'web-video',
+    channelId: media.channelId || channelId || item.channelId || 'web-video',
     channelTitle: media.channelTitle || channelTitle || item.channelTitle || item.contentTitleNative,
     ...(media.channelImage ? { channelImage: media.channelImage } : {}),
     ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
@@ -341,6 +340,11 @@ async function ensureVideoMediaData(item: any) {
   if (!item.channelId && (media.channelId || channelId)) {
     item.channelId = media.channelId || channelId;
   }
+}
+
+function stripVideoTitle(title: string): string {
+  // Removes Youtube notification counts like "(1)" and " - YouTube" suffix
+  return title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
 }
 
 // ── Queue Item UI ─────────────────────────────────────────────────────────────
@@ -369,10 +373,11 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const defaultDateStr = sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString());
   const dateVal = toLocalDT(defaultDateStr);
 
-  const title = esc(item.description || item.contentTitleNative || 'Unknown Title');
+  const rawTitle = item.description || item.contentTitleNative || 'Unknown Title';
+  const title = esc(type === 'video' ? stripVideoTitle(rawTitle) : rawTitle);
   const isLinked = type === 'reading'
-    ? !!(item.mediaId && item.mediaId !== 'web-reading')
-    : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
+  ? !!(item.mediaId && item.mediaId !== 'web-reading')
+  : !!(((item as any).channelId && (item as any).channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'));
 
   let channelName = '';
   let urlDisplay = '';
@@ -703,7 +708,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
               const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
               q[idx].time = totalSecs;
               const readingItem = q[idx] as QueuedReadingLog;
-              readingItem.chars = (readingItem.sessions ?? []).reduce((a: any, b: any) => a + (b.chars || 0), 0);
+              readingItem.chars = (readingItem.sessions ??[]).reduce((a: any, b: any) => a + (b.chars || 0), 0);
               await readingQueueStorage.setValue(q);
               renderQueue();
             }
@@ -736,18 +741,18 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   const volPill = el.querySelector<HTMLButtonElement>('.qi-vol-pill');
   const volRaw = volInput?.value ?? volPill?.textContent ?? '';
   const selectedVolume = type === 'reading'
-    ? Math.max(1, Number(String(volRaw).replace(/\D/g, '')) || Number(item.volume || 1) || 1)
-    : undefined;
+  ? Math.max(1, Number(String(volRaw).replace(/\D/g, '')) || Number(item.volume || 1) || 1)
+  : undefined;
 
   const sessionNodes = Array.from(el.querySelectorAll('.qi-session'));
   const sumMins = sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.qi-session-mins') as HTMLInputElement).value), 0);
   const sumChars = type === 'reading' ? sessionNodes.reduce((acc, node) => acc + Number((node.querySelector('.qi-session-chars') as HTMLInputElement).value), 0) : 0;
 
-  const apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+  let apiTitle = desc || (type === 'reading' ? (item.mediaData?.contentTitleNative || item.contentTitleNative) : item.contentTitleNative);
+  if (type === 'video') apiTitle = stripVideoTitle(apiTitle);
 
   const base: any = {
     type,
-    mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
     description: apiTitle,
     episodes: 0,
     pages: 0,
@@ -755,12 +760,14 @@ function getPayloadsForItem(item: any, el: HTMLElement) {
   };
 
   if (type === 'reading') {
+    base.mediaId = item.mediaId || 'web-reading';
     base.volume = selectedVolume || 1;
     base.mediaData = item.mediaData || {
       contentId: "web-reading",
       contentTitleNative: item.contentTitleNative
     };
   } else {
+    base.mediaId = item.mediaData?.channelId || item.channelId || item.mediaId || 'web-video';
     base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
   }
 
@@ -818,8 +825,8 @@ async function checkAndSend(items: {id: string, el: HTMLElement}[], forceBypass 
       const mediaId = item && 'mediaId' in item ? item.mediaId : undefined;
       const isVideo = type === 'video';
       const hasMatch = isVideo
-        ? !!(((item as QueuedVideoLog)?.channelId && (item as QueuedVideoLog).channelId !== 'web-video') || ((item as QueuedVideoLog)?.mediaData?.channelId && (item as QueuedVideoLog)!.mediaData!.channelId !== 'web-video'))
-        : !!(mediaId && mediaId !== 'web-reading' && mediaId !== 'web-video');
+      ? !!(((item as QueuedVideoLog)?.channelId && (item as QueuedVideoLog).channelId !== 'web-video') || ((item as QueuedVideoLog)?.mediaData?.channelId && (item as QueuedVideoLog)!.mediaData!.channelId !== 'web-video'))
+      : !!(mediaId && mediaId !== 'web-reading' && mediaId !== 'web-video');
       if (item && !hasMatch) {
         hasUntracked = true; break;
       }
