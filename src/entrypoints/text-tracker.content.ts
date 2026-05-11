@@ -11,10 +11,32 @@ const JP_DOMAINS_DEFAULT =[
 'wanikani.com','bunpro.jp','satorireader.com',
 ];
 const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
-const TTU_HOST = 'reader.ttsu.app';
+const TTU_HOSTS =['reader.ttsu.app', 'app.yatsu.moe', 'manga.manabe.es'];
+
+const DEFAULT_TITLE_REGEXES =[
+  { desc: "YomiYasu Prefix (e.g., 'YomiYasu - Title 1')", re: "^YomiYasu\\s*-\\s*(.*?)\\s+(?:v|vol|第)?(\\d+)" },
+  { desc: "Publisher/Label Trailing (e.g., 'Title 18 (MFブックス)')", re: "^(.*?)\\s+(?:v|vol|第)?(\\d+)\\s*(?:巻)?\\s*\\([^)]+\\)$" },
+  { desc: "Volume Format 第X巻 (e.g., 'Title 第2巻')", re: "^(.*?)\\s+第(\\d+)巻$" },
+  { desc: "Volume Format vX (e.g., 'Title v1')", re: "^(.*?)\\s+v(\\d+)$" },
+  { desc: "Standard Space Number (e.g., 'Title 1')", re: "^(.*?)\\s+(\\d+)$" }
+];
 
 let currentConfig: any = {};
 let websiteOverlayDismissed = false;
+
+function getReaderConfig(cfg: any) {
+  const host = window.location.hostname;
+  const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
+  const directSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
+
+  if (host.includes('app.yatsu.moe')) {
+    return { enabled: cfg.yatsuEnabled ?? true, autoSave, directSend };
+  }
+  if (host.includes('manga.manabe.es')) {
+    return { enabled: cfg.manabeEnabled ?? true, autoSave, directSend };
+  }
+  return { enabled: cfg.ttuEnabled ?? true, autoSave, directSend };
+}
 
 function isWebsiteOverlaySkipped(cfg: any): boolean {
   const host = window.location.hostname;
@@ -61,7 +83,13 @@ let isSyncing = false;
 
 function getTTUTitle() {
   let title = document.title;
-  title = title.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '');
+  // If running inside an iframe (like Manabe), grab the top-level title safely
+  try {
+    if (window.self !== window.top && window.top) {
+      title = window.top.document.title || title;
+    }
+  } catch (e) {} // Ignore cross-origin issues just in case
+  title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '');
   title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
   return title.trim() || document.title;
 }
@@ -72,16 +100,25 @@ function parseTitle(docTitle: string) {
 
   if (/^\d+$/.test(docTitle)) return { query: docTitle, volume: undefined };
 
-  const volMatch = docTitle.match(/^(.*?)[\s\-_]+(?:vol(?:ume)?\.?\s*|v|第)?(\d+)\s*(?:巻|話|章)?$/i);
-  if (volMatch && volMatch[1].trim().length > 0 && !/^\d+$/.test(volMatch[1].trim())) {
-    title = volMatch[1].trim();
-    volume = parseInt(volMatch[2], 10);
-  } else {
-    const match2 = docTitle.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
-    if (match2) {
-      title = match2[1].trim();
-      volume = parseInt(match2[2], 10);
-    }
+  const regexes = currentConfig.titleRegexes ?? DEFAULT_TITLE_REGEXES;
+
+  for (const item of regexes) {
+    try {
+      const regex = new RegExp(item.re, 'i');
+      const match = docTitle.match(regex);
+      if (match && match[1]) {
+        title = match[1].trim();
+        if (match[2]) volume = parseInt(match[2], 10);
+        return { query: title, volume };
+      }
+    } catch(e) {}
+  }
+
+  // Fallback if none match:
+  const fallback = docTitle.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
+  if (fallback) {
+    title = fallback[1].trim();
+    volume = parseInt(fallback[2], 10);
   }
   return { query: title, volume };
 }
@@ -192,11 +229,6 @@ function extractTTUCharCount(): number | null {
       }
     }
 
-    // Console log the exact array of characters being counted
-    if (debugTextList.length > 0) {
-      console.log(`[NT-Tracker] Total: ${exploredChars} | Blocks:`, debugTextList);
-    }
-
     return exploredChars;
   } catch (err) {
     return null;
@@ -222,7 +254,7 @@ async function liveSyncQueue() {
       existing = {
         id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
         originalTitle: title, description: title, chars: ttuState.chars, time: secs,
-        date: dateStr, private: false, tags: [],
+        date: dateStr, private: false, tags:[],
         sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
       };
       queue.push(existing);
@@ -515,7 +547,7 @@ function setupTTUChronometer() {
         linkerCompact.insertBefore(volPill, unlinkBtn);
       }
 
-      if (currentConfig.ttuDirectSend) {
+      if (getReaderConfig(currentConfig).directSend) {
         btnDirect.disabled = false;
         btnDirect.style.opacity = '1';
         btnDirect.style.cursor = 'pointer';
@@ -802,7 +834,7 @@ function setupTTUChronometer() {
       mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
     }
 
-    if (currentConfig.ttuAutoSave !== false) {
+    if (getReaderConfig(currentConfig).autoSave !== false) {
       btnLog.disabled = true;
       btnLog.style.opacity = '0.3';
       btnLog.style.cursor = 'not-allowed';
@@ -915,7 +947,7 @@ function setupTTUChronometer() {
 
   btnLog.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (currentConfig.ttuAutoSave !== false) return;
+    if (getReaderConfig(currentConfig).autoSave !== false) return;
     await saveSessionAndQueue();
     await updateHistoryData();
     updateUI();
@@ -987,7 +1019,7 @@ function setupTTUChronometer() {
       globalLastTick = now;
       updateUI();
 
-      if (currentConfig.ttuAutoSave !== false) {
+      if (getReaderConfig(currentConfig).autoSave !== false) {
         liveSyncQueue();
       }
     } else if (ttuState.running && document.hidden) {
@@ -1004,25 +1036,38 @@ function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
   const footer = document.getElementById('ttu-page-footer');
-  if (!footer) return null;
 
-  // The native left group of buttons is a flex container.
-  // Whispersync might add its own container before it.
-  // We want to be in the same container as the native TTU buttons to align perfectly.
-  const flexGroups = Array.from(footer.children).filter(el =>
-  el.classList.contains('flex') &&
-  !el.classList.contains('fixed') &&
-  !el.classList.contains('absolute') &&
-  el.id !== 'nt-ttu-chrono-wrapper'
-  );
-
-  if (flexGroups.length > 0) {
-    // Append to the last available in-flow flex group (usually the native one)
-    const targetGroup = flexGroups[flexGroups.length - 1];
-    return { el: targetGroup, pos: 'beforeend' };
+  if (footer) {
+    const flexGroups = Array.from(footer.children).filter(el =>
+    el.classList.contains('flex') &&
+    !el.classList.contains('fixed') &&
+    !el.classList.contains('absolute') &&
+    el.id !== 'nt-ttu-chrono-wrapper'
+    );
+    if (flexGroups.length > 0) {
+      return { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' };
+    }
+    return { el: footer, pos: 'afterbegin' };
   }
 
-  return { el: footer, pos: 'afterbegin' };
+  // Fallback for TTU forks like Manabe / Yatsu
+  const progressDiv = document.querySelector('div[title="Click to copy Progress"]');
+  if (progressDiv && progressDiv.parentElement) {
+    const container = progressDiv.parentElement;
+    // The icons are grouped in a left-aligned flex container
+    const leftGroup = Array.from(container.children).find(el =>
+    el.classList.contains('flex') &&
+    el.classList.contains('h-full') &&
+    el.id !== 'nt-ttu-chrono-wrapper'
+    );
+    if (leftGroup) {
+      return { el: leftGroup, pos: 'beforeend' };
+    }
+    // Fallback to container itself
+    return { el: container, pos: 'afterbegin' };
+  }
+
+  return null;
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -1030,7 +1075,8 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     const target = findTTUInsertPoint();
     if (target && !wrapper) {
-      if (currentConfig.ttuEnabled !== false) setupTTUChronometer();
+      const readerCfg = getReaderConfig(currentConfig);
+      if (readerCfg.enabled !== false) setupTTUChronometer();
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
@@ -1181,9 +1227,12 @@ browser.storage.onChanged.addListener((changes, area) => {
     const oldCfg: any = changes['config'].oldValue || {};
     currentConfig = newCfg;
 
-    if (window.location.hostname.includes(TTU_HOST)) {
-      const wasEnabled = (oldCfg as any).ttuEnabled ?? true;
-      const isEnabled = (newCfg as any).ttuEnabled ?? true;
+    if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
+      const oldReaderCfg = getReaderConfig(oldCfg);
+      const newReaderCfg = getReaderConfig(newCfg);
+
+      const wasEnabled = oldReaderCfg.enabled;
+      const isEnabled = newReaderCfg.enabled;
 
       if (!isEnabled && wasEnabled) {
         const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -1197,7 +1246,7 @@ browser.storage.onChanged.addListener((changes, area) => {
       if (wrapper) {
         const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
 
-        if (isEnabled && currentConfig.ttuAutoSave !== false) {
+        if (isEnabled && newReaderCfg.autoSave !== false) {
           btnLog.disabled = true;
           btnLog.style.opacity = '0.3';
           btnLog.style.cursor = 'not-allowed';
@@ -1248,6 +1297,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 export default defineContentScript({
   matches:['<all_urls>'],
+  allFrames: true,
   cssInjectionMode: 'manifest',
 
   async main() {
@@ -1256,9 +1306,9 @@ export default defineContentScript({
     const host = window.location.hostname;
     const cfg  = currentConfig;
 
-    if (host.includes(TTU_HOST)) {
-      const ttuEnabled = cfg.ttuEnabled ?? true;
-      if (!ttuEnabled) return;
+    if (TTU_HOSTS.some(h => host.includes(h))) {
+      const readerCfg = getReaderConfig(cfg);
+      if (!readerCfg.enabled) return;
       startTimeTracker();
       await new Promise(r => setTimeout(r, 2500));
       setupTTUChronometer();

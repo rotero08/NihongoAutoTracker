@@ -12,7 +12,7 @@ Built with [WXT](https://wxt.dev/) and TypeScript.
   * **Smart Filters:** Optionally hide the tracker on non-Japanese videos or music videos automatically.
 * **Reading & Context Menu Logging**
   * Highlight Japanese text, right-click, and log it. Automatically calculates characters and tracks your active reading time on the tab via a draggable overlay.
-  * **TTU Reader Integration:** Seamlessly syncs your reading sessions from TTU Reader in the background.
+  * **TTU/Yatsu Reader Integration:** Seamlessly syncs your reading sessions from TTU Reader, Yatsu Reader, Manabe Reader in the background. Other Ttu forks probably work but you'll probably need to change the regex for automatic title/volume matching.
 * **Smart Matching Media**
   * Automatically searches and matches your reading material (only Light Novels for now) with to ensure accurate logging to NihongoTracker.
 * **Robust Queue System**
@@ -23,6 +23,7 @@ Built with [WXT](https://wxt.dev/) and TypeScript.
 * **Configurable**
   * Custom site Allow/Skip lists for the reading overlay.
   * Toggle time tracking, switch between auto and manual modes, and customize overlay behaviour to keep your browsing clean.
+  * Regex configuration available for more control over automatic title and volume detection.
 
 ## 🛠️ Installation for Development 
 

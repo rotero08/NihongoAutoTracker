@@ -6,10 +6,18 @@ const BUILT_IN_ALLOW =[
   'nhk.or.jp','nhk.jp','news.yahoo.co.jp','yomiuri.co.jp','asahi.com','mainichi.jp',
 'nikkei.com','tokyoreporter.com','watanoc.com','aozora.gr.jp','syosetu.com','kakuyomu.jp',
 'pixiv.net','nicovideo.jp','comic-walker.com','manga-raw.club','jisho.org',
-'wanikani.com','bunpro.jp','satorireader.com','reader.ttsu.app',
+'wanikani.com','bunpro.jp','satorireader.com','reader.ttsu.app','app.yatsu.moe','manga.manabe.es',
 ];
 const BUILT_IN_SKIP =[
   'youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app', 'mail.google.com', 'mail.proton.me'
+];
+
+const DEFAULT_TITLE_REGEXES =[
+  { desc: "YomiYasu Prefix (e.g., 'YomiYasu - Title 1')", re: "^YomiYasu\\s*-\\s*(.*?)\\s+(?:v|vol|第)?(\\d+)" },
+  { desc: "Publisher/Label Trailing (e.g., 'Title 18 (MFブックス)')", re: "^(.*?)\\s+(?:v|vol|第)?(\\d+)\\s*(?:巻)?\\s*\\([^)]+\\)$" },
+  { desc: "Volume Format 第X巻 (e.g., 'Title 第2巻')", re: "^(.*?)\\s+第(\\d+)巻$" },
+  { desc: "Volume Format vX (e.g., 'Title v1')", re: "^(.*?)\\s+v(\\d+)$" },
+  { desc: "Standard Space Number (e.g., 'Title 1')", re: "^(.*?)\\s+(\\d+)$" }
 ];
 
 // ── Tab nav ───────────────────────────────────────────────────────────────────
@@ -104,15 +112,23 @@ const skipInputEl    = document.getElementById('skip-input')  as HTMLInputElemen
 const allowAddBtn    = document.getElementById('allow-add') as HTMLButtonElement;
 const skipAddBtn     = document.getElementById('skip-add') as HTMLButtonElement;
 
-const ttuEnabledEl   = document.getElementById('ttu-enabled') as HTMLInputElement;
-const ttuAutoSaveEl  = document.getElementById('ttu-auto-save') as HTMLInputElement;
-const ttuDirectSendEl= document.getElementById('ttu-direct-send') as HTMLInputElement;
-const resetReadersBtn= document.getElementById('reset-readers-btn') as HTMLButtonElement;
+const readerAutoSaveEl   = document.getElementById('reader-auto-save') as HTMLInputElement;
+const readerDirectSendEl = document.getElementById('reader-direct-send') as HTMLInputElement;
+
+const ttuEnabledEl     = document.getElementById('ttu-enabled') as HTMLInputElement;
+const yatsuEnabledEl   = document.getElementById('yatsu-enabled') as HTMLInputElement;
+const manabeEnabledEl  = document.getElementById('manabe-enabled') as HTMLInputElement;
+const resetReadersBtn  = document.getElementById('reset-readers-btn') as HTMLButtonElement;
 
 const threshSpinUp   = threshMinsWrap.querySelector('.thresh-spin-up') as HTMLButtonElement;
 const threshSpinDn   = threshMinsWrap.querySelector('.thresh-spin-dn') as HTMLButtonElement;
 const queueThreshSpinUp = queueThreshMinsWrap.querySelector('.queue-thresh-spin-up') as HTMLButtonElement;
 const queueThreshSpinDn = queueThreshMinsWrap.querySelector('.queue-thresh-spin-dn') as HTMLButtonElement;
+
+const regexListEl = document.getElementById('regex-list')!;
+const regexDescInput = document.getElementById('regex-desc-input') as HTMLInputElement;
+const regexValInput = document.getElementById('regex-val-input') as HTMLInputElement;
+const regexAddBtn = document.getElementById('regex-add') as HTMLButtonElement;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
@@ -128,7 +144,7 @@ const SVG_UP = `<svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg>`;
 const SVG_DN = `<svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg>`;
 
 function parseTitle(docTitle: string) {
-  let base = docTitle.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '').trim();
+  let base = docTitle.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '').trim();
   let title = base;
   let volume: number | undefined = undefined;
 
@@ -207,10 +223,14 @@ async function loadConfig() {
   allowListOnlyEl.checked = cfg.allowListOnly ?? false;
   overlayEls.forEach(r => { r.checked = r.value === (cfg.overlayPosition ?? 'top-right'); });
   renderSites(cfg.allowSites ??[...BUILT_IN_ALLOW], cfg.skipSites ??[...BUILT_IN_SKIP]);
+  renderRegexes(cfg.titleRegexes ?? DEFAULT_TITLE_REGEXES);
+
+  readerAutoSaveEl.checked = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
+  readerDirectSendEl.checked = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
 
   ttuEnabledEl.checked = cfg.ttuEnabled ?? true;
-  ttuAutoSaveEl.checked = cfg.ttuAutoSave ?? true;
-  ttuDirectSendEl.checked = cfg.ttuDirectSend ?? false;
+  yatsuEnabledEl.checked = cfg.yatsuEnabled ?? true;
+  manabeEnabledEl.checked = cfg.manabeEnabled ?? true;
 
   autoSendEODEl.checked = cfg.autoSendEndOfDay ?? false;
 }
@@ -322,6 +342,95 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   return el;
 }
 
+// ── Regex Setup Logic ─────────────────────────────────────────────────────────
+function renderRegexes(list: any[]) {
+  regexListEl.innerHTML = '';
+  list.forEach((item, idx) => {
+    const row = document.createElement('div');
+    row.className = 'site-item';
+    row.style.display = 'flex';
+    row.style.alignItems = 'stretch';
+    row.style.padding = '4px 6px';
+  row.innerHTML = `
+  <div style="display: flex; flex-direction: column; justify-content: center; padding-right: 8px; border-right: 1px dashed var(--bdr); margin-right: 8px; gap: 4px;">
+  <button class="regex-up" title="Move Up" style="background:none; border:none; color:var(--muted); cursor:pointer; padding: 2px;">▲</button>
+  <button class="regex-dn" title="Move Down" style="background:none; border:none; color:var(--muted); cursor:pointer; padding: 2px;">▼</button>
+  </div>
+  <div style="display: flex; flex-direction: column; flex: 1; gap: 6px; padding: 4px 0;">
+  <div style="display: flex; align-items: center; gap: 8px;">
+  <span style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 700; width: 45px;">Desc</span>
+  <input type="text" class="regex-desc-edit" value="${esc(item.desc)}" style="flex: 1; background: var(--bg); border: 1px solid var(--bdr); border-radius: 4px; padding: 4px 8px; color: var(--text); font-size: 12px; outline: none;" />
+  </div>
+  <div style="display: flex; align-items: center; gap: 8px;">
+  <span style="font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 700; width: 45px;">Regex</span>
+  <input type="text" class="regex-val-edit" value="${esc(item.re)}" style="flex: 1; background: var(--bg); border: 1px solid var(--bdr); border-radius: 4px; padding: 4px 8px; color: var(--amber); font-family: var(--mono); font-size: 12px; outline: none;" />
+  </div>
+  </div>
+  <div style="display: flex; align-items: center; justify-content: center; padding-left: 8px; border-left: 1px dashed var(--bdr); margin-left: 4px;">
+  <button class="site-remove regex-rm" style="padding: 8px; cursor: pointer;" title="Remove Rule">
+  <svg viewBox="0 0 12 12" style="width: 14px; height: 14px; stroke: var(--red); stroke-width: 2; fill: none; stroke-linecap: round;"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>
+  </button>
+  </div>
+  `;
+
+  const updateRegex = async () => {
+    const newDesc = (row.querySelector('.regex-desc-edit') as HTMLInputElement).value;
+    const newRe = (row.querySelector('.regex-val-edit') as HTMLInputElement).value;
+    const cfg = await configStorage.getValue() as any;
+    const current = cfg.titleRegexes ?? DEFAULT_TITLE_REGEXES;
+    current[idx] = { desc: newDesc, re: newRe };
+    await configStorage.setValue({ ...cfg, titleRegexes: current });
+  };
+
+  const moveRegex = async (dir: number) => {
+    const cfg = await configStorage.getValue() as any;
+    const current = cfg.titleRegexes ?? DEFAULT_TITLE_REGEXES;
+    if (idx + dir < 0 || idx + dir >= current.length) return;
+    const temp = current[idx];
+    current[idx] = current[idx + dir];
+    current[idx + dir] = temp;
+    await configStorage.setValue({ ...cfg, titleRegexes: current });
+    loadConfig();
+  };
+
+  row.querySelector('.regex-desc-edit')!.addEventListener('change', updateRegex);
+  row.querySelector('.regex-val-edit')!.addEventListener('change', updateRegex);
+
+  const upBtn = row.querySelector('.regex-up') as HTMLButtonElement;
+  const dnBtn = row.querySelector('.regex-dn') as HTMLButtonElement;
+
+  if (idx === 0) { upBtn.style.opacity = '0.2'; upBtn.style.cursor = 'default'; }
+  else { upBtn.addEventListener('click', () => moveRegex(-1)); }
+
+  if (idx === list.length - 1) { dnBtn.style.opacity = '0.2'; dnBtn.style.cursor = 'default'; }
+  else { dnBtn.addEventListener('click', () => moveRegex(1)); }
+
+  row.querySelector('.regex-rm')!.addEventListener('click', async () => {
+    const cfg = await configStorage.getValue() as any;
+    const current = cfg.titleRegexes ?? DEFAULT_TITLE_REGEXES;
+    current.splice(idx, 1);
+    await configStorage.setValue({ ...cfg, titleRegexes: current });
+    loadConfig();
+  });
+  regexListEl.appendChild(row);
+  });
+}
+
+regexAddBtn.addEventListener('click', async () => {
+  const desc = regexDescInput.value.trim();
+  const re = regexValInput.value.trim();
+  if (!desc || !re) return;
+  try { new RegExp(re); } catch (e) { showStatus('⚠ Invalid Regex', true); return; }
+
+  const cfg = await configStorage.getValue() as any;
+  const current = cfg.titleRegexes ?? DEFAULT_TITLE_REGEXES;
+  await configStorage.setValue({ ...cfg, titleRegexes:[...current, { desc, re }] });
+  regexDescInput.value = '';
+  regexValInput.value = '';
+  loadConfig();
+  showStatus('✓ Regex Added');
+});
+
 async function ensureVideoMediaData(item: any) {
   const channelId = item.channelId || item.mediaData?.channelId;
   const channelTitle = item.mediaData?.channelTitle || item.channelTitle || item.contentTitleNative;
@@ -382,7 +491,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   let channelName = '';
   let urlDisplay = '';
   if (type === 'reading') {
-    channelName = 'TTU Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
+    channelName = 'Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
     urlDisplay = '';
   } else {
     channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');
@@ -703,7 +812,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
             const q = await readingQueueStorage.getValue();
             const idx = q.findIndex((x: any) => x.id === item.id);
             if (idx !== -1) {
-              const sessions = q[idx].sessions ?? [];
+              const sessions = q[idx].sessions ??[];
               q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
               const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
               q[idx].time = totalSecs;
@@ -1046,7 +1155,7 @@ allowAddBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   const sites = cfg.allowSites ??[...BUILT_IN_ALLOW];
   if (!sites.includes(val)) {
-    await configStorage.setValue({ ...cfg, allowSites: [...sites, val] });
+    await configStorage.setValue({ ...cfg, allowSites:[...sites, val] });
     allowInputEl.value = ''; loadConfig(); showStatus('✓ Allowed Site Added');
   }
 });
@@ -1057,7 +1166,7 @@ skipAddBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   const sites = cfg.skipSites ??[...BUILT_IN_SKIP];
   if (!sites.includes(val)) {
-    await configStorage.setValue({ ...cfg, skipSites: [...sites, val] });
+    await configStorage.setValue({ ...cfg, skipSites:[...sites, val] });
     skipInputEl.value = ''; loadConfig(); showStatus('✓ Skipped Site Added');
   }
 });
@@ -1081,7 +1190,7 @@ resetOverlayBtn.addEventListener('click', async () => {
     trackTime: true,
     allowListOnly: false,
     overlayPosition: 'top-right',
-    allowSites: [...BUILT_IN_ALLOW],
+    allowSites:[...BUILT_IN_ALLOW],
     skipSites:[...BUILT_IN_SKIP]
   });
   loadConfig();
@@ -1097,31 +1206,43 @@ autoSendEODEl.addEventListener('change', async () => {
 });
 
 // 5. Readers
+readerAutoSaveEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, readerAutoSave: readerAutoSaveEl.checked });
+  showStatus(readerAutoSaveEl.checked ? '✓ Reader Auto-sync enabled' : '✓ Reader Auto-sync disabled');
+});
+readerDirectSendEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, readerDirectSend: readerDirectSendEl.checked });
+  showStatus(readerDirectSendEl.checked ? '✓ Reader Direct Send enabled' : '✓ Reader Direct Send disabled');
+});
+
 ttuEnabledEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({ ...cfg, ttuEnabled: ttuEnabledEl.checked });
   showStatus(ttuEnabledEl.checked ? '✓ TTU Tracking enabled' : '✓ TTU Tracking disabled');
 });
-
-ttuAutoSaveEl.addEventListener('change', async () => {
+yatsuEnabledEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
-  await configStorage.setValue({ ...cfg, ttuAutoSave: ttuAutoSaveEl.checked });
-  showStatus(ttuAutoSaveEl.checked ? '✓ TTU Auto-sync enabled' : '✓ TTU Auto-sync disabled');
+  await configStorage.setValue({ ...cfg, yatsuEnabled: yatsuEnabledEl.checked });
+  showStatus(yatsuEnabledEl.checked ? '✓ Yatsu Tracking enabled' : '✓ Yatsu Tracking disabled');
 });
-
-ttuDirectSendEl.addEventListener('change', async () => {
+manabeEnabledEl.addEventListener('change', async () => {
   const cfg = await configStorage.getValue() as any;
-  await configStorage.setValue({ ...cfg, ttuDirectSend: ttuDirectSendEl.checked });
-  showStatus(ttuDirectSendEl.checked ? '✓ TTU Direct Send enabled' : '✓ TTU Direct Send disabled');
+  await configStorage.setValue({ ...cfg, manabeEnabled: manabeEnabledEl.checked });
+  showStatus(manabeEnabledEl.checked ? '✓ Manabe Tracking enabled' : '✓ Manabe Tracking disabled');
 });
 
 resetReadersBtn.addEventListener('click', async () => {
   const cfg = await configStorage.getValue() as any;
   await configStorage.setValue({
     ...cfg,
+    readerAutoSave: true,
+    readerDirectSend: false,
     ttuEnabled: true,
-    ttuAutoSave: true,
-    ttuDirectSend: false
+    yatsuEnabled: true,
+    manabeEnabled: true,
+    titleRegexes: DEFAULT_TITLE_REGEXES
   });
   loadConfig();
   showStatus('✓ Defaults Restored');

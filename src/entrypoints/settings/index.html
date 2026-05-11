@@ -160,7 +160,7 @@
           </div>
         </div>
 
-        
+
       </div>
 
       <div class="field">
@@ -291,6 +291,27 @@
       <div class="tab-head"><h2>Readers</h2></div>
       <p class="hint">Configure tracking behaviour for supported reading applications.</p>
 
+      <!-- Global Reader Settings -->
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="reader-auto-save" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Auto-sync sessions to queue in the background
+        </label>
+      </div>
+
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="reader-direct-send" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Directly send to NT if matched
+        </label>
+      </div>
+
+      <!-- Individual Site Enable Toggles -->
+      <div class="sub-head"><h3>Supported Sites</h3></div>
+
+      <!-- TTU -->
       <div class="reader-card">
         <div class="reader-card-left">
           <span class="reader-card-name">TTU Reader</span>
@@ -302,20 +323,52 @@
         </label>
       </div>
 
-      <div class="field" style="margin-top: 16px;">
+      <!-- Yatsu -->
+      <div class="reader-card">
+        <div class="reader-card-left">
+          <span class="reader-card-name">Yatsu Reader</span>
+          <span class="reader-card-url">app.yatsu.moe</span>
+        </div>
         <label class="toggle">
-          <input type="checkbox" id="ttu-auto-save" class="toggle-chk" checked/>
+          <input type="checkbox" id="yatsu-enabled" class="toggle-chk" checked/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          Auto-sync sessions to queue in the background
         </label>
       </div>
 
-      <div class="field" style="margin-top: 16px;">
+      <!-- Manabe -->
+      <div class="reader-card" style="margin-bottom: 0;">
+        <div class="reader-card-left">
+          <span class="reader-card-name">Manabe Reader</span>
+          <span class="reader-card-url">manga.manabe.es</span>
+        </div>
         <label class="toggle">
-          <input type="checkbox" id="ttu-direct-send" class="toggle-chk"/>
+          <input type="checkbox" id="manabe-enabled" class="toggle-chk" checked/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
-          Directly send to NT if matched
         </label>
+      </div>
+
+      <!-- Regex Rules -->
+      <!-- Regex Rules -->
+      <div class="sites-group" style="margin-top: 24px; margin-bottom: 8px;">
+        <div class="sites-toggle-head" data-group="regex">
+          <div class="sites-head-left">
+            <span class="sites-head-label">Title/Volume Regex Rules</span>
+          </div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
+        </div>
+        <div class="sites-body" id="regex-body" style="padding: 12px;">
+          <p class="hint" style="margin-top:0; margin-bottom:12px;">
+            <strong style="color:var(--text)">Order Matters!</strong> Rules are evaluated from top to bottom. The first regex that successfully matches will be used. Put highly specific edge cases at the top, and broad generic cases at the bottom. Use capture group 1 <code>(.*?)</code> to extract the Title, and group 2 <code>(\d+)</code> to extract the Volume.
+          </p>
+          <div class="site-list" id="regex-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"></div>
+          <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--bdr); padding-top: 16px;">
+            <input type="text" id="regex-desc-input" class="input" placeholder="Description (e.g., specific publisher or naming format)" style="padding: 8px 12px;" />
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="regex-val-input" class="input" placeholder="Regex e.g. ^(.*?)\s+(\d+)$" style="font-family: var(--mono); flex: 1; padding: 8px 12px;" />
+              <button id="regex-add" class="btn btn-amber btn-sm" style="white-space: nowrap; padding: 0 16px;">Add Rule</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div style="display:flex; gap:10px; margin-top: 24px;">
