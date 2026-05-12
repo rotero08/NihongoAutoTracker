@@ -65,7 +65,7 @@ Logs don't have to be sent immediately. They are stored in a local queue, giving
   </table>
 </p>
 
-###Configurable
+### Configurable
 Make it work exactly how you want it to.
 
 * Custom site Allow/Skip lists for the reading overlay.
