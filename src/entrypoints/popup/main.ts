@@ -237,7 +237,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   let channelName = '';
   let urlDisplay = '';
   if (isRead) {
-    channelName = 'TTU Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
+    channelName = esc(item.readerName || 'Reader') + ' \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
     urlDisplay = '';
   } else {
     channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');

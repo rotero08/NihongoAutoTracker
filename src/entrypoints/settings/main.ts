@@ -492,7 +492,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   let channelName = '';
   let urlDisplay = '';
   if (type === 'reading') {
-    channelName = 'Reader \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
+    channelName = esc(item.readerName || 'Reader') + ' \u2022 ' + esc(item.originalTitle || item.description || item.contentTitleNative || '');
     urlDisplay = '';
   } else {
     channelName = esc(item.channelTitle || item.contentTitleNative || 'YouTube');
@@ -504,6 +504,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     charsGroup = `
     <div class="qi-spin-group">
     <input class="qi-chars" type="number" value="${item.chars || 0}" min="0"/>
+    <span style="font-size:10px;color:var(--muted);padding-right:2px;">chars</span>
     <div class="qi-spin-nav">
     <button type="button" class="chars-up" tabindex="-1">${SVG_UP}</button>
     <button type="button" class="chars-dn" tabindex="-1">${SVG_DN}</button>
@@ -519,7 +520,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   el.innerHTML = `
   <div class="qi-row top-row">
-  <div class="qi-search-wrap" style="${type !== 'reading' ? 'display:block;flex:1' : ''}">
+  <div class="qi-search-wrap">
   ${type === 'reading' ? `<svg class="qi-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>` : ''}
   <input class="qi-desc ${type === 'reading' ? 'searchable' : ''}" type="text" value="${title}" placeholder="${type === 'reading' ? 'Search AniList...' : 'Video Title'}"/>
   ${isLinked ? (type === 'reading' ? `<button class="qi-link-status" title="Unlink AniList">✓</button>` : `<span class="qi-link-status video-matched" title="Matched" style="cursor:default;color:var(--green);position:absolute;right:8px;top:50%;transform:translateY(-50%)">✓</span>`) : ''}
@@ -529,6 +530,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   ${volumeGroup}
   <div class="qi-spin-group">
   <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
+  <span style="font-size:10px;color:var(--muted);padding-right:2px;">min</span>
   <div class="qi-spin-nav">
   <button type="button" class="mins-up" tabindex="-1">${SVG_UP}</button>
   <button type="button" class="mins-dn" tabindex="-1">${SVG_DN}</button>

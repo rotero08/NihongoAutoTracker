@@ -58,6 +58,7 @@ export interface QueuedReadingLog {
   mediaData?: any;
   volume?: number;
   originalTitle?: string;
+  readerName?: string;
 }
 
 export interface TTUHistorySession {

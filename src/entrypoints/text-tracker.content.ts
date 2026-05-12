@@ -207,6 +207,14 @@ function extractTTUCharCount(): number | null {
   }
 }
 
+function getReaderName() {
+  const host = window.location.hostname;
+  if (host.includes('app.yatsu.moe')) return 'Yatsu Reader';
+  if (host.includes('manga.manabe.es')) return 'Manabe Reader';
+  if (host.includes('reader.ttsu.app')) return 'TTU Reader';
+  return 'Reader';
+}
+
 async function liveSyncQueue() {
   if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
   isSyncing = true;
@@ -229,11 +237,13 @@ async function liveSyncQueue() {
         id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
         originalTitle: title, description: title, chars: ttuState.chars, time: secs,
         date: dateStr, private: false, tags:[],
-        sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }]
+        sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
+        readerName: getReaderName()
       };
       queue.push(existing);
     } else {
       existing.originalTitle = existing.originalTitle || title;
+      existing.readerName = getReaderName();
       existing.sessions = existing.sessions ||[];
       const sIdx = existing.sessions.findIndex((s:any) => s.id === ttuState.id);
 
@@ -640,7 +650,7 @@ function setupTTUChronometer() {
       listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
     } else {
       let html = '';
-      sessions.forEach((s: any) => {
+      [...sessions].reverse().forEach((s: any) => {
         const mins = Math.max(1, Math.round(s.timeMs / 60000));
         const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars} chars</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
@@ -707,10 +717,13 @@ function setupTTUChronometer() {
       const commit = () => {
         if (isTime) {
           const parts = input.value.split(':').map(Number);
-          let ms = 0;
-          if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
-          if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
-          if (!isNaN(ms) && ms >= 0) ttuState.timeMs = ms;
+          let ms = -1;
+          if (!parts.some(isNaN)) {
+            if (parts.length === 1) ms = parts[0] * 60 * 1000;
+            else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+            else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+          }
+          if (ms >= 0) ttuState.timeMs = ms;
         } else {
           const val = parseInt(input.value.replace(/\D/g, ''));
           if (!isNaN(val) && val >= 0) {
@@ -797,10 +810,11 @@ function setupTTUChronometer() {
     if (!linkedMedia) return;
 
     const secs = Math.round(ttuState.timeMs / 1000);
+    const minutes = Math.max(1, Math.round(secs / 60));
     try {
       const ok = await submitLog({
         type: 'reading', mediaId: linkedMedia.mediaId, mediaData: linkedMedia.mediaData, description: linkedMedia.mediaData.contentTitleNative || title,
-        chars: ttuState.chars, time: Math.round(secs / 60), date: new Date().toISOString(), episodes: 0, pages: 0, volume: linkedMedia.volume || 1, private: false, tags:[]
+        chars: ttuState.chars, time: minutes, date: new Date().toISOString(), episodes: 0, pages: 0, volume: linkedMedia.volume || 1, private: false, tags:[]
       });
       if (!ok) return;
 
@@ -810,6 +824,15 @@ function setupTTUChronometer() {
       if (!history[title]) history[title] =[];
       history[title].push(sessionLog);
       await ttuHistoryStorage.setValue(history);
+
+      const queue = await readingQueueStorage.getValue();
+      const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
+      if (existing) {
+        existing.sessions = (existing.sessions ||[]).filter((s: any) => s.id !== ttuState.id);
+        existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+        existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
+        await readingQueueStorage.setValue(queue);
+      }
 
       ttuState.id = crypto.randomUUID(); ttuState.timeMs = 0; ttuState.chars = 0;
       const currentCount = extractTTUCharCount();
@@ -987,10 +1010,13 @@ function buildOverlay(cfg: any) {
       input.value = fmt((window as any).__nt.getTotal()); input.placeholder='M:SS';
     const commit = () => {
       const parts = input.value.split(':').map(Number);
-      let ms = 0;
-      if (parts.length === 2) ms = (parts[0]*60+parts[1])*1000;
-      if (parts.length === 3) ms = (parts[0]*3600+parts[1]*60+parts[2])*1000;
-      if (!isNaN(ms) && ms >= 0) (window as any).__nt.setMs(ms);
+      let ms = -1;
+      if (!parts.some(isNaN)) {
+        if (parts.length === 1) ms = parts[0] * 60 * 1000;
+        else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+        else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+      }
+      if (ms >= 0) (window as any).__nt.setMs(ms);
       input.replaceWith(timeEl);
     };
     input.addEventListener('blur', commit);
