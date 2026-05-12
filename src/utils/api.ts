@@ -1,20 +1,17 @@
-// Notify routes through background — browser.notifications unavailable in content scripts
+import { addDebugLog } from './storage';
+
 export function notify(title: string, message: string) {
   try {
     if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
-      // Always send custom toasts to the active tab.
       browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
         if (tabs[0]?.id) browser.tabs.sendMessage(tabs[0].id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
       }).catch(() => null);
       return;
     }
-    // Content script or popup
     if (browser.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: 'NOTIFY', title, message }).catch(() => null);
     }
-  } catch (e) {
-    // Context invalidated (e.g. extension reloaded) — silent
-  }
+  } catch (e) {}
 }
 
 type VideoChannelMedia = {
@@ -48,7 +45,7 @@ async function fetchChannelExtrasFromYouTube(channelId: string): Promise<VideoCh
     if (typeof DOMParser !== 'undefined') {
       const doc = new DOMParser().parseFromString(text, 'text/html');
       channelDescription = doc.querySelector('meta[name="description"]')?.getAttribute('content') ||
-        doc.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
+      doc.querySelector('meta[property="og:description"]')?.getAttribute('content') || '';
       channelImage = doc.querySelector('meta[property="og:image"]')?.getAttribute('content') || '';
     } else {
       const descMatch = text.match(/<meta[^>]+(?:name="description"|property="og:description")[^>]+content="([^"]*)"/i);
@@ -72,6 +69,8 @@ export async function resolveVideoChannelMedia(input: { channelId?: string; chan
   const channelTitle = input.channelTitle?.trim();
   if (!channelId && !channelTitle) return {};
 
+  await addDebugLog('INFO', 'API', 'Resolving Channel Media', { input_channelId: channelId, input_channelTitle: channelTitle });
+
   let apiKey = input.apiKey || '';
   if (!apiKey) {
     const res = await browser.storage.local.get('config');
@@ -91,21 +90,21 @@ export async function resolveVideoChannelMedia(input: { channelId?: string; chan
       const res = await fetch(url, { headers: { 'X-API-Key': apiKey } });
       if (!res.ok) continue;
       const data = await res.json();
-      const results: any[] = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
+      const results: any[] = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data :[]);
       if (!results.length) continue;
 
       const exact = channelId
-        ? results.find((r: any) => (r.channelId || r.contentId || r.id) === channelId)
-        : undefined;
+      ? results.find((r: any) => (r.channelId || r.contentId || r.id) === channelId)
+      : undefined;
       const first = exact || results[0];
       const normalized = normalizeMediaSearchResult(first);
+
       if (normalized.channelTitle || normalized.channelImage || normalized.channelDescription) {
         if (channelId && !normalized.channelId) normalized.channelId = channelId;
+        await addDebugLog('INFO', 'API', `Media successfully matched API request`, { endpoint: url, normalized });
         return normalized;
       }
-    } catch {
-      // Try the next endpoint shape.
-    }
+    } catch {}
   }
 
   if (channelId) {
@@ -123,13 +122,22 @@ export async function resolveVideoChannelMedia(input: { channelId?: string; chan
 
 export async function submitLog(payload: Record<string, unknown>): Promise<boolean> {
   const res = await browser.storage.local.get('config');
-  const apiKey: string = (res.config as Record<string, unknown>)?.apiKey as string ?? '';
-  const desc = typeof payload.description === 'string' ? payload.description.trim() : '';
+  const config = res.config as any;
+  const apiKey = config?.apiKey ?? '';
 
   if (!apiKey) {
     notify('Failed! Missing API key', '');
     return false;
   }
+
+  // Safety Fix: If the payload is sending "web-video" but the metadata actually has a real ID, correct it
+  const mediaData = payload.mediaData as any;
+  if (payload.mediaId === 'web-video' && mediaData?.channelId && mediaData.channelId !== 'web-video') {
+    payload.mediaId = mediaData.channelId;
+    await addDebugLog('INFO', 'API', 'Correcting mediaId using discovered mediaData ID', { newMediaId: payload.mediaId });
+  }
+
+  await addDebugLog('INFO', 'API', `Submitting Log (${payload.type})`, payload);
 
   try {
     const response = await fetch('https://nihongotracker.app/api/logs', {
@@ -143,27 +151,17 @@ export async function submitLog(payload: Record<string, unknown>): Promise<boole
     });
 
     if (response.ok) {
+      await addDebugLog('INFO', 'API', `Log sent successfully`);
       notify('Log sent to Nihongo Tracker', '');
       return true;
     } else {
       const errorText = await response.text();
-      console.error('NT API error:', errorText);
-
-      let shortError = errorText;
-      try {
-        const jsonErr = JSON.parse(errorText);
-        if (jsonErr.message) shortError = jsonErr.message;
-      } catch (e) {
-        shortError = errorText;
-      }
-
-      const msg = shortError || (desc ? `Error sending '${desc}'` : 'Request failed');
-      notify(`Failed! ${response.status}: ${msg}`, '');
+      await addDebugLog('ERROR', 'API', `Log failed with code ${response.status}`, errorText);
+      notify(`Failed! ${response.status}`, '');
       return false;
     }
   } catch (err) {
-    console.error('NT fetch error:', err);
-    notify('Failed! Network error', '');
+    await addDebugLog('ERROR', 'API', `Network error`, err);
     return false;
   }
 }

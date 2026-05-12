@@ -1,5 +1,5 @@
 import './style.css';
-import { configStorage, videoQueueStorage, readingQueueStorage, type QueuedReadingLog, type QueuedVideoLog } from '@/utils/storage';
+import { configStorage, videoQueueStorage, readingQueueStorage, debugLogStorage, type QueuedReadingLog, type QueuedVideoLog } from '@/utils/storage';
 import { resolveVideoChannelMedia, submitLog } from '@/utils/api';
 
 const BUILT_IN_ALLOW =[
@@ -20,7 +20,6 @@ const DEFAULT_TITLE_REGEXES =[
   { desc: "Standard Space Number (e.g., 'Title 1')", re: "^(.*?)\\s+(\\d+)$" }
 ];
 
-// ── Tab nav ───────────────────────────────────────────────────────────────────
 document.querySelectorAll<HTMLElement>('.nav-item').forEach(item => {
   item.addEventListener('click', e => {
     e.preventDefault();
@@ -52,7 +51,6 @@ function applyFilter() {
   });
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
 const statusEl = document.getElementById('status')!;
 let statusTimer: ReturnType<typeof setTimeout>;
 function showStatus(msg: string, err = false) {
@@ -62,7 +60,6 @@ function showStatus(msg: string, err = false) {
   statusTimer = setTimeout(() => statusEl.classList.add('hidden'), 3000);
 }
 
-// ── Refs ──────────────────────────────────────────────────────────────────────
 const apiKeyEl       = document.getElementById('api-key')        as HTMLInputElement;
 const toggleKeyEl    = document.getElementById('toggle-key')!;
 const apiStatusEl    = document.getElementById('api-status')!;
@@ -130,7 +127,13 @@ const regexDescInput = document.getElementById('regex-desc-input') as HTMLInputE
 const regexValInput = document.getElementById('regex-val-input') as HTMLInputElement;
 const regexAddBtn = document.getElementById('regex-add') as HTMLButtonElement;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Advanced Debug Settings Refs
+const debugModeEl = document.getElementById('debug-mode') as HTMLInputElement;
+const navDebugEl = document.getElementById('nav-debug')!;
+const debugLogsList = document.getElementById('debug-logs-list')!;
+const clearDebugBtn = document.getElementById('clear-debug-btn')!;
+const refreshDebugBtn = document.getElementById('refresh-debug-btn')!;
+
 function esc(s: string) { return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 
 const toLocalDT = (iso: string) => {
@@ -191,7 +194,6 @@ function showUnmatchedModal(): Promise<boolean> {
   });
 }
 
-// ── Config Logic ──────────────────────────────────────────────────────────────
 async function loadConfig() {
   const cfg = await configStorage.getValue() as any;
   apiKeyEl.value = cfg.apiKey ?? '';
@@ -233,6 +235,9 @@ async function loadConfig() {
   manabeEnabledEl.checked = cfg.manabeEnabled ?? true;
 
   autoSendEODEl.checked = cfg.autoSendEndOfDay ?? false;
+
+  debugModeEl.checked = !!cfg.debugMode;
+  navDebugEl.style.display = cfg.debugMode ? 'flex' : 'none';
 }
 
 function setApiStatus(key: string) {
@@ -284,7 +289,6 @@ function updateQueueThreshUI(type: string, cfg?: any) {
     }
 }
 
-// ── Site List Logic ───────────────────────────────────────────────────────────
 function renderSites(allow: string[], skip: string[]) {
   allowListEl.innerHTML = ''; skipListEl.innerHTML = '';
   allow.forEach(d => allowListEl.appendChild(buildSiteItem(d, 'allow')));
@@ -342,7 +346,6 @@ function buildSiteItem(domain: string, list: 'allow'|'skip'): HTMLElement {
   return el;
 }
 
-// ── Regex Setup Logic ─────────────────────────────────────────────────────────
 function renderRegexes(list: any[]) {
   regexListEl.innerHTML = '';
   list.forEach((item, idx) => {
@@ -452,11 +455,9 @@ async function ensureVideoMediaData(item: any) {
 }
 
 function stripVideoTitle(title: string): string {
-  // Removes Youtube notification counts like "(1)" and " - YouTube" suffix
   return title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
 }
 
-// ── Queue Item UI ─────────────────────────────────────────────────────────────
 function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   const el = document.createElement('div');
   el.className = 'qi';
@@ -590,6 +591,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
         }
 
         dropdown.innerHTML = '';
+
         interface AniListSearchResultTitle {
           contentTitleNative?: string;
           contentTitleEnglish?: string;
@@ -936,6 +938,7 @@ async function checkAndSend(items: {id: string, el: HTMLElement}[], forceBypass 
       const hasMatch = isVideo
       ? !!(((item as QueuedVideoLog)?.channelId && (item as QueuedVideoLog).channelId !== 'web-video') || ((item as QueuedVideoLog)?.mediaData?.channelId && (item as QueuedVideoLog)!.mediaData!.channelId !== 'web-video'))
       : !!(mediaId && mediaId !== 'web-reading' && mediaId !== 'web-video');
+
       if (item && !hasMatch) {
         hasUntracked = true; break;
       }
@@ -1248,17 +1251,96 @@ resetReadersBtn.addEventListener('click', async () => {
   showStatus('✓ Defaults Restored');
 });
 
+// ── 6. Advanced / Debug Section ──────────────────────────────────────────────
+
+/**
+ * Renders the collected debug logs into the debug tab list.
+ */
+async function renderDebugLogs() {
+  const logs = await debugLogStorage.getValue() || [];
+  debugLogsList.innerHTML = logs.length === 0
+  ? '<div class="empty-state">No debug logs available.</div>'
+  : '';
+
+  logs.forEach(log => {
+    const dEl = document.createElement('div');
+    dEl.className = `debug-log ${log.level.toLowerCase()}`;
+    const timeStr = new Date(log.timestamp).toLocaleTimeString();
+
+    // We escape the content to prevent XSS while keeping the layout clean
+    dEl.innerHTML = `
+    <div>
+    <span class="debug-time">[${timeStr}]</span>
+    <span class="debug-src">${esc(log.source)}</span>
+    <strong>${esc(log.message)}</strong>
+    </div>
+    ${log.data ? `<div class="debug-data">${esc(log.data)}</div>` : ''}
+    `;
+    debugLogsList.appendChild(dEl);
+  });
+}
+
+// Toggle "Advanced" mode: shows/hides the Debug tab in the sidebar
+debugModeEl.addEventListener('change', async () => {
+  const cfg = await configStorage.getValue() as any;
+  await configStorage.setValue({ ...cfg, debugMode: debugModeEl.checked });
+
+  // Show or hide the navigation item in the sidebar
+  navDebugEl.style.display = debugModeEl.checked ? 'flex' : 'none';
+
+  // If we just enabled it, switch to it or refresh logs
+if (debugModeEl.checked) {
+  renderDebugLogs();
+} else {
+  // If we are currently on the debug tab and hide it, go back to queue
+  if (document.getElementById('tab-debug')?.classList.contains('active')) {
+    document.querySelector('[data-tab="queue"]')?.dispatchEvent(new MouseEvent('click'));
+  }
+}
+});
+
+// Clear button logic
+clearDebugBtn.addEventListener('click', async () => {
+  if (!confirm('Are you sure you want to clear all debug logs?')) return;
+  await debugLogStorage.setValue([]);
+  await renderDebugLogs();
+  showStatus('✓ Logs Cleared');
+});
+
+// Refresh button logic
+refreshDebugBtn.addEventListener('click', async () => {
+  await renderDebugLogs();
+  showStatus('✓ Refreshed');
+});
+
+// Make sure that clicking the "Debug" nav item refreshes the logs
+navDebugEl.addEventListener('click', () => {
+  renderDebugLogs();
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadConfig();
 renderQueue();
 
+// Listen for storage changes to update the UI live,
+// but don't re-render if the user is currently typing in an input.
+const activeInputSelector = '.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-vol:focus, .qi-session-chars:focus';
+
 readingQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-vol:focus, .qi-session-chars:focus')) {
+  if (!document.querySelector(activeInputSelector)) {
     renderQueue();
   }
 });
+
 videoQueueStorage.watch(() => {
-  if (!document.querySelector('.qi-desc:focus, .qi-mins:focus, .qi-session-mins:focus, .qi-session-date-input:focus, .qi-date-input:focus, .qi-chars:focus, .qi-vol:focus, .qi-session-chars:focus')) {
+  if (!document.querySelector(activeInputSelector)) {
     renderQueue();
+  }
+});
+
+// Watch for debug log updates if the tab is visible
+debugLogStorage.watch(() => {
+  if (debugModeEl.checked && document.getElementById('tab-debug')?.classList.contains('active')) {
+    renderDebugLogs();
   }
 });

@@ -1,5 +1,5 @@
 import { defineContentScript } from '#imports';
-import { configStorage, readingQueueStorage, ttuHistoryStorage, ttuLinkStorage } from '@/utils/storage';
+import { configStorage, readingQueueStorage, ttuHistoryStorage, ttuLinkStorage, addDebugLog } from '@/utils/storage';
 import '@/assets/overlay.css';
 import { submitLog } from '@/utils/api';
 
@@ -59,7 +59,16 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
 
   await new Promise(r => setTimeout(r, 1500));
   const sample = (document.body?.innerText ?? '').slice(0, 8000);
-  return (sample.match(JP_RE) ??[]).length >= 40;
+  const jpCount = (sample.match(JP_RE) ?? []).length;
+  const result = jpCount >= 40;
+
+  addDebugLog('INFO', 'TextTracker', `Page Analysis`, {
+    host,
+    japaneseCharsFound: jpCount,
+    isJapanese: result
+  });
+
+  return result;
 }
 
 function fmt(ms: number): string {
@@ -68,7 +77,6 @@ function fmt(ms: number): string {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-// ── TTU ───────────────────────────────────────────────────────────────────────
 const ttuState = {
   id: crypto.randomUUID(),
   running: false,
@@ -83,12 +91,11 @@ let isSyncing = false;
 
 function getTTUTitle() {
   let title = document.title;
-  // If running inside an iframe (like Manabe), grab the top-level title safely
   try {
     if (window.self !== window.top && window.top) {
       title = window.top.document.title || title;
     }
-  } catch (e) {} // Ignore cross-origin issues just in case
+  } catch (e) {}
   title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '');
   title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
   return title.trim() || document.title;
@@ -114,7 +121,6 @@ function parseTitle(docTitle: string) {
     } catch(e) {}
   }
 
-  // Fallback if none match:
   const fallback = docTitle.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
   if (fallback) {
     title = fallback[1].trim();
@@ -131,7 +137,6 @@ function extractTTUCharCount(): number | null {
     document.querySelector('article') ||
     document.body;
 
-    // Use semantic tags to avoid the "div slicing" issue in paginated mode
     const pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
       if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
       return (el.textContent || '').trim().length > 0;
@@ -143,27 +148,19 @@ function extractTTUCharCount(): number | null {
     const isVerticalRL = writingMode === 'vertical-rl';
     const isVerticalLR = writingMode === 'vertical-lr';
     const vw = window.innerWidth;
-    const vh = window.innerHeight;
 
     let exploredChars = 0;
-    let debugTextList: string[] =[];
-
     const getCleanedData = (node: Element) => {
       let text = '';
       const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
       let n;
       while ((n = walker.nextNode())) {
-        if (n.parentElement?.closest('rt, rp')) continue; // Ignore Furigana
+        if (n.parentElement?.closest('rt, rp')) continue;
         text += n.nodeValue || '';
       }
 
-      // STRICT PUNCTUATION DELETE: Keep only Letters (\p{L}) and Numbers (\p{N}).
-      // This removes brackets, periods, tildes (～), etc.
       const matches = text.match(/[\p{L}\p{N}]/gu) ||[];
-      return {
-        count: matches.length,
-        chars: matches.join('')
-      };
+      return { count: matches.length, chars: matches.join('') };
     };
 
     const isWhispersyncActive = document.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
@@ -176,54 +173,29 @@ function extractTTUCharCount(): number | null {
 
       let isExplored = false;
 
-      if (isVerticalRL) {
-        // TRAILING EDGE (Vertical RL):
-        // In TTU, read text moves to the RIGHT.
-        // A block is "read" only when its LEFT edge has passed the RIGHT side of the screen.
-        isExplored = rect.left >= (vw - 10);
-      } else if (isVerticalLR) {
-        // Text leaves through the left
-        isExplored = rect.right <= 10;
-      } else {
-        // TRAILING EDGE (Horizontal):
-        // Text moves up. A block is "read" when its BOTTOM edge has passed the TOP of the screen.
-        isExplored = rect.bottom <= 10;
-      }
+      if (isVerticalRL) isExplored = rect.left >= (vw - 10);
+      else if (isVerticalLR) isExplored = rect.right <= 10;
+      else isExplored = rect.bottom <= 10;
 
       if (isExplored) {
         const data = getCleanedData(el);
-        if (data.count > 0) {
-          exploredChars += data.count;
-          debugTextList.push(data.chars);
-        }
+        if (data.count > 0) exploredChars += data.count;
       } else if (isWhispersyncActive) {
-        // Partially explored <p>, accurately check inner whispersync chunks to allow live counting
         const wSpans = Array.from(el.querySelectorAll("[class^='ttu-whispersync-line-highlight-']")).filter(
           span => !span.parentElement?.closest("[class^='ttu-whispersync-line-highlight-']")
         );
-
         for (let j = 0; j < wSpans.length; j++) {
           const span = wSpans[j];
           const spanRect = span.getBoundingClientRect();
-
           if (spanRect.width === 0 || spanRect.height === 0) continue;
-
           let isSpanExplored = false;
-
-          if (isVerticalRL) {
-            isSpanExplored = spanRect.left >= (vw - 10);
-          } else if (isVerticalLR) {
-            isSpanExplored = spanRect.right <= 10;
-          } else {
-            isSpanExplored = spanRect.bottom <= 10;
-          }
+          if (isVerticalRL) isSpanExplored = spanRect.left >= (vw - 10);
+          else if (isVerticalLR) isSpanExplored = spanRect.right <= 10;
+          else isSpanExplored = spanRect.bottom <= 10;
 
           if (isSpanExplored) {
             const data = getCleanedData(span);
-            if (data.count > 0) {
-              exploredChars += data.count;
-              debugTextList.push(data.chars);
-            }
+            if (data.count > 0) exploredChars += data.count;
           }
         }
       }
@@ -249,6 +221,8 @@ async function liveSyncQueue() {
 
     const linkMap = await ttuLinkStorage.getValue() || {};
     const linkedMedia = linkMap[title];
+
+    await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { title, timeMs: ttuState.timeMs, chars: ttuState.chars });
 
     if (!existing) {
       existing = {
@@ -293,9 +267,10 @@ async function liveSyncQueue() {
 async function saveSessionAndQueue() {
   if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
 
+  await addDebugLog('INFO', 'TextTracker', `Saving explicit TTU session`, { chars: ttuState.chars, timeMs: ttuState.timeMs });
+
   const title = getTTUTitle();
   const dateStr = new Date().toISOString();
-  const secs = Math.round(ttuState.timeMs / 1000);
   const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
 
   const history = await ttuHistoryStorage.getValue() || {};
@@ -305,7 +280,6 @@ async function saveSessionAndQueue() {
 
   await liveSyncQueue();
 
-  // Reset State
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
@@ -327,13 +301,10 @@ function injectTTUStyles() {
   #nt-ttu-chrono-btn:hover { opacity: 0.7; color: #ffcc33 !important; }
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 1.7rem; height: 1.7rem; fill: currentColor; }
-
   #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; }
   #nt-ttu-dropdown.open { display: flex; }
-
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
   .nt-ttu-dd-title { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
-
   .nt-ttu-stats-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
   .nt-ttu-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
   .nt-ttu-stat-label { font-size: 10px; color: #999; }
@@ -341,14 +312,12 @@ function injectTTUStyles() {
   .nt-ttu-stat-val:hover { background: #333; border-color: #555; }
   .nt-ttu-stat-val.no-hover { cursor: default; }
   .nt-ttu-stat-val.no-hover:hover { background: transparent; border-color: transparent; }
-
   .nt-ttu-controls { display: flex; gap: 8px; justify-content: center; }
   .nt-ttu-btn-icon { background: transparent; color: #aaa; border: none; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border-radius: 50%; }
   .nt-ttu-btn-icon:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: #fff; }
   .nt-ttu-btn-icon.primary { color: #f0b429; }
   .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: #ffcc33; }
   .nt-ttu-btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
-
   .nt-ttu-linker { margin-top: 12px; border-top: 1px solid #3a3a3a; padding-top: 12px; }
   .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: #3ddc84; padding: 4px 6px; border-radius: 4px; transition: background .15s; background: rgba(61,220,132,0.05); }
   .nt-ttu-link-compact-inner { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; }
@@ -359,7 +328,6 @@ function injectTTUStyles() {
   .nt-ttu-vol-pill:hover { opacity: 1; }
   .nt-ttu-vol-pill:active { transform: scale(0.98); }
   .nt-ttu-link-compact-inner svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-
   .nt-ttu-link-edit { display: flex; flex-direction: column; gap: 6px; position: relative; }
   .nt-ttu-link-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
   .nt-ttu-link-vol-anchor { display: flex; align-items: center; flex: 0 0 auto; }
@@ -377,7 +345,6 @@ function injectTTUStyles() {
   .nt-ttu-link-cover { width: 20px; height: 30px; object-fit: cover; border-radius: 2px; }
   .nt-ttu-link-info { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
   .nt-ttu-link-t { font-size: 10px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
   .nt-ttu-history { border-top: 1px solid #3a3a3a; font-size: 12px; }
   .nt-ttu-history summary { padding: 10px 12px; cursor: pointer; color: #aaa; outline: none; user-select: none; transition: background 0.2s; }
   .nt-ttu-history summary:hover { background: #2f2f2f; color: #fff; }
@@ -414,18 +381,9 @@ function setupTTUChronometer() {
   <div class="nt-ttu-dd-section">
   <div class="nt-ttu-dd-title">Current Session</div>
   <div class="nt-ttu-stats-row">
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Time</span>
-  <span class="nt-ttu-stat-val" id="nt-ttu-val-time" title="Edit">0:00</span>
-  </div>
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Chars</span>
-  <span class="nt-ttu-stat-val" id="nt-ttu-val-chars" title="Edit">0</span>
-  </div>
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Speed</span>
-  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-val-speed">0 c/m</span>
-  </div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Time</span><span class="nt-ttu-stat-val" id="nt-ttu-val-time" title="Edit">0:00</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Chars</span><span class="nt-ttu-stat-val" id="nt-ttu-val-chars" title="Edit">0</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Speed</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-val-speed">0 c/m</span></div>
   </div>
   <div class="nt-ttu-controls">
   <button class="nt-ttu-btn-icon" id="nt-ttu-btn-toggle" title="Play/Pause"><svg viewBox="0 0 24 24"><path id="nt-ttu-play-path" d="M8 5v14l11-7z"/></svg></button>
@@ -433,17 +391,13 @@ function setupTTUChronometer() {
   <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-log" title="Save & Queue"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg></button>
   <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-direct" title="Match media to send directly" disabled style="opacity: 0.3; cursor: not-allowed;"><svg style="width: 16px; height: 16px;" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
   </div>
-
   <div class="nt-ttu-linker" id="nt-ttu-linker-sec">
   <div class="nt-ttu-link-compact" id="nt-ttu-link-compact" style="display:none">
   <div class="nt-ttu-link-compact-inner" id="nt-ttu-link-label-wrap" title="Click to edit">
-  <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg>
-  <span id="nt-ttu-link-label">Linked to AniList</span>
+  <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"></path></svg><span id="nt-ttu-link-label">Linked to AniList</span>
   </div>
   <button type="button" id="nt-ttu-vol-pill" class="nt-ttu-vol-pill" title="Volume">Vol 1</button>
-  <button id="nt-ttu-unlink-btn" class="nt-ttu-unlink-btn" title="Unlink Media">
-  <svg style="width:12px; height:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-  </button>
+  <button id="nt-ttu-unlink-btn" class="nt-ttu-unlink-btn" title="Unlink Media"><svg style="width:12px; height:12px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
   </div>
   <div class="nt-ttu-link-edit" id="nt-ttu-link-edit">
   <div class="nt-ttu-link-edit-row">
@@ -456,27 +410,15 @@ function setupTTUChronometer() {
   <div class="nt-ttu-link-results" id="nt-ttu-link-results"></div>
   </div>
   </div>
-
   </div>
-
   <div class="nt-ttu-dd-section" style="border-top: 1px solid #3a3a3a; background: rgba(0,0,0,0.2);">
   <div class="nt-ttu-dd-title">Total Book Progress</div>
   <div class="nt-ttu-stats-row" style="margin-bottom:0;">
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Total Time</span>
-  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-time" style="color:#f0b429;">0m</span>
-  </div>
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Total Chars</span>
-  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-chars" style="color:#f0b429;">0</span>
-  </div>
-  <div class="nt-ttu-stat">
-  <span class="nt-ttu-stat-label">Avg Speed</span>
-  <span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-speed" style="color:#f0b429;">0 c/m</span>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Time</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-time" style="color:#f0b429;">0m</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Chars</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-chars" style="color:#f0b429;">0</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Avg Speed</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-speed" style="color:#f0b429;">0 c/m</span></div>
   </div>
   </div>
-  </div>
-
   <details class="nt-ttu-history" id="nt-ttu-history-wrap">
   <summary>Past Sessions History</summary>
   <div class="nt-ttu-history-list" id="nt-ttu-history-list"></div>
@@ -507,19 +449,12 @@ function setupTTUChronometer() {
   const volPill = wrapper.querySelector('#nt-ttu-vol-pill') as HTMLButtonElement;
   const volAnchor = wrapper.querySelector('#nt-ttu-vol-anchor') as HTMLElement;
 
-  // Prevent drag/scroll interaction bugs inside results
   linkResults.addEventListener('mousedown', e => e.preventDefault());
   linkResults.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
-
-  // Isolate keyboard input so typing won't trigger reader shortcuts
-  ['keydown', 'keyup', 'keypress'].forEach(evt => {
-    linkInput.addEventListener(evt, e => e.stopPropagation());
-  });
+  ['keydown', 'keyup', 'keypress'].forEach(evt => linkInput.addEventListener(evt, e => e.stopPropagation()));
 
   const historyList = wrapper.querySelector('#nt-ttu-history-list') as HTMLElement;
-  if (historyList) {
-    historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
-  }
+  if (historyList) historyList.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
 
   let cachedHistoryMins = 0;
   let cachedHistoryChars = 0;
@@ -536,43 +471,28 @@ function setupTTUChronometer() {
     const match = links[title];
 
     if (match && match.mediaId) {
-      linkerEdit.style.display = 'none';
-      linkerCompact.style.display = 'flex';
+      linkerEdit.style.display = 'none'; linkerCompact.style.display = 'flex';
       linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
-      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query; // keep populated
+      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query;
       const v = Math.max(1, Number(match.volume || 1));
       volPill.textContent = `Vol ${v}`;
       const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
-      if (unlinkBtn && volPill.parentElement !== linkerCompact) {
-        linkerCompact.insertBefore(volPill, unlinkBtn);
-      }
+      if (unlinkBtn && volPill.parentElement !== linkerCompact) linkerCompact.insertBefore(volPill, unlinkBtn);
 
       if (getReaderConfig(currentConfig).directSend) {
-        btnDirect.disabled = false;
-        btnDirect.style.opacity = '1';
-        btnDirect.style.cursor = 'pointer';
-        btnDirect.title = 'Send session to NT directly';
+        btnDirect.disabled = false; btnDirect.style.opacity = '1'; btnDirect.style.cursor = 'pointer'; btnDirect.title = 'Send session to NT directly';
       } else {
-        btnDirect.disabled = true;
-        btnDirect.style.opacity = '0.3';
-        btnDirect.style.cursor = 'not-allowed';
-        btnDirect.title = 'Direct send disabled in settings';
+        btnDirect.disabled = true; btnDirect.style.opacity = '0.3'; btnDirect.style.cursor = 'not-allowed'; btnDirect.title = 'Direct send disabled in settings';
       }
     } else {
-      linkerEdit.style.display = 'flex';
-      linkerCompact.style.display = 'none';
+      linkerEdit.style.display = 'flex'; linkerCompact.style.display = 'none';
       linkInput.value = parseTitle(title).query;
       const { volume } = parseTitle(title);
       const v = Math.max(1, Number(volume || Number((volPill.textContent || '').replace(/\D/g, '')) || 1));
       volPill.textContent = `Vol ${v}`;
-      if (volAnchor && volPill.parentElement !== volAnchor) {
-        volAnchor.appendChild(volPill);
-      }
+      if (volAnchor && volPill.parentElement !== volAnchor) volAnchor.appendChild(volPill);
 
-      btnDirect.disabled = true;
-      btnDirect.style.opacity = '0.3';
-      btnDirect.style.cursor = 'not-allowed';
-      btnDirect.title = 'Match media to send directly';
+      btnDirect.disabled = true; btnDirect.style.opacity = '0.3'; btnDirect.style.cursor = 'not-allowed'; btnDirect.title = 'Match media to send directly';
     }
   };
 
@@ -588,64 +508,38 @@ function setupTTUChronometer() {
 
     const current = getVolFromPill();
     const input = document.createElement('input');
-    input.type = 'text';
-    input.inputMode = 'numeric';
-    input.autocomplete = 'off';
-    input.spellcheck = false;
-    input.className = 'nt-ttu-vol-input';
-    input.value = String(current);
+    input.type = 'text'; input.inputMode = 'numeric'; input.autocomplete = 'off'; input.spellcheck = false;
+    input.className = 'nt-ttu-vol-input'; input.value = String(current);
 
     volPill.style.display = 'none';
     volPill.insertAdjacentElement('afterend', input);
-    input.focus();
-    input.select();
+    input.focus(); input.select();
 
-    const cleanup = () => {
-      input.remove();
-      volPill.style.display = '';
-      (volPill as any)._editing = false;
-    };
-
+    const cleanup = () => { input.remove(); volPill.style.display = ''; (volPill as any)._editing = false; };
     const commit = async () => {
       const next = Math.max(1, Number(String(input.value || '').replace(/\D/g, '')) || 1);
       volPill.textContent = `Vol ${next}`;
-
       const title = getTTUTitle();
       const links = await ttuLinkStorage.getValue() || {};
-      if (links[title]) {
-        links[title].volume = next;
-        await ttuLinkStorage.setValue(links);
-      }
+      if (links[title]) { links[title].volume = next; await ttuLinkStorage.setValue(links); }
 
       const queue = await readingQueueStorage.getValue();
       const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
-      if (existing) {
-        existing.volume = next;
-        await readingQueueStorage.setValue(queue);
-      }
+      if (existing) { existing.volume = next; await readingQueueStorage.setValue(queue); }
     };
 
     input.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
-      if (ev.key === 'Enter') {
-        ev.preventDefault();
-        void commit().finally(cleanup);
-      }
-      if (ev.key === 'Escape') {
-        ev.preventDefault();
-        cleanup();
-      }
+      if (ev.key === 'Enter') { ev.preventDefault(); void commit().finally(cleanup); }
+      if (ev.key === 'Escape') { ev.preventDefault(); cleanup(); }
     });
     input.addEventListener('blur', () => { void commit().finally(cleanup); });
   });
 
   linkerLabelWrap.addEventListener('click', () => {
-    linkerCompact.style.display = 'none';
-    linkerEdit.style.display = 'flex';
-  if (volAnchor && volPill.parentElement !== volAnchor) {
-    volAnchor.appendChild(volPill);
-  }
-  linkInput.focus();
+    linkerCompact.style.display = 'none'; linkerEdit.style.display = 'flex';
+    if (volAnchor && volPill.parentElement !== volAnchor) volAnchor.appendChild(volPill);
+    linkInput.focus();
   });
 
   wrapper.querySelector('#nt-ttu-unlink-btn')!.addEventListener('click', async (e) => {
@@ -657,12 +551,7 @@ function setupTTUChronometer() {
 
     const queue = await readingQueueStorage.getValue();
     const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
-    if (existing) {
-      existing.mediaId = 'web-reading';
-      existing.mediaData = null;
-      await readingQueueStorage.setValue(queue);
-    }
-
+    if (existing) { existing.mediaId = 'web-reading'; existing.mediaData = null; await readingQueueStorage.setValue(queue); }
     refreshLinkerUI();
   });
 
@@ -684,10 +573,7 @@ function setupTTUChronometer() {
         const data = await res.json();
         const results = Array.isArray(data) ? data : (data.data ??[]);
 
-        if (results.length === 0) {
-          linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
-          return;
-        }
+        if (results.length === 0) { linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>'; return; }
 
         linkResults.innerHTML = '';
     results.forEach((m: any) => {
@@ -709,17 +595,12 @@ function setupTTUChronometer() {
 
       const links = await ttuLinkStorage.getValue() || {};
       links[title] = {
-        mediaId: m.contentId,
-        volume: selectedVolume,
+        mediaId: m.contentId, volume: selectedVolume,
         mediaData: {
-          contentId: m.contentId,
-          contentTitleNative: native,
+          contentId: m.contentId, contentTitleNative: native,
           contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
           contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-          contentImage: img,
-          coverImage: img,
-          chapters: m.chapters,
-          volumes: m.volumes,
+          contentImage: img, coverImage: img, chapters: m.chapters, volumes: m.volumes,
         }
       };
       await ttuLinkStorage.setValue(links);
@@ -727,36 +608,24 @@ function setupTTUChronometer() {
       const queue = await readingQueueStorage.getValue();
       const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
       if (existing) {
-        existing.mediaId = m.contentId;
-        existing.volume = selectedVolume;
-        existing.mediaData = links[title].mediaData;
-        existing.contentTitleNative = native;
-        existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+        existing.mediaId = m.contentId; existing.volume = selectedVolume; existing.mediaData = links[title].mediaData;
+        existing.contentTitleNative = native; existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
         existing.description = native;
         await readingQueueStorage.setValue(queue);
       }
 
       linkResults.classList.remove('open');
       refreshLinkerUI();
-
       if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
     });
       linkResults.appendChild(row);
     });
-      } catch {
-        linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
-      }
+      } catch { linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>'; }
     }, 400);
   };
 
   linkInput.addEventListener('input', performLinkSearch);
-  linkInput.addEventListener('focus', () => {
-    if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) {
-      linkResults.classList.add('open');
-    } else {
-      performLinkSearch();
-    }
-  });
+  linkInput.addEventListener('focus', () => { if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) linkResults.classList.add('open'); else performLinkSearch(); });
   linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
 
   const updateHistoryData = async () => {
@@ -789,12 +658,9 @@ function setupTTUChronometer() {
           historyNow[currentTitle] = curr.filter((s: any) => s.id !== sessionId);
           await ttuHistoryStorage.setValue(historyNow);
 
-          // If this past session is still represented in the queue, delete that queued log too.
           const q = await readingQueueStorage.getValue();
           const filtered = q.filter((item: any) => !((item.sessions ||[]).some((s: any) => s.id === sessionId)));
-          if (filtered.length !== q.length) {
-            await readingQueueStorage.setValue(filtered);
-          }
+          if (filtered.length !== q.length) await readingQueueStorage.setValue(filtered);
 
           await updateHistoryData();
           updateUI();
@@ -809,41 +675,25 @@ function setupTTUChronometer() {
 
     const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
     const totalChars = cachedHistoryChars + ttuState.chars;
-
-    // Multiply the CPM result by 60 to get CPH
     const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
     const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
 
-    speedVal.textContent = sessSpeed + '/h';
-    totalSpeedVal.textContent = totSpeed + '/h';
-
+    speedVal.textContent = sessSpeed + '/h'; totalSpeedVal.textContent = totSpeed + '/h';
     wrapper.querySelector('#nt-ttu-total-time')!.textContent = totalMins + 'm';
     wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
 
     const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
     const playSvg  = 'M8 5v14l11-7z';
-
     const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
     const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
 
-    if (playPath) {
-      playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-      toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer');
-    }
-    if (mainIconPath) {
-      mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
-    }
+    if (playPath) { playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg); toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer'); }
+    if (mainIconPath) mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
 
     if (getReaderConfig(currentConfig).autoSave !== false) {
-      btnLog.disabled = true;
-      btnLog.style.opacity = '0.3';
-      btnLog.style.cursor = 'not-allowed';
-      btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+      btnLog.disabled = true; btnLog.style.opacity = '0.3'; btnLog.style.cursor = 'not-allowed'; btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
     } else {
-      btnLog.disabled = false;
-      btnLog.style.opacity = '1';
-      btnLog.style.cursor = 'pointer';
-      btnLog.title = 'Save & Queue';
+      btnLog.disabled = false; btnLog.style.opacity = '1'; btnLog.style.cursor = 'pointer'; btnLog.title = 'Save & Queue';
     }
   };
 
@@ -851,13 +701,8 @@ function setupTTUChronometer() {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       const input = document.createElement('input');
-      input.type = 'text';
-      input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
-      Object.assign(input.style, {
-        width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff',
-        border: '1px solid #555', borderRadius: '4px', padding: '2px 4px',
-        fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box'
-      });
+      input.type = 'text'; input.value = isTime ? fmt(ttuState.timeMs) : ttuState.chars.toString();
+      Object.assign(input.style, { width: '100%', textAlign: 'center', background: '#1a1a1a', color: '#fff', border: '1px solid #555', borderRadius: '4px', padding: '2px 4px', fontFamily: 'monospace', fontSize: '14px', boxSizing: 'border-box' });
 
       const commit = () => {
         if (isTime) {
@@ -881,9 +726,7 @@ function setupTTUChronometer() {
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', ev => { if (ev.key === 'Enter') input.blur(); });
-      el.replaceWith(input);
-      input.focus();
-      input.select();
+      el.replaceWith(input); input.focus(); input.select();
     });
   };
 
@@ -894,42 +737,36 @@ function setupTTUChronometer() {
     e.stopPropagation();
     dropdown.classList.toggle('open');
     if (dropdown.classList.contains('open')) {
+      addDebugLog('INFO', 'TextTracker', `TTU Menu Opened`, {
+        bookTitle: getTTUTitle(),
+        sessionTime: ttuState.timeMs
+      });
       await updateHistoryData();
       await refreshLinkerUI();
+
     }
     updateUI();
   });
 
   btn.addEventListener('dblclick', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     ttuState.running = !ttuState.running;
     if (ttuState.running) {
       const currentCount = extractTTUCharCount();
-      if (currentCount !== null) {
-        const oldDiff = ttuState.chars - globalManualCharOffset;
-        globalSessionStartChar = currentCount - oldDiff;
-      }
+      if (currentCount !== null) globalSessionStartChar = currentCount - (ttuState.chars - globalManualCharOffset);
       globalLastTick = Date.now();
     }
     updateUI();
   });
 
-  document.addEventListener('click', (e) => {
-    if (!e.composedPath().includes(wrapper)) {
-      dropdown.classList.remove('open');
-    }
-  });
+  document.addEventListener('click', (e) => { if (!e.composedPath().includes(wrapper)) dropdown.classList.remove('open'); });
 
   toggleBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     ttuState.running = !ttuState.running;
     if (ttuState.running) {
       const currentCount = extractTTUCharCount();
-      if (currentCount !== null) {
-        const oldDiff = ttuState.chars - globalManualCharOffset;
-        globalSessionStartChar = currentCount - oldDiff;
-      }
+      if (currentCount !== null) globalSessionStartChar = currentCount - (ttuState.chars - globalManualCharOffset);
       globalLastTick = Date.now();
     }
     updateUI();
@@ -937,8 +774,7 @@ function setupTTUChronometer() {
 
   wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
     e.stopPropagation();
-    ttuState.timeMs = 0;
-    ttuState.chars = 0;
+    ttuState.timeMs = 0; ttuState.chars = 0;
     const currentCount = extractTTUCharCount();
     globalSessionStartChar = currentCount !== null ? currentCount : -1;
     globalManualCharOffset = 0;
@@ -948,9 +784,7 @@ function setupTTUChronometer() {
   btnLog.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (getReaderConfig(currentConfig).autoSave !== false) return;
-    await saveSessionAndQueue();
-    await updateHistoryData();
-    updateUI();
+    await saveSessionAndQueue(); await updateHistoryData(); updateUI();
   });
 
   btnDirect.addEventListener('click', async (e) => {
@@ -964,24 +798,12 @@ function setupTTUChronometer() {
 
     const secs = Math.round(ttuState.timeMs / 1000);
     try {
-      // Direct POST payload to NihongoTracker
       const ok = await submitLog({
-        type: 'reading',
-        mediaId: linkedMedia.mediaId,
-        mediaData: linkedMedia.mediaData,
-        description: linkedMedia.mediaData.contentTitleNative || title,
-        chars: ttuState.chars,
-        time: Math.round(secs / 60),
-                                 date: new Date().toISOString(),
-                                 episodes: 0,
-                                 pages: 0,
-                                 volume: linkedMedia.volume || 1,
-                                 private: false,
-                                   tags:[]
+        type: 'reading', mediaId: linkedMedia.mediaId, mediaData: linkedMedia.mediaData, description: linkedMedia.mediaData.contentTitleNative || title,
+        chars: ttuState.chars, time: Math.round(secs / 60), date: new Date().toISOString(), episodes: 0, pages: 0, volume: linkedMedia.volume || 1, private: false, tags:[]
       });
       if (!ok) return;
 
-      // Process history visually
       const dateStr = new Date().toISOString();
       const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
       const history = await ttuHistoryStorage.getValue() || {};
@@ -989,20 +811,13 @@ function setupTTUChronometer() {
       history[title].push(sessionLog);
       await ttuHistoryStorage.setValue(history);
 
-      // Hard Reset
-      ttuState.id = crypto.randomUUID();
-      ttuState.timeMs = 0;
-      ttuState.chars = 0;
+      ttuState.id = crypto.randomUUID(); ttuState.timeMs = 0; ttuState.chars = 0;
       const currentCount = extractTTUCharCount();
       globalSessionStartChar = currentCount !== null ? currentCount : -1;
-      globalManualCharOffset = 0;
-      ttuState.running = false;
+      globalManualCharOffset = 0; ttuState.running = false;
 
-      await updateHistoryData();
-      updateUI();
-    } catch (err) {
-      showToast('Failed to send log', true);
-    }
+      await updateHistoryData(); updateUI();
+    } catch (err) { showToast('Failed to send log', true); }
   });
 
   (window as any).ntChronoInterval = setInterval(() => {
@@ -1018,10 +833,7 @@ function setupTTUChronometer() {
       }
       globalLastTick = now;
       updateUI();
-
-      if (getReaderConfig(currentConfig).autoSave !== false) {
-        liveSyncQueue();
-      }
+      if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
     } else if (ttuState.running && document.hidden) {
       globalLastTick = Date.now();
     }
@@ -1036,34 +848,18 @@ function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
   const footer = document.getElementById('ttu-page-footer');
-
   if (footer) {
     const flexGroups = Array.from(footer.children).filter(el =>
-    el.classList.contains('flex') &&
-    !el.classList.contains('fixed') &&
-    !el.classList.contains('absolute') &&
-    el.id !== 'nt-ttu-chrono-wrapper'
-    );
-    if (flexGroups.length > 0) {
-      return { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' };
-    }
+    el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
+    if (flexGroups.length > 0) return { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' };
     return { el: footer, pos: 'afterbegin' };
   }
 
-  // Fallback for TTU forks like Manabe / Yatsu
   const progressDiv = document.querySelector('div[title="Click to copy Progress"]');
   if (progressDiv && progressDiv.parentElement) {
     const container = progressDiv.parentElement;
-    // The icons are grouped in a left-aligned flex container
-    const leftGroup = Array.from(container.children).find(el =>
-    el.classList.contains('flex') &&
-    el.classList.contains('h-full') &&
-    el.id !== 'nt-ttu-chrono-wrapper'
-    );
-    if (leftGroup) {
-      return { el: leftGroup, pos: 'beforeend' };
-    }
-    // Fallback to container itself
+    const leftGroup = Array.from(container.children).find(el => el.classList.contains('flex') && el.classList.contains('h-full') && el.id !== 'nt-ttu-chrono-wrapper');
+    if (leftGroup) return { el: leftGroup, pos: 'beforeend' };
     return { el: container, pos: 'afterbegin' };
   }
 
@@ -1087,10 +883,8 @@ function showToast(msg: string, err = false) {
   Object.assign(el.style, {
     position:'fixed',bottom:'20px',right:'20px',zIndex:'2147483647',
     background: err ? '#1a0f0f' : '#0f1a0f', color: err ? '#f0706a' : '#3ddc84',
-    border: `1px solid ${err ? 'rgba(240,112,106,.4)' : 'rgba(61,220,132,.4)'}`,
-                borderRadius:'5px',padding:'9px 15px', fontFamily:"'Courier New',monospace",
-                fontSize:'13px', boxShadow:'0 4px 20px rgba(0,0,0,.6)',
-                writingMode: 'horizontal-tb', direction: 'ltr', textAlign: 'left', lineHeight: '1.4'
+    border: `1px solid ${err ? 'rgba(240,112,106,.4)' : 'rgba(61,220,132,.4)'}`, borderRadius:'5px',padding:'9px 15px', fontFamily:"'Courier New',monospace",
+                fontSize:'13px', boxShadow:'0 4px 20px rgba(0,0,0,.6)', writingMode: 'horizontal-tb', direction: 'ltr', textAlign: 'left', lineHeight: '1.4'
   });
   el.textContent = msg;
   document.body.appendChild(el);
@@ -1137,6 +931,11 @@ function startTimeTracker() {
 }
 
 function buildOverlay(cfg: any) {
+  addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
+    url: window.location.href,
+    pos: cfg.overlayPosition
+  });
+
   if (websiteOverlayDismissed) {
     const existing = document.getElementById('nt-overlay');
     if (existing) existing.style.display = 'none';
@@ -1156,14 +955,8 @@ function buildOverlay(cfg: any) {
     const resetBtn = document.createElement('button');
     resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
     const closeBtn = document.createElement('button');
-    closeBtn.className = 'nt-close';
-    closeBtn.textContent = '×';
-    closeBtn.title = 'Hide overlay (until reload)';
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      websiteOverlayDismissed = true;
-      overlay!.style.display = 'none';
-    });
+    closeBtn.className = 'nt-close'; closeBtn.textContent = '×'; closeBtn.title = 'Hide overlay (until reload)';
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); websiteOverlayDismissed = true; overlay!.style.display = 'none'; });
 
     overlay.append(handle, timeEl, pauseBtn, resetBtn, closeBtn);
     document.body.appendChild(overlay);
@@ -1214,11 +1007,8 @@ function buildOverlay(cfg: any) {
   if (pos === 'bottom-left')  { overlay.style.bottom = '16px'; overlay.style.left = '16px'; }
   if (pos === 'bottom-right') { overlay.style.bottom = '16px'; overlay.style.right = '16px'; }
 
-  if (cfg.overlayPosition === 'hidden') {
-    overlay.style.display = 'none';
-  } else {
-    overlay.style.display = 'flex';
-  }
+  if (cfg.overlayPosition === 'hidden') overlay.style.display = 'none';
+  else overlay.style.display = 'flex';
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -1230,7 +1020,6 @@ browser.storage.onChanged.addListener((changes, area) => {
     if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       const oldReaderCfg = getReaderConfig(oldCfg);
       const newReaderCfg = getReaderConfig(newCfg);
-
       const wasEnabled = oldReaderCfg.enabled;
       const isEnabled = newReaderCfg.enabled;
 
@@ -1245,17 +1034,10 @@ browser.storage.onChanged.addListener((changes, area) => {
       const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
       if (wrapper) {
         const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
-
         if (isEnabled && newReaderCfg.autoSave !== false) {
-          btnLog.disabled = true;
-          btnLog.style.opacity = '0.3';
-          btnLog.style.cursor = 'not-allowed';
-          btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
+          btnLog.disabled = true; btnLog.style.opacity = '0.3'; btnLog.style.cursor = 'not-allowed'; btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
         } else if (isEnabled) {
-          btnLog.disabled = false;
-          btnLog.style.opacity = '1';
-          btnLog.style.cursor = 'pointer';
-          btnLog.title = 'Save & Queue';
+          btnLog.disabled = false; btnLog.style.opacity = '1'; btnLog.style.cursor = 'pointer'; btnLog.title = 'Save & Queue';
         }
       }
     } else {
@@ -1265,12 +1047,8 @@ browser.storage.onChanged.addListener((changes, area) => {
         return;
       }
       isJapanesePage(newCfg).then(isJP => {
-        if (isJP && newCfg.overlayPosition !== 'hidden') {
-          buildOverlay(newCfg);
-        } else {
-          const overlay = document.getElementById('nt-overlay');
-          if (overlay) overlay.style.display = 'none';
-        }
+        if (isJP && newCfg.overlayPosition !== 'hidden') buildOverlay(newCfg);
+        else { const overlay = document.getElementById('nt-overlay'); if (overlay) overlay.style.display = 'none'; }
       });
     }
   }
@@ -1281,8 +1059,7 @@ browser.storage.onChanged.addListener((changes, area) => {
     const exists = queue.some((q: any) => q.originalTitle === title || q.contentTitleNative === title);
 
     if (!exists && ttuState.timeMs > 0) {
-      ttuState.timeMs = 0;
-      ttuState.chars = 0;
+      ttuState.timeMs = 0; ttuState.chars = 0;
       const currentCount = extractTTUCharCount();
       globalSessionStartChar = currentCount !== null ? currentCount : -1;
       globalManualCharOffset = 0;
@@ -1302,7 +1079,6 @@ export default defineContentScript({
 
   async main() {
     currentConfig = await configStorage.getValue() || {};
-
     const host = window.location.hostname;
     const cfg  = currentConfig;
 
@@ -1316,13 +1092,11 @@ export default defineContentScript({
     }
 
     if (isWebsiteOverlaySkipped(cfg)) return;
-
     startTimeTracker();
     if (cfg.overlayPosition === 'hidden') return;
 
     const isJP = await isJapanesePage(cfg);
     if (!isJP) return;
-
     buildOverlay(cfg);
   },
 });

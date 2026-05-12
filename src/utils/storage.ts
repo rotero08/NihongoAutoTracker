@@ -14,10 +14,10 @@ export interface TrackerConfig {
   trackTime: boolean;
   hideButtons: boolean;
   hideIfNotJapanese?: boolean;
-  hideMusic?: boolean; // NEW: Toggle hiding log badge on music videos
+  hideMusic?: boolean;
   overlayPosition: OverlayPosition;
   showTotalInBadge: boolean;
-  ttuEnabled: boolean; // Required explicitly for defaults to apply flawlessly
+  ttuEnabled: boolean;
   ttuAutoSave?: boolean;
   ttuDirectSend?: boolean;
   allowSites?: string[];
@@ -25,6 +25,7 @@ export interface TrackerConfig {
   allowListOnly?: boolean;
   warnUntracked?: boolean;
   autoSendEndOfDay?: boolean;
+  debugMode?: boolean; // NEW
 }
 
 export interface QueuedVideoLog {
@@ -72,6 +73,14 @@ export interface TTULink {
   mediaData: any;
 }
 
+export interface DebugLog {
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  source: string;
+  message: string;
+  data?: string;
+}
+
 export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
   defaultValue: {
     apiKey: '',
@@ -84,25 +93,40 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     hideMusic: false,
     overlayPosition: 'top-right',
     showTotalInBadge: true,
-    ttuEnabled: true, // Defaults to ON immediately.
+    ttuEnabled: true,
     ttuAutoSave: true,
     warnUntracked: true,
     autoSendEndOfDay: false,
+    debugMode: false,
   },
 });
 
-export const videoQueueStorage = storage.defineItem<QueuedVideoLog[]>('local:videoQueue', {
-  defaultValue:[],
-});
+export const videoQueueStorage = storage.defineItem<QueuedVideoLog[]>('local:videoQueue', { defaultValue:[] });
+export const readingQueueStorage = storage.defineItem<QueuedReadingLog[]>('local:readingQueue', { defaultValue:[] });
+export const ttuHistoryStorage = storage.defineItem<Record<string, TTUHistorySession[]>>('local:ttuHistory', { defaultValue: {} });
+export const ttuLinkStorage = storage.defineItem<Record<string, TTULink>>('local:ttuLink', { defaultValue: {} });
 
-export const readingQueueStorage = storage.defineItem<QueuedReadingLog[]>('local:readingQueue', {
-  defaultValue:[],
-});
+export const debugLogStorage = storage.defineItem<DebugLog[]>('local:debugLogs', { defaultValue:[] });
 
-export const ttuHistoryStorage = storage.defineItem<Record<string, TTUHistorySession[]>>('local:ttuHistory', {
-  defaultValue: {},
-});
-
-export const ttuLinkStorage = storage.defineItem<Record<string, TTULink>>('local:ttuLink', {
-  defaultValue: {},
-});
+// ALWAYS COLLECTS LOGS - Masks API Key context dynamically
+export async function addDebugLog(level: 'INFO'|'WARN'|'ERROR', source: string, message: string, data?: any) {
+  try {
+    const logs = await debugLogStorage.getValue() ||[];
+    let dataStr = undefined;
+    if (data !== undefined) {
+      try {
+        dataStr = typeof data === 'string' ? data : JSON.stringify(data);
+        dataStr = dataStr.replace(/"X-API-Key":"[^"]+"/g, '"X-API-Key":"***"');
+        dataStr = dataStr.replace(/"apiKey":"[^"]+"/g, '"apiKey":"***"');
+      } catch (e) {
+        dataStr = String(data);
+      }
+    }
+    logs.unshift({ timestamp: new Date().toISOString(), level, source, message, data: dataStr });
+    if (logs.length > 200) logs.length = 200; // Limit memory footprint
+    await debugLogStorage.setValue(logs);
+    console.log(`[NT-DEBUG] [${level}] ${source}: ${message}`, data || '');
+  } catch (e) {
+    console.error('Failed to write debug log', e);
+  }
+}

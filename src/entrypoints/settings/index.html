@@ -12,7 +12,7 @@
   <nav class="sidebar">
     <div class="brand">
       <div class="brand-mark">日</div>
-      <div><div class="brand-name">NihongoAutoTracker</div><div class="brand-ver">v3.2.0</div></div>
+      <div><div class="brand-name">NihongoAutoTracker</div><div class="brand-ver">v3.3.0</div></div>
     </div>
     <div class="nav-group">
 
@@ -41,6 +41,21 @@
         Readers
       </a>
 
+      <!-- NEW DEBUG TAB -->
+      <a class="nav-item" id="nav-debug" data-tab="debug" style="display:none">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        Debug
+      </a>
+
+    </div>
+
+    <!-- ADVANCED OPTION TOGGLE -->
+    <div style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--bdr);">
+      <label class="toggle" style="font-size: 11px;">
+        <input type="checkbox" id="debug-mode" class="toggle-chk"/>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        Advanced
+      </label>
     </div>
   </nav>
 
@@ -348,7 +363,6 @@
       </div>
 
       <!-- Regex Rules -->
-      <!-- Regex Rules -->
       <div class="sites-group" style="margin-top: 24px; margin-bottom: 8px;">
         <div class="sites-toggle-head" data-group="regex">
           <div class="sites-head-left">
@@ -373,6 +387,21 @@
 
       <div style="display:flex; gap:10px; margin-top: 24px;">
         <button id="reset-readers-btn" class="btn btn-ghost">Revert to Default</button>
+      </div>
+    </section>
+
+    <!-- Debug (Advanced) Tab -->
+    <section class="tab" id="tab-debug">
+      <div class="tab-head">
+        <h2>System Debug Logs</h2>
+        <div class="tab-actions">
+          <button id="clear-debug-btn" class="btn btn-ghost btn-sm">Clear Logs</button>
+          <button id="refresh-debug-btn" class="btn btn-amber btn-sm">Refresh</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:0">Logs are continually collected locally to help diagnose tracking or API issues.</p>
+      <div class="debug-container" id="debug-logs-list">
+        <!-- Logs dynamically populated -->
       </div>
     </section>
 
