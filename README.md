@@ -41,7 +41,7 @@ Track your reading progress actively and seamlessly sync with popular web reader
 * **Context Menu:** Automatically calculates characters and tracks your active reading time on the tab via a sleek, draggable overlay. Highlight Japanese text, right-click, and log it.
 
 <p align="center">
-  <img width="600" alt="Context menu logging showing 'Log to NihongoTracker" src="https://github.com/user-attachments/assets/24ecc674-f234-41be-bf1b-ea9d2f47e89f" />
+  <img width="600" alt="Context menu logging showing 'Log to NihongoTracker" src="https://github.com/user-attachments/assets/229c4c16-6fe4-4b70-8923-edb5da4342ee" />
 </p>
 
 ### Robust Queue System
@@ -59,7 +59,7 @@ Logs don't have to be sent immediately. They are stored in a local queue, giving
       <td align="center"><b>Full Dashboard View</b></td>
     </tr>
     <tr>
-      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/d0c7969d-9b8b-4cf8-a18f-ba2132e9ae47" /></td>
+      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/3151fdd7-4498-448b-9572-652374fa728b" /></td>
       <td valign="top"><img width="450" alt="Full Settings and Queue Page" src="https://github.com/user-attachments/assets/8c8518e3-f571-4fc3-b067-d7bfbf1ecbcb" /></td>
     </tr>
   </table>
