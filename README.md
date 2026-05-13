@@ -10,7 +10,7 @@ Built with [WXT](https://wxt.dev/) and TypeScript.
 Logs are stored in a local queue, giving you complete control over your data before it hits the server. There are various options to automate the process.
 
 * **Session Management:** Group multiple short sessions of the same media together.
-* **Manual Overrides:** Edit time, character counts, and dates before hitting "Send".
+* **Manual Overrides:** Edit time, character counts, dates, volume and title before hitting "Send".
 * **Match Media:** If not previously match, you can optionally match it manually before sending. A green checkmark appears when matched.
 * **End-of-Day Sync:** Optionally set the extension to automatically flush your queue and send everything right before midnight.
 
