@@ -130,18 +130,51 @@ function isLikelyJapaneseCached(): boolean {
 function invalidateJpCache() { _jpCacheUrl = ''; _jpCacheResult = false; }
 
 // --- FIXED ROBUST CHANNEL EXTRACTORS ---
-function getYouTubeChannelId(): string | null {
+const ytApiCache: Record<string, any> = {};
+const ytApiInFlight: Record<string, Promise<any>> = {};
+
+async function fetchYouTubeVideoData(url: string) {
+  const clean = cleanUrl(url);
+  if (ytApiCache[clean]) return ytApiCache[clean];
+  if (ytApiInFlight[clean]) return ytApiInFlight[clean];
+
+  ytApiInFlight[clean] = (async () => {
+    try {
+      const res = await fetch(`https://nihongotracker.app/api/media/youtube/video?url=${encodeURIComponent(clean)}`, {
+        headers: { 'accept': '*/*' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        ytApiCache[clean] = data;
+        return data;
+      }
+    } catch (e) {
+      console.error('Failed to fetch YouTube data from API:', e);
+    } finally {
+      delete ytApiInFlight[clean];
+    }
+    return null;
+  })();
+
+  return ytApiInFlight[clean];
+}
+
+async function getYouTubeChannelId(): Promise<string | null> {
+  if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+    const data = await fetchYouTubeVideoData(window.location.href);
+    if (data?.channel?.contentId) return data.channel.contentId;
+  }
+
+  // Fallback: strictly scoped DOM selector
   const scripts = document.getElementsByTagName('script');
   for (let i = 0; i < scripts.length; i++) {
     const text = scripts[i].textContent;
-    // We strictly look for the channelId INSIDE the videoDetails block
     if (text && text.includes('videoDetails')) {
       const match = text.match(/"videoDetails":\{.*?"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
       if (match) return match[1];
       }
     }
 
-    // Fallback: strictly scoped DOM selector
     const ownerLink = document.querySelector('#owner ytd-video-owner-renderer a[href*="/channel/"]');
     if (ownerLink) {
       const m = ownerLink.getAttribute('href')?.match(/(UC[a-zA-Z0-9_-]{22})/);
@@ -150,28 +183,34 @@ function getYouTubeChannelId(): string | null {
     return null;
   }
 
-function getChannelNameFallback(): string {
-  // 1. Strict DOM selector - The #owner ID ensures we aren't looking at the playlist sidebar
+async function getChannelNameFallback(): Promise<string> {
+  if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+    const data = await fetchYouTubeVideoData(window.location.href);
+    if (data?.channel?.title) {
+      return data.channel.title.contentTitleNative || data.channel.title.contentTitleEnglish || '';
+    }
+  }
+
+  // Fallback: Strict DOM selector
   const ownerName = document.querySelector('#owner ytd-video-owner-renderer yt-formatted-string.ytd-channel-name');
   if (ownerName?.textContent?.trim()) return ownerName.textContent.trim();
 
-  // 2. Strict Script Scrape - Look for author ONLY inside videoDetails
   const scripts = document.getElementsByTagName('script');
   for (let i = 0; i < scripts.length; i++) {
     const text = scripts[i].textContent;
     if (text && text.includes('videoDetails')) {
       const match = text.match(/"videoDetails":\{.*?"author":"([^"]+)"/);
-      if (match) return match[1];
+        if (match) return match[1];
+      }
     }
+    return '';
   }
-  return '';
-}
-// ----------------------------------------
+    // ----------------------------------------
 
 const channelMediaCache: Record<string, any> = {};
 async function getChannelMediaData(chanId: string | null, fallbackTitle = '') {
   // If we don't have an ID yet, try one last time to grab it
-  const currentId = chanId || getYouTubeChannelId();
+  const currentId = chanId || await getYouTubeChannelId();
   const key = currentId || `title:${fallbackTitle}`;
 
   if (channelMediaCache[key]) return channelMediaCache[key];
@@ -212,7 +251,7 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
 
   let validChannelName = channelName;
   if (validChannelName === finalTitle || !validChannelName) {
-    validChannelName = getChannelNameFallback();
+    validChannelName = await getChannelNameFallback();
   }
 
   const queue = await videoQueueStorage.getValue();
@@ -493,11 +532,22 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
 
       const liveCfg = await configStorage.getValue() as any;
       const liveShowTotal = liveCfg.showTotalInBadge ?? true;
-      const channelName = cachedChannelName || getChannelNameFallback();
-      const finalTitle = stripVideoTitle(title);
+      const channelName = cachedChannelName || await getChannelNameFallback();
+
+      // --- FIX: Get the fresh title dynamically instead of using the stale closure ---
+      let finalTitle = stripVideoTitle(document.title);
+
+      // Safely try to use the exact native title from the new API
+      if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+        const data = await fetchYouTubeVideoData(window.location.href);
+        if (data?.video?.title) {
+          finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
+        }
+      }
+      // -------------------------------------------------------------------------------
 
       addDebugLog('INFO', 'VideoTracker', `Opening Manual Log Overlay`, {
-        videoTitle: title,
+        videoTitle: finalTitle,
         currentSecs,
         totalSecs
       });
@@ -577,9 +627,9 @@ export default defineContentScript({
         currentSessionId = crypto.randomUUID(); invalidateJpCache(); _lastCounterPaint = 0;
         document.getElementById('nt-status-badge')?.remove();
 
-        const tryChannel = () => {
-          const foundId = getYouTubeChannelId();
-          const foundName = getChannelNameFallback();
+        const tryChannel = async () => {
+          const foundId = await getYouTubeChannelId();
+          const foundName = await getChannelNameFallback();
 
           if (foundId && foundId !== channelId) {
             channelId = foundId;
@@ -595,8 +645,8 @@ export default defineContentScript({
         // Immediately try, then poll for a few seconds as YouTube loads metadata
         tryChannel();
         let pollCount = 0;
-        const poll = setInterval(() => {
-          tryChannel();
+        const poll = setInterval(async () => {
+          await tryChannel();
           if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
         }, 500);
 
@@ -623,7 +673,10 @@ export default defineContentScript({
 
           if (!autoOn && reachedQueueThreshold(cfg, liveSecs, vid) && (liveSecs - lastSyncSecs) >= 10) {
             lastSyncSecs = liveSecs;
-            if (isLikelyJapaneseCached() && !isMusic()) await upsertQueueLive(liveSecs, document.title, cachedChannelName || getChannelNameFallback(), currentUrl, channelId, currentSessionId);
+            if (isLikelyJapaneseCached() && !isMusic()) {
+              const chName = cachedChannelName || await getChannelNameFallback();
+              await upsertQueueLive(liveSecs, document.title, chName, currentUrl, channelId, currentSessionId);
+            }
           }
 
           if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
@@ -635,7 +688,8 @@ export default defineContentScript({
               if (triggered) {
                 state.hasTriggered = true;
                 const sessionMins = Math.max(1, Math.round(liveSecs / 60));
-                const mediaData = await getChannelMediaData(channelId, cachedChannelName || getChannelNameFallback());
+                const chName = cachedChannelName || await getChannelNameFallback();
+                const mediaData = await getChannelMediaData(channelId, chName);
                 const finalTitle = stripVideoTitle(document.title);
 
                 const ok = await submitLog({
