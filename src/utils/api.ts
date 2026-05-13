@@ -120,17 +120,16 @@ export async function resolveVideoChannelMedia(input: { channelId?: string; chan
   return { channelTitle: channelTitle || undefined };
 }
 
-export async function submitLog(payload: Record<string, unknown>): Promise<boolean> {
+export async function submitLog(payload: Record<string, unknown>): Promise<{success: boolean, status?: number, error?: string}> {
   const res = await browser.storage.local.get('config');
   const config = res.config as any;
   const apiKey = config?.apiKey ?? '';
 
   if (!apiKey) {
     notify('Failed! Missing API key', '');
-    return false;
+    return { success: false, error: 'Missing API key' };
   }
 
-  // Safety Fix: If the payload is sending "web-video" but the metadata actually has a real ID, correct it
   const mediaData = payload.mediaData as any;
   if (payload.mediaId === 'web-video' && mediaData?.channelId && mediaData.channelId !== 'web-video') {
     payload.mediaId = mediaData.channelId;
@@ -152,16 +151,17 @@ export async function submitLog(payload: Record<string, unknown>): Promise<boole
 
     if (response.ok) {
       await addDebugLog('INFO', 'API', `Log sent successfully`);
-      notify('Log sent to Nihongo Tracker', '');
-      return true;
+      notify('Success', 'Log sent to NihongoTracker!');
+      return { success: true, status: response.status };
     } else {
       const errorText = await response.text();
       await addDebugLog('ERROR', 'API', `Log failed with code ${response.status}`, errorText);
-      notify(`Failed! ${response.status}`, '');
-      return false;
+      notify(`Failed! ${response.status}`, errorText.slice(0, 100));
+      return { success: false, status: response.status, error: errorText };
     }
-  } catch (err) {
+  } catch (err: any) {
     await addDebugLog('ERROR', 'API', `Network error`, err);
-    return false;
+    notify('Failed!', err.message);
+    return { success: false, error: err.message };
   }
 }

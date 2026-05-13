@@ -23,6 +23,53 @@ document.querySelectorAll('.q-tab').forEach(btn => {
   });
 });
 
+function showConfirmModal(title: string, msg: string, warnKey: string | null = null): Promise<boolean> {
+  return new Promise(resolve => {
+    let modal = document.getElementById('generic-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'generic-modal';
+  Object.assign(modal.style, {
+    position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+    background: 'rgba(0,0,0,.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: '9999', opacity: '0', pointerEvents: 'none', transition: 'opacity .2s'
+  });
+  modal.innerHTML = `
+  <div style="background:var(--surf); border:1px solid var(--bdr2); border-radius:8px; padding:24px; max-width:320px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,.8);">
+  <h3 id="gm-title" style="color:var(--amber); font-size:14px; margin-bottom:12px;"></h3>
+  <p id="gm-desc" style="color:var(--text); margin-bottom:16px; line-height:1.6;"></p>
+  <label style="display:none; align-items:center; gap:8px; cursor:pointer; color:var(--text);" id="gm-warn-wrap">
+  <input type="checkbox" id="gm-warn-chk" style="accent-color:var(--amber);" /> Don't warn me again
+  </label>
+  <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+  <button id="gm-cancel" class="bulk-btn ghost" style="padding:6px 12px; font-size:12px;">Cancel</button>
+  <button id="gm-proceed" class="bulk-btn amber" style="padding:6px 12px; font-size:12px;">Proceed</button>
+  </div>
+  </div>`;
+  document.body.appendChild(modal);
+    }
+
+    document.getElementById('gm-title')!.textContent = title;
+    document.getElementById('gm-desc')!.textContent = msg;
+    const warnWrap = document.getElementById('gm-warn-wrap')!;
+    const warnChk = document.getElementById('gm-warn-chk') as HTMLInputElement;
+    if (warnKey) { warnWrap.style.display = 'flex'; warnChk.checked = false; }
+    else { warnWrap.style.display = 'none'; }
+
+    modal.style.opacity = '1'; modal.style.pointerEvents = 'auto';
+  const close = async (res: boolean) => {
+    modal!.style.opacity = '0'; modal!.style.pointerEvents = 'none';
+  if (res && warnKey && warnChk.checked) {
+    const cfg = await configStorage.getValue() as any;
+    await configStorage.setValue({ ...cfg, [warnKey]: false });
+  }
+  resolve(res);
+  };
+  document.getElementById('gm-cancel')!.onclick = () => close(false);
+  document.getElementById('gm-proceed')!.onclick = () => close(true);
+  });
+}
+
 function applyFilter() {
   const items = document.querySelectorAll('.qi');
   items.forEach(el => {
@@ -196,15 +243,30 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
 
   const payloads = getPayloadsForItem(item, el);
   let success = true;
-  for (const p of payloads) { if (!(await submitLog(p))) success = false; }
+  let lastError = '';
+  let lastErrorCode = 0;
+
+  for (const p of payloads) {
+    const res = await submitLog(p) as any;
+    if (res === true || res?.success === true) {
+      // success
+    } else {
+      success = false;
+      lastError = res?.error || 'Unknown error';
+      lastErrorCode = res?.status || 0;
+    }
+  }
 
   if (success) {
     await qStorage.setValue(q.filter((x: any) => x.id !== id) as any);
     el.classList.add('sent');
+    showStatus('✓ Sent');
     setTimeout(() => { el.remove(); refreshMeta(); }, 380);
   } else {
     el.classList.remove('sending');
     if(btn) btn.disabled = false;
+    const errText = lastErrorCode ? `⚠ Failed [${lastErrorCode}]: ${lastError}` : `⚠ Failed: ${lastError}`;
+    showStatus(errText, true);
   }
   return success;
 }
@@ -260,16 +322,18 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
 
   let sessionsHtml = '';
   if (sessions.length > 1) {
-    sessionsHtml = `<div class="qi-sessions">` + sessions.map((s, i) => `
+    const isClosed = localStorage.getItem(`nt-sess-closed-${item.id}`) === '1';
+    sessionsHtml = `<details class="qi-sessions" ${isClosed ? '' : 'open'} data-id="${item.id}">
+    <summary class="session-summary">Sessions (${sessions.length})</summary>
+    <div class="session-list">` + sessions.map((s, i) => `
     <div class="qi-session" data-session-id="${s.id}">
-    <span class="session-dot"></span>
-    <span class="session-label">S${i + 1}</span>
+    <span class="session-dot"></span><span class="session-label">S${i + 1}</span>
+    ${isRead ? `<input class="ghost-num num-chars session-chars" type="number" value="${s.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
     <input class="ghost-num session-num" type="number" min="1" value="${Math.max(1, Math.round(s.secs / 60))}"/>
     <span class="unit-lbl">min</span>
-    ${isRead ? `<input class="ghost-num num-chars session-chars" type="number" value="${s.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
     <input class="ghost-date session-date" type="datetime-local" value="${toLocalDT(s.date)}" style="margin-left:auto;"/>
     <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:12px;">×</button>
-    </div>`).join('') + `</div>`;
+    </div>`).join('') + `</div></details>`;
   }
 
   el.innerHTML = `
@@ -283,9 +347,9 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <button class="qi-del" title="Remove">×</button>
   </div>
   <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
+  ${isRead ? `<input class="ghost-num num-chars qi-chars-num" type="number" min="0" value="${item.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
   <input class="ghost-num qi-time-num" type="number" min="1" value="${displayMins}" title="Total minutes"/>
   <span class="unit-lbl">min</span>
-  ${isRead ? `<input class="ghost-num num-chars qi-chars-num" type="number" min="0" value="${item.chars || 0}"/><span class="unit-lbl">chars</span>` : ''}
   ${isRead ? `<input class="ghost-num num-vol qi-vol" type="number" min="1" value="${volumeVal}" title="Volume"/><span class="unit-lbl">vol</span>` : ''}
   <span class="qi-meta-sep">·</span>
   <div class="qi-mid">
@@ -297,6 +361,13 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>
   ${sessionsHtml}
   `;
+
+  const detailsEl = el.querySelector('.qi-sessions') as HTMLDetailsElement;
+  if (detailsEl) {
+    detailsEl.addEventListener('toggle', () => {
+      localStorage.setItem(`nt-sess-closed-${item.id}`, detailsEl.open ? '0' : '1');
+    });
+  }
 
   if (isRead) {
     const descInput = el.querySelector('.qi-title') as HTMLInputElement;
@@ -472,10 +543,17 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
     }
 
     el.querySelector('.qi-send')!.addEventListener('click', () => sendItem(item.id, el));
-    el.querySelector('.qi-del')!.addEventListener('click', () => removeItem(item.id, el));
+    el.querySelector('.qi-del')!.addEventListener('click', async () => {
+      const ok = await showConfirmModal('Delete Log', 'Are you sure you want to delete this pending log?');
+      if (!ok) return;
+      removeItem(item.id, el);
+    });
 
     el.querySelectorAll('.qi-session-remove').forEach(btn => {
       btn.addEventListener('click', async (e) => {
+        const ok = await showConfirmModal('Delete Session', 'Are you sure you want to delete this session?');
+        if (!ok) return;
+
         const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
         if (type === 'reading') {
           const q = await readingQueueStorage.getValue();
@@ -489,7 +567,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
             entry.time = totalSecs;
             (entry as { chars: number }).chars = sessions.reduce((a: any, b: any) => a + (b.chars || 0), 0);
             await readingQueueStorage.setValue(q);
-            render(); // re-render
+            render();
           }
         } else {
           const q = await videoQueueStorage.getValue();
@@ -502,7 +580,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
             const totalSecs = sessions.reduce((a: any, b: any) => a + b.secs, 0);
             entry.time = Math.round(totalSecs / 60);
             await videoQueueStorage.setValue(q);
-            render(); // re-render
+            render();
           }
         }
       });
@@ -538,6 +616,12 @@ async function render() {
 
 // ── Send All ──────────────────────────────────────────────────────────────────
 btnSendAll.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  if (cfg.warnSendAll !== false) {
+    const ok = await showConfirmModal('Send All', 'Are you sure you want to send all pending logs?', 'warnSendAll');
+    if (!ok) return;
+  }
+
   const btn = btnSendAll as HTMLButtonElement;
   btn.textContent = '…'; btn.disabled = true;
 
@@ -552,8 +636,10 @@ btnSendAll.addEventListener('click', async () => {
   await refreshMeta();
 });
 
-// ── Clear All ─────────────────────────────────────────────────────────────────
 btnClearAll.addEventListener('click', async () => {
+  const ok = await showConfirmModal('Clear All', 'Are you sure you want to clear all pending logs?');
+  if (!ok) return;
+
   if (currentFilter === 'all' || currentFilter === 'video') await videoQueueStorage.setValue([]);
   if (currentFilter === 'all' || currentFilter === 'reading') await readingQueueStorage.setValue([]);
   await render();

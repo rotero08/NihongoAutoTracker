@@ -25,7 +25,9 @@ export interface TrackerConfig {
   allowListOnly?: boolean;
   warnUntracked?: boolean;
   autoSendEndOfDay?: boolean;
-  debugMode?: boolean; // NEW
+  debugMode?: boolean;
+  enablePlaylistLogger?: boolean;
+  playlistHideNonJapanese?: boolean;
 }
 
 export interface QueuedVideoLog {
@@ -99,6 +101,8 @@ export const configStorage = storage.defineItem<TrackerConfig>('local:config', {
     warnUntracked: true,
     autoSendEndOfDay: false,
     debugMode: false,
+    enablePlaylistLogger: true,
+    playlistHideNonJapanese: true,
   },
 });
 

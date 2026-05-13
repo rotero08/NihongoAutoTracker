@@ -341,7 +341,7 @@ function injectModalStyles() {
   style.id = 'nt-modal-styles';
   style.textContent = `
   #nt-modal-popup { z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; cursor:default; }
-  .nt-modal { background:#0d0d12; border:1px solid #222d42; border-radius:8px; width:320px; max-width:90vw; padding:20px; color:#dde4f0; box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark; }
+  .nt-modal { background:#0d0d12; border:1px solid #222d42; border-radius:8px; width:330px; max-width:90vw; padding:20px; color:#dde4f0; box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark; }
   .nt-modal-header { display:flex; align-items:center; gap:12px; }
   .nt-logo-sq { width:30px; height:30px; border:1px solid #F5B831; color:#F5B831; display:flex; align-items:center; justify-content:center; border-radius:4px; font-weight:bold; font-size:15px; box-sizing:border-box; flex-shrink:0; }
   .nt-title-area { display:flex; flex-direction:column; gap:4px; }
@@ -350,26 +350,89 @@ function injectModalStyles() {
   .nt-link-btn { background:none; border:none; color:#5a6a85; cursor:pointer; font-family:inherit; font-size:10px; font-weight:bold; padding:0; transition:color .2s; }
   .nt-link-btn:hover { color:#dde4f0; }
   .nt-link-btn.active { color:#F5B831; pointer-events:none; }
+
+  /* --- FORM STYLING --- */
   .nt-form-group { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; width:100%; box-sizing:border-box; }
   .nt-form-group label { color:#8A8A9A; font-size:11px; font-weight:bold; letter-spacing:.5px; }
   .nt-form-group input, .nt-form-group select { background:#14141e; border:1px solid #222d42; color:#fff; padding:8px 12px; border-radius:6px; font-family:inherit; font-size:12px; outline:none; transition:border .2s, background .2s; box-sizing:border-box; width:100%; min-width:0; }
-  .nt-form-group input:focus, .nt-form-group select:focus { border-color:#F5B831; background:#1a1a24; }
+  .nt-form-group input:focus { border-color:#F5B831; background:#1a1a24; }
+
+  /* --- CUSTOM NUMBER INPUT SPINNER --- */
+  .nt-form-group input[type=number]::-webkit-inner-spin-button,
+  .nt-form-group input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+  .nt-form-group input[type=number] { -moz-appearance:textfield; }
+
+  .nt-number-wrapper {
+    position:relative; display:flex; width:100%; background:#14141e; border:1px solid #222d42;
+    border-radius:6px; box-sizing:border-box; overflow:hidden; transition:border .2s, background .2s;
+  }
+  .nt-number-wrapper:focus-within { border-color:#F5B831; background:#1a1a24; }
+  .nt-number-wrapper input {
+    border:none !important; background:transparent !important; border-radius:0 !important;
+    padding-right:0 !important; flex:1; outline:none !important; min-width:0; box-shadow:none !important;
+  }
+  .nt-spin-btns {
+    display:flex; flex-direction:column; width:26px; border-left:1px solid #222d42; background:#14141e;
+  }
+  .nt-spin-btns button {
+    flex:1; background:transparent; border:none; color:#5a6a85; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; transition:color 0.15s, background 0.15s; padding:0; margin:0;
+  }
+  .nt-spin-btns button:hover { color:#dde4f0; background:#1e1e28; }
+  #nt-spin-up { border-bottom:1px solid #222d42; }
+
   .nt-form-row { display:flex; gap:12px; width:100%; }
-  .nt-form-row .nt-form-group { margin-bottom:0; }
-  .nt-form-row .nt-form-group:first-child { flex:0 0 90px; }
-  .nt-form-row .nt-form-group:last-child  { flex:1; min-width:0; }
+  .nt-form-row .nt-form-group { margin-bottom:0; flex: 1; }
+
   .nt-modal-footer { display:flex; gap:12px; margin-top:20px; }
-  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; }
-  .nt-modal-opt input[type="checkbox"] { -webkit-appearance:none; appearance:none; width:14px; height:14px; border-radius:999px; border:1px solid #222d42; background:#14141e; display:inline-grid; place-content:center; margin:0; cursor:pointer; flex:0 0 auto; }
-  .nt-modal-opt input[type="checkbox"]::after { content:""; width:6px; height:3px; border-left:2px solid transparent; border-bottom:2px solid transparent; transform: rotate(-45deg); margin-top:-1px; }
-  .nt-modal-opt input[type="checkbox"]:checked { background:#F5B831; border-color:#F5B831; }
-  .nt-modal-opt input[type="checkbox"]:checked::after { border-left-color:#fff; border-bottom-color:#fff; }
-  .nt-modal-opt label { cursor:pointer; user-select:none; }
   .nt-modal-footer button { flex:1; padding:10px; border:none; border-radius:4px; font-family:inherit; font-weight:bold; cursor:pointer; font-size:12px; transition:opacity .2s; box-sizing:border-box; }
   .nt-modal-footer button:hover { opacity:.8; }
   #nt-modal-cancel { background:#1E1E28; color:#A0A0B0; }
   #nt-modal-submit { background:#F5B831; color:#111; }
-  .nt-absolute-pill { position:absolute; bottom:60px; left:20px; z-index:9999; }
+
+  /* --- CUSTOM AMBER CHECKBOX --- */
+  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; }
+  .nt-pl-chk {
+    -webkit-appearance:none; appearance:none; width:16px; height:16px; border:1.5px solid #5a6a85;
+    border-radius:3px; background:#14141e; cursor:pointer; position:relative; display:inline-block;
+    flex-shrink:0; margin:0; outline:none; transition:all 0.15s ease;
+  }
+  .nt-pl-chk:checked { background:#F5B831; border-color:#F5B831; }
+  .nt-pl-chk:checked::after {
+    content:''; position:absolute; left:4px; top:1px; width:4px; height:8px;
+    border:solid white; border-width:0 2.2px 2.2px 0; transform:rotate(45deg);
+  }
+
+  /* --- CUSTOM SCROLLBAR (Fixed Overlap) --- */
+  #nt-playlist-modal-list {
+  padding-right: 24px !important;
+  margin-right: 0 !important;
+  scrollbar-width: thin;
+  scrollbar-color: #222d42 transparent;
+  box-sizing: border-box;
+  }
+  #nt-playlist-modal-list::-webkit-scrollbar {
+  width: 6px;
+  }
+  #nt-playlist-modal-list::-webkit-scrollbar-track {
+  background: transparent;
+  }
+  #nt-playlist-modal-list::-webkit-scrollbar-thumb {
+  background: #222d42;
+  border-radius: 10px;
+  }
+  #nt-playlist-modal-list::-webkit-scrollbar-thumb:hover {
+  background: #F5B831;
+  }
+
+  .pl-vid-row {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .nt-btn-amber { background:#F5B831 !important; color:#111 !important; border:none !important; }
+  .nt-btn-ghost { background:transparent !important; color:#a9b4c8 !important; border:1px solid #222d42 !important; }
+  .nt-btn-ghost:hover { color:#dde4f0 !important; border-color:#5a6a85 !important; }
   `;
   document.head.appendChild(style);
 }
@@ -388,7 +451,7 @@ function dateInputToISO(dateStr: string): string {
   return new Date(year, month - 1, day, now.getHours(), now.getMinutes(), 0, 0).toISOString();
 }
 
-function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; videoTitle: string; url: string; totalSecs: number; showTotal: boolean; channelId: string | null; onToggleShowTotal: (v: boolean) => void; }, onConfirm: (d: any) => void, onClose?: (submitted: boolean) => void) {
+function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; videoTitle: string; url: string; totalSecs: number; videoDurationSecs: number; showTotal: boolean; channelId: string | null; onToggleShowTotal: (v: boolean) => void; }, onConfirm: (d: any) => Promise<void> | void, onClose?: (submitted: boolean) => void) {
   injectModalStyles();
   const existingPopup = document.getElementById('nt-modal-popup');
   if (existingPopup) {
@@ -401,33 +464,53 @@ function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; vide
   const popup = document.createElement('div');
   popup.id = 'nt-modal-popup';
   const today = localTodayISODate();
-  const totalMins = Math.max(1, Math.round(data.totalSecs / 60));
+
+  // Calculate default minutes using the full video duration
+  const totalMins = Math.max(1, Math.round(data.videoDurationSecs / 60));
 
   popup.innerHTML = `
   <div class="nt-modal">
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
   <div class="nt-modal-header"><div class="nt-logo-sq">日</div><div class="nt-title-area"><span class="nt-brand-name">NihongoAutoTracker</span><span class="nt-badge">MANUAL LOG</span></div></div>
   </div>
+
   <div style="display:flex; justify-content:flex-start; gap:10px; font-size:10px; font-weight:bold; margin-bottom:16px;">
   <span style="color:#5a6a85;">DISPLAY:</span>
   <button id="nt-badge-session" class="nt-link-btn ${!data.showTotal ? 'active' : ''}">Session Only</button>
-  <span style="color:#222d42;">/</span>
+  <span style="color:#222d42;">|</span>
   <button id="nt-badge-total" class="nt-link-btn ${data.showTotal ? 'active' : ''}">Session / Total</button>
   </div>
+
   <div class="nt-form-group">
   <div style="display:flex; justify-content:space-between; align-items:flex-end;">
   <label>VIDEO TITLE</label><span style="font-size:9px; color:#8A8A9A; max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${data.channelName.replace(/"/g, '&quot;')}">${data.channelName.replace(/</g, '&lt;')}</span>
   </div>
   <input type="text" id="nt-edit-desc" value="${data.videoTitle.replace(/"/g, '&quot;')}"/>
   </div>
+
   <div class="nt-form-row">
-  <div class="nt-form-group"><label>MINUTES</label><input type="number" id="nt-edit-time" value="${totalMins}" min="1"/></div>
+  <div class="nt-form-group">
+  <label>MINUTES</label>
+  <div class="nt-number-wrapper">
+  <input type="number" id="nt-edit-time" value="${totalMins}" min="1"/>
+  <div class="nt-spin-btns">
+  <button type="button" id="nt-spin-up">
+  <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 5L5 1L9 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button type="button" id="nt-spin-down">
+  <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  </div>
+  </div>
+  </div>
   <div class="nt-form-group"><label>DATE</label><input type="date" id="nt-edit-date" value="${today}"/></div>
   </div>
+
   <div class="nt-modal-opt">
-  <input type="checkbox" id="nt-clear-sessions" />
+  <input type="checkbox" id="nt-clear-sessions" class="nt-pl-chk" />
   <label for="nt-clear-sessions">Clear sessions with this log</label>
   </div>
+
   <div class="nt-modal-footer">
   <button id="nt-modal-cancel">Cancel</button><button id="nt-modal-submit">Log Video</button>
   </div>
@@ -463,13 +546,32 @@ function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; vide
     btnSession.addEventListener('click', () => { btnSession.classList.add('active'); btnTotal.classList.remove('active'); data.onToggleShowTotal(false); });
     btnTotal.addEventListener('click', () => { btnTotal.classList.add('active'); btnSession.classList.remove('active'); data.onToggleShowTotal(true); });
     popup.querySelector('#nt-modal-cancel')!.addEventListener('click', () => closeModal(false));
-    popup.querySelector('#nt-modal-submit')!.addEventListener('click', () => {
-      const timeRaw = Number((popup.querySelector('#nt-edit-time') as HTMLInputElement).value);
+
+    // Connect Custom Spinners
+    const timeInput = popup.querySelector('#nt-edit-time') as HTMLInputElement;
+    popup.querySelector('#nt-spin-up')!.addEventListener('click', () => {
+      timeInput.value = String(Number(timeInput.value || 0) + 1);
+    });
+    popup.querySelector('#nt-spin-down')!.addEventListener('click', () => {
+      timeInput.value = String(Math.max(1, Number(timeInput.value || 0) - 1));
+    });
+
+    // Handle Submission with instant text feedback
+    const submitBtn = popup.querySelector('#nt-modal-submit') as HTMLButtonElement;
+    submitBtn.addEventListener('click', async () => {
+      submitBtn.textContent = 'Logging...';
+      submitBtn.style.opacity = '0.7';
+      submitBtn.style.pointerEvents = 'none';
+      popup.querySelector('#nt-modal-cancel')?.setAttribute('disabled', 'true');
+
+      const timeRaw = Number(timeInput.value);
       const timeVal = Math.max(1, Number.isFinite(timeRaw) ? timeRaw : 1);
       const dateRaw = (popup.querySelector('#nt-edit-date') as HTMLInputElement).value;
       const dateIso = dateRaw ? dateInputToISO(dateRaw) : new Date().toISOString();
       const clearSessions = !!(popup.querySelector('#nt-clear-sessions') as HTMLInputElement | null)?.checked;
-      onConfirm({ title: data.channelName, desc: (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value, time: timeVal, date: dateIso, clearSessions });
+
+      // Awaiting onConfirm guarantees we hold the UI loading state until the API call yields
+      await onConfirm({ title: data.channelName, desc: (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value, time: timeVal, date: dateIso, clearSessions });
       closeModal(true);
     });
 
@@ -534,17 +636,14 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
       const liveShowTotal = liveCfg.showTotalInBadge ?? true;
       const channelName = cachedChannelName || await getChannelNameFallback();
 
-      // --- FIX: Get the fresh title dynamically instead of using the stale closure ---
       let finalTitle = stripVideoTitle(document.title);
 
-      // Safely try to use the exact native title from the new API
       if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
         const data = await fetchYouTubeVideoData(window.location.href);
         if (data?.video?.title) {
           finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
         }
       }
-      // -------------------------------------------------------------------------------
 
       addDebugLog('INFO', 'VideoTracker', `Opening Manual Log Overlay`, {
         videoTitle: finalTitle,
@@ -552,7 +651,17 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
         totalSecs
       });
 
-      showNTEditModal(el!, { channelName, videoTitle: finalTitle, url, totalSecs, showTotal: liveShowTotal, channelId, onToggleShowTotal: async (v) => { const c = await configStorage.getValue() as any; await configStorage.setValue({ ...c, showTotalInBadge: v }); } }, async final => {
+      // Pass videoDurationSecs as vid.duration (fallback to totalSecs if broken or zero)
+      showNTEditModal(el!, {
+        channelName,
+        videoTitle: finalTitle,
+        url,
+        totalSecs,
+        videoDurationSecs: vid.duration && !isNaN(vid.duration) && vid.duration > 0 ? vid.duration : totalSecs,
+                      showTotal: liveShowTotal,
+                      channelId,
+                      onToggleShowTotal: async (v) => { const c = await configStorage.getValue() as any; await configStorage.setValue({ ...c, showTotalInBadge: v }); }
+      }, async final => {
         try {
           state.hasTriggered = true;
           const mediaData = await getChannelMediaData(channelId, final.title);
@@ -574,6 +683,205 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
   const currentStr = fmtSecs(currentSecs);
   timeLabel.textContent = (multiSession && showTotal) ? `${currentStr} / ${fmtSecs(totalSecs)}` : currentStr;
   el.title = 'Log this video manually';
+}
+
+async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
+  injectModalStyles();
+  const existing = document.getElementById('nt-playlist-modal');
+  if (existing) { existing.remove(); return; }
+
+  const parent = isInline ? document.querySelector('ytd-playlist-panel-renderer') : document.body;
+  const rendererSelector = isInline ? 'ytd-playlist-panel-video-renderer' : 'ytd-playlist-video-renderer';
+  const items = Array.from(parent?.querySelectorAll(rendererSelector) ||[]);
+
+  let hideNonJp = (await configStorage.getValue() as any).playlistHideNonJapanese ?? true;
+
+  const videos = items.map(el => {
+    const titleEl = el.querySelector('#video-title');
+    const titleText = titleEl?.textContent?.trim() || 'Unknown';
+    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a');
+    const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer') || el.querySelector('.badge-shape-wiz__text');
+
+    let domTime = 1;
+    const timeText = lengthEl?.textContent?.trim() || "";
+    const parts = timeText.split(':').map(Number);
+    if (parts.length === 2 && !isNaN(parts[0])) domTime = Math.max(1, Math.round((parts[0]*60 + parts[1])/60));
+    else if (parts.length === 3 && !isNaN(parts[0])) domTime = Math.max(1, Math.round((parts[0]*3600 + parts[1]*60 + parts[2])/60));
+
+    const url = urlEl?.getAttribute('href') || '';
+    const idMatch = url.match(/[?&]v=([^&]+)/);
+
+    return {
+      title: titleText,
+      url: url,
+      id: idMatch ? idMatch[1] : null,
+      time: domTime,
+      isJp: (titleText.match(JP_RE) ||[]).length > 0,
+                           channelId: null as string | null,
+                           channelTitle: null as string | null,
+                           channelImage: null as string | null,
+                           channelDesc: null as string | null
+    };
+  }).filter(v => v.id);
+
+  if (videos.length === 0) { toast("No valid videos found in playlist"); return; }
+
+  const modal = document.createElement('div');
+  modal.id = 'nt-playlist-modal';
+  modal.className = 'nt-modal';
+  modal.innerHTML = `
+  <div class="nt-modal-header" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+  <div style="display:flex; gap:12px; align-items:center;">
+  <div class="nt-logo-sq">日</div><div class="nt-title-area"><span class="nt-brand-name">Log Playlist Videos</span></div>
+  </div>
+  <div id="pl-top-actions" style="display:flex; gap:10px;">
+  <button id="pl-toggle-jp" style="background:none; border:none; color:#a9b4c8; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">${hideNonJp ? 'Show Non-JP videos' : 'Hide Non-JP videos'}</button>
+  <button id="pl-toggle-all" style="background:none; border:none; color:#F5B831; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">Select All</button>
+  </div>
+  </div>
+
+  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:16px; display:flex; flex-direction:column; gap:8px;">
+  ${videos.map((v, i) => `
+    <label class="pl-vid-row" id="pl-row-${i}" style="display:${hideNonJp && !v.isJp ? 'none' : 'flex'}; gap:12px; align-items:center; font-size:11px; cursor:pointer; padding:2px 0;">
+    <input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" />
+    <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v.title.replace(/</g, '&lt;')}</span>
+    <span id="pl-time-${i}" style="color:#F5B831; font-family:monospace; flex-shrink:0; text-align:right; width:65px; font-weight:bold;">...</span>
+    </label>
+    `).join('')}
+    </div>
+
+    <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:16px; padding:20px 0; text-align:center;">
+    <div style="font-size:14px; color:#dde4f0; font-weight:bold;">Confirm Logging</div>
+    <div style="font-size:12px; color:#a9b4c8;">Are you sure you want to log <span id="pl-confirm-count" style="color:#F5B831; font-weight:bold;">0</span> videos directly?</div>
+    </div>
+
+    <div class="nt-modal-footer" id="pl-footer-main">
+    <button id="pl-cancel" class="nt-btn-ghost">Cancel</button><button id="pl-submit" class="nt-btn-amber">Log Selected</button>
+    </div>
+
+    <div class="nt-modal-footer" id="pl-footer-confirm" style="display:none;">
+    <button id="pl-confirm-no" class="nt-btn-ghost">Go Back</button><button id="pl-confirm-yes" class="nt-btn-amber">Yes, Log Them</button>
+    </div>`;
+
+    document.body.appendChild(modal);
+    const rect = btn.getBoundingClientRect();
+    modal.style.position = 'fixed';
+    modal.style.top = isInline ? `${rect.bottom + 10}px` : `${rect.bottom + 20}px`;
+    modal.style.left = isInline ? `${rect.left - 240}px` : `${rect.left}px`;
+    modal.style.zIndex = '2147483647';
+
+    requestAnimationFrame(() => {
+      const popRect = modal.getBoundingClientRect();
+      if (popRect.right > window.innerWidth) modal.style.left = `${window.innerWidth - popRect.width - 20}px`;
+      if (popRect.left < 0) modal.style.left = '20px';
+    });
+
+      const clickOutsideHandler = (e: MouseEvent) => {
+        if (!modal.contains(e.target as Node) && !btn.contains(e.target as Node)) {
+          modal.remove();
+          document.removeEventListener('click', clickOutsideHandler);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', clickOutsideHandler), 10);
+
+      // Fetch unique data for EACH video from API
+      videos.forEach(async (v, i) => {
+        try {
+          const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
+          if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
+          if (data?.channel?.contentId) {
+            v.channelId = data.channel.contentId;
+            v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
+            v.channelImage = data.channel.contentImage;
+            v.channelDesc = data.channel.description?.[0]?.description;
+          }
+        } catch (e) {}
+        const timeEl = modal.querySelector(`#pl-time-${i}`);
+        if (timeEl) timeEl.textContent = `${v.time} min`;
+      });
+
+      modal.querySelector('#pl-toggle-jp')!.addEventListener('click', (e) => {
+        hideNonJp = !hideNonJp;
+        (e.target as HTMLElement).textContent = hideNonJp ? 'Show Non-JP videos' : 'Hide Non-JP videos';
+      videos.forEach((v, i) => {
+        const row = modal.querySelector(`#pl-row-${i}`) as HTMLElement;
+        if (row) row.style.display = (hideNonJp && !v.isJp) ? 'none' : 'flex';
+      });
+      });
+
+      let allSelected = false;
+      modal.querySelector('#pl-toggle-all')!.addEventListener('click', (e) => {
+        allSelected = !allSelected;
+        const chks = modal.querySelectorAll('.pl-vid-chk') as NodeListOf<HTMLInputElement>;
+        chks.forEach(c => {
+          const row = c.closest('label');
+          if (row && row.style.display !== 'none') c.checked = allSelected;
+        });
+          (e.target as HTMLElement).textContent = allSelected ? 'Unselect All' : 'Select All';
+      });
+
+      modal.querySelector('#pl-cancel')!.addEventListener('click', () => {
+        document.removeEventListener('click', clickOutsideHandler);
+        modal.remove();
+      });
+
+      modal.querySelector('#pl-submit')!.addEventListener('click', () => {
+        const checked = Array.from(modal.querySelectorAll('.pl-vid-chk:checked'));
+        if(checked.length === 0) return;
+
+        modal.querySelector('#pl-top-actions')!.setAttribute('style', 'display:none !important');
+        modal.querySelector('#nt-playlist-modal-list')!.setAttribute('style', 'display:none !important');
+        modal.querySelector('#pl-footer-main')!.setAttribute('style', 'display:none !important');
+
+        modal.querySelector('#pl-confirm-count')!.textContent = String(checked.length);
+        modal.querySelector('#nt-playlist-confirm-layer')!.setAttribute('style', 'display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:16px; padding:20px 0; text-align:center;');
+        modal.querySelector('#pl-footer-confirm')!.setAttribute('style', 'display:flex; gap:12px; margin-top:20px;');
+      });
+
+      modal.querySelector('#pl-confirm-no')!.addEventListener('click', () => {
+        modal.querySelector('#pl-top-actions')!.setAttribute('style', 'display:flex; gap:10px;');
+        modal.querySelector('#nt-playlist-modal-list')!.setAttribute('style', 'max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:16px; display:flex; flex-direction:column; gap:8px;');
+        modal.querySelector('#pl-footer-main')!.setAttribute('style', 'display:flex; gap:12px; margin-top:20px;');
+
+        modal.querySelector('#nt-playlist-confirm-layer')!.setAttribute('style', 'display:none !important');
+        modal.querySelector('#pl-footer-confirm')!.setAttribute('style', 'display:none !important');
+      });
+
+      modal.querySelector('#pl-confirm-yes')!.addEventListener('click', async () => {
+        document.removeEventListener('click', clickOutsideHandler);
+        const checked = Array.from(modal.querySelectorAll('.pl-vid-chk:checked')).map((c: any) => videos[c.dataset.idx]);
+
+        const yesBtn = modal.querySelector('#pl-confirm-yes')!;
+        yesBtn.textContent = 'Logging...';
+        yesBtn.setAttribute('disabled', 'true');
+        modal.querySelector('#pl-confirm-no')!.setAttribute('disabled', 'true');
+
+        let successCount = 0;
+        const fallbackChanName = await getChannelNameFallback();
+        const fallbackChanId = await getYouTubeChannelId();
+
+        for(const v of checked) {
+          const finalChanId = v.channelId || fallbackChanId || "web-video";
+          const finalChanTitle = v.channelTitle || fallbackChanName || "Unknown Channel";
+
+          const specificMediaData = {
+            channelId: finalChanId,
+            channelTitle: finalChanTitle,
+            ...(v.channelImage ? { channelImage: v.channelImage } : {}),
+                                                               ...(v.channelDesc ? { channelDescription: v.channelDesc } : {})
+          };
+
+          const ok = await submitLog({
+            type: 'video', mediaId: finalChanId,
+            description: stripVideoTitle(v.title), mediaData: specificMediaData,
+                                     time: v.time, date: new Date().toISOString(),
+                                     private: false, episodes: 0, pages: 0, unknownDate: false
+          });
+          if(ok === true || (ok as any)?.success) successCount++;
+        }
+        toast(`Logged ${successCount}/${checked.length} videos`);
+        modal.remove();
+      });
 }
 
 export default defineContentScript({
@@ -751,9 +1059,69 @@ export default defineContentScript({
         }
       });
 
-      setInterval(async () => {
+      // --- REPLACEMENT FOR PERFORMANT INJECTION ---
+      const runInjectionCycle = async () => {
         const vid = document.querySelector<HTMLVideoElement>('video');
-        if (vid) { attach(vid); if (!state.hasTriggered) ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cachedConfig, cachedChannelName, resetSession); }
-      }, 2000);
+        if (vid) {
+          attach(vid);
+          if (!state.hasTriggered) {
+            ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cachedConfig, cachedChannelName, resetSession);
+          }
+        }
+
+        // Playlist Logger Injection
+        if (cachedConfig.enablePlaylistLogger !== false) {
+          const fullMenu = document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper') || document.querySelector('ytd-playlist-header-renderer ytd-menu-renderer');
+          const inlineMenu = document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') || document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu');
+
+          [fullMenu, inlineMenu].forEach(container => {
+            if (container && !container.querySelector('.nt-playlist-logger')) {
+              const btn = document.createElement('button');
+              btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+              btn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="#F5B831"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
+              Object.assign(btn.style, { background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '6px', transition: 'filter .15s' });
+              btn.title = "Log Playlist Videos to NT";
+
+              // Amber all the time, brighter on hover
+              btn.onmouseenter = () => btn.style.filter = 'brightness(1.2)';
+              btn.onmouseleave = () => btn.style.filter = 'brightness(1)';
+
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null);
+          };
+
+          container.appendChild(btn);
+            }
+          });
+        } else {
+          document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
+        }
+      };
+
+      // 1. Run immediately on load
+      runInjectionCycle();
+
+      // 2. Listen to YouTube's internal navigation event (extremely performant)
+      window.addEventListener('yt-navigate-finish', () => {
+        // Delay slightly to allow YouTube's SPA to render the new elements
+        setTimeout(runInjectionCycle, 500);
+        setTimeout(runInjectionCycle, 2000);
+      });
+
+      // 3. MutationObserver as a fallback for elements that load late
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.addedNodes.length > 0) {
+            runInjectionCycle();
+            break;
+          }
+        }
+      });
+
+      // We only observe the main app container to keep it fast
+      const appRoot = document.querySelector('ytd-app') || document.body;
+      observer.observe(appRoot, { childList: true, subtree: true });
+      // ---------------------------------------------
   },
 });

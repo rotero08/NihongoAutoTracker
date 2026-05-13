@@ -6,6 +6,14 @@ import { storage } from '#imports';
 export default defineBackground(() => {
   browser.contextMenus.create({ id: 'log-text', title: 'Log to NihongoTracker', contexts: ['selection'] });
 
+  // NEW: Context menu to log YouTube videos directly
+  browser.contextMenus.create({
+    id: 'log-yt-video',
+    title: 'Log this video to NihongoTracker',
+    documentUrlPatterns: ['*://*.youtube.com/*'],
+    contexts: ['link', 'page', 'video']
+  });
+
   browser.runtime.onMessage.addListener((msg) => {
     if (msg.action === 'NOTIFY') {
       browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
@@ -15,6 +23,41 @@ export default defineBackground(() => {
   });
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
+    if (info.menuItemId === 'log-yt-video') {
+      const url = info.linkUrl || info.pageUrl || tab?.url;
+      if (!url || !url.includes('youtube.com')) return;
+
+      try {
+        const res = await fetch(`https://nihongotracker.app/api/media/youtube/video?url=${encodeURIComponent(url)}`, { headers: { 'accept': '*/*' }});
+        if (!res.ok) throw new Error('Could not fetch video info');
+
+        const data = await res.json();
+        if (!data?.video) throw new Error('No video data found');
+
+        const v = data.video;
+        const ch = data.channel;
+        const timeMins = Math.max(1, v.episodeDuration || 1);
+
+        const ok = await submitLog({
+          type: 'video',
+          mediaId: ch?.contentId || "web-video",
+          description: v.title?.contentTitleNative || v.title?.contentTitleEnglish || "YouTube Video",
+          time: timeMins,
+          date: new Date().toISOString(),
+                                   episodes: 0, pages: 0, private: false, unknownDate: false,
+                                   mediaData: {
+                                     channelId: ch?.contentId || "web-video",
+                                     channelTitle: ch?.title?.contentTitleNative || ch?.title?.contentTitleEnglish || "Unknown Channel",
+                                     channelImage: ch?.contentImage,
+                                     channelDescription: ch?.description?.[0]?.description
+                                   }
+        });
+      } catch (err: any) {
+        notify('Failed', err.message);
+      }
+      return;
+    }
+
     if (info.menuItemId !== 'log-text' || !info.selectionText || !tab?.id) return;
 
     const japaneseOnly = info.selectionText.replace(/[^\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/g, '');

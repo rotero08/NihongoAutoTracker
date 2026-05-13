@@ -98,7 +98,7 @@
     <!-- API Key -->
     <section class="tab" id="tab-api">
       <div class="tab-head"><h2>API Key</h2></div>
-      <p class="hint">Get this from your NihongoTracker account settings page.</p>
+      <p class="hint">Get this from your NihongoTracker account <a href="https://nihongotracker.app/settings" target="_blank" rel="noopener noreferrer" style="color: var(--amber); text-decoration: underline; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">settings</a> page.</p>
       <div class="field">
         <label class="label">API Key</label>
         <div class="row-inline">
@@ -199,6 +199,22 @@
           <input type="checkbox" id="hide-music" class="toggle-chk"/>
           <span class="toggle-track"><span class="toggle-thumb"></span></span>
           Hide Log button on music videos
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="enable-playlist-logger" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Show Playlist Logger button on YouTube
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="playlist-hide-non-jp" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide non-Japanese videos in Playlist Logger by default
         </label>
       </div>
 

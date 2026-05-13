@@ -217,25 +217,14 @@ body {
 .qi-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Sessions ── */
-.qi-sessions {
-  margin-top: 6px; border-top: 1px solid var(--bdr);
-  padding-top: 5px; display: flex; flex-direction: column; gap: 3px;
-}
-.qi-session {
-  display: flex; align-items: center;
-  font-size: 10px; color: var(--dim); gap: 0;
-}
-.session-dot {
-  width: 3px; height: 3px; border-radius: 50%; background: var(--bdr2);
-  flex-shrink: 0; margin-right: 6px;
-}
-.session-label {
-  font-family: var(--mono); font-size: 9px; color: rgba(240,180,41,0.6);
-  font-weight: bold; flex-shrink: 0; margin-right: 5px;
-}
-.session-date {
-  margin-left: auto; flex-shrink: 0; width: 155px; text-align: right;
-}
+.qi-sessions { margin-top: 6px; border-top: 1px solid var(--bdr); padding-top: 5px; display: block; }
+.session-summary { font-family: var(--mono); font-size: 11px; font-weight: bold; color: var(--muted); cursor: pointer; user-select: none; padding-bottom: 6px; outline: none; transition: color .15s; }
+.session-summary:hover { color: var(--text); }
+.session-list { display: flex; flex-direction: column; gap: 3px; }
+.qi-session { display: flex; align-items: center; font-size: 10px; color: var(--dim); gap: 0; }
+.session-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--bdr2); flex-shrink: 0; margin-right: 6px; }
+.session-label { font-family: var(--mono); font-size: 9px; color: rgba(240,180,41,0.6); font-weight: bold; flex-shrink: 0; margin-right: 5px; }
+.session-date { margin-left: auto; flex-shrink: 0; width: 155px; text-align: right; }
 
 /* ── Footer ── */
 .footer { padding: 9px 12px 12px; }

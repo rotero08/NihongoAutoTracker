@@ -42,6 +42,54 @@ document.querySelectorAll('.q-tab').forEach(btn => {
   });
 });
 
+function showConfirmModal(title: string, msg: string, warnKey: string | null = null): Promise<boolean> {
+  return new Promise(resolve => {
+    let modal = document.getElementById('generic-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'generic-modal';
+      modal.className = 'modal-overlay';
+  modal.innerHTML = `
+  <div class="modal-box">
+  <h3 id="gm-title"></h3>
+  <p id="gm-desc"></p>
+  <label class="toggle" id="gm-warn-wrap" style="margin-top: 10px; display:none;">
+  <input type="checkbox" id="gm-warn-chk" class="toggle-chk"/>
+  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+  Don't warn me again
+  </label>
+  <div class="modal-actions">
+  <button id="gm-cancel" class="btn btn-ghost">Cancel</button>
+  <button id="gm-proceed" class="btn btn-amber">Proceed</button>
+  </div>
+  </div>`;
+  document.body.appendChild(modal);
+    }
+
+    document.getElementById('gm-title')!.textContent = title;
+    document.getElementById('gm-desc')!.textContent = msg;
+
+    const warnWrap = document.getElementById('gm-warn-wrap')!;
+    const warnChk = document.getElementById('gm-warn-chk') as HTMLInputElement;
+    if (warnKey) { warnWrap.style.display = 'flex'; warnChk.checked = false; }
+    else { warnWrap.style.display = 'none'; }
+
+    modal.classList.add('open');
+
+    const close = async (res: boolean) => {
+      modal!.classList.remove('open');
+      if (res && warnKey && warnChk.checked) {
+        const cfg = await configStorage.getValue() as any;
+        await configStorage.setValue({ ...cfg, [warnKey]: false });
+      }
+      resolve(res);
+    };
+
+    document.getElementById('gm-cancel')!.onclick = () => close(false);
+    document.getElementById('gm-proceed')!.onclick = () => close(true);
+  });
+}
+
 function applyFilter() {
   const items = document.querySelectorAll('.qi');
   items.forEach(el => {
@@ -83,6 +131,8 @@ const hideJpFieldEl  = document.getElementById('hide-jp-field')!;
 const hideIfNotJpEl  = document.getElementById('hide-if-not-jp') as HTMLInputElement;
 const hideMusicEl    = document.getElementById('hide-music')     as HTMLInputElement;
 const hideMusicFieldEl = document.getElementById('hide-music-field')!;
+const playlistLoggerEl = document.getElementById('enable-playlist-logger') as HTMLInputElement;
+const playlistHideNonJpEl = document.getElementById('playlist-hide-non-jp') as HTMLInputElement;
 
 const showTotalEl    = document.getElementById('show-total-badge') as HTMLSelectElement;
 const saveVideoBtn   = document.getElementById('save-video-btn') as HTMLButtonElement;
@@ -214,6 +264,8 @@ async function loadConfig() {
   hideBtnsEl.checked = cfg.hideButtons ?? false;
   hideIfNotJpEl.checked = cfg.hideIfNotJapanese ?? false;
   hideMusicEl.checked = cfg.hideMusic ?? false;
+  playlistLoggerEl.checked = cfg.enablePlaylistLogger ?? true;
+  playlistHideNonJpEl.checked = cfg.playlistHideNonJapanese ?? true;
   updateHideJpDim(hideBtnsEl.checked);
 
   if (showTotalEl) {
@@ -468,15 +520,18 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   let sessionsHtml = '';
 
   if (sessions.length > 1) {
-    sessionsHtml = `<div class="qi-sessions">` + sessions.map((s, i) => `
+    const isClosed = localStorage.getItem(`nt-sess-closed-${item.id}`) === '1';
+    sessionsHtml = `<details class="qi-sessions" ${isClosed ? '' : 'open'} data-id="${item.id}">
+    <summary class="session-summary">Sessions (${sessions.length})</summary>
+    <div class="session-list">` + sessions.map((s, i) => `
     <div class="qi-session" data-session-id="${s.id}">
     <span class="qi-session-num">S${i + 1}</span>
+    ${type === 'reading' ? `<input class="qi-session-chars" type="number" value="${s.chars || 0}"/><span style="font-size:10px;color:var(--muted)">chars</span>` : ''}
     <input class="qi-session-mins" type="number" value="${Math.max(1, Math.round(s.secs / 60))}"/>
     <span style="font-size:10px;color:var(--muted)">min</span>
-    ${type === 'reading' ? `<input class="qi-session-chars" type="number" value="${s.chars || 0}"/><span style="font-size:10px;color:var(--muted)">chars</span>` : ''}
     <input type="datetime-local" class="qi-session-date-input" value="${toLocalDT(s.date)}" />
     <button class="qi-session-remove" title="Remove" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0 4px;font-size:14px;">×</button>
-    </div>`).join('') + `</div>`;
+    </div>`).join('') + `</div></details>`;
   }
 
   const displayMins = type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0);
@@ -528,6 +583,7 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   </div>
   <div style="display:flex;gap:6px;">
   ${volumeGroup}
+  ${charsGroup}
   <div class="qi-spin-group">
   <input class="qi-mins" type="number" value="${displayMins}" min="0"/>
   <span style="font-size:10px;color:var(--muted);padding-right:2px;">min</span>
@@ -536,7 +592,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <button type="button" class="mins-dn" tabindex="-1">${SVG_DN}</button>
   </div>
   </div>
-  ${charsGroup}
   </div>
   </div>
   <div class="qi-row mid-row">
@@ -548,6 +603,13 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
   <button class="btn btn-amber btn-sm qi-send">Send</button>
   <button class="btn btn-ghost btn-sm qi-remove">Remove</button>
   </div>`;
+
+  const detailsEl = el.querySelector('.qi-sessions') as HTMLDetailsElement;
+  if (detailsEl) {
+    detailsEl.addEventListener('toggle', () => {
+      localStorage.setItem(`nt-sess-closed-${item.id}`, detailsEl.open ? '0' : '1');
+    });
+  }
 
   const descInput = el.querySelector('.qi-desc') as HTMLInputElement;
   const volPill = el.querySelector<HTMLButtonElement>('.qi-vol-pill');
@@ -800,7 +862,45 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
       });
     }
 
-    el.querySelector('.qi-remove')!.addEventListener('click', () => removeOne(item.id, type));
+    el.querySelector('.qi-remove')!.addEventListener('click', async () => {
+      const ok = await showConfirmModal('Delete Log', 'Are you sure you want to delete this pending log?');
+      if (!ok) return;
+      removeOne(item.id, type);
+    });
+
+    el.querySelectorAll('.qi-session-remove').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const ok = await showConfirmModal('Delete Session', 'Are you sure you want to delete this session?');
+        if (!ok) return;
+
+        const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
+        if (type === 'reading') {
+          const q = await readingQueueStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx !== -1) {
+            const sessions = q[idx].sessions ??[];
+            q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
+            const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+            q[idx].time = totalSecs;
+            const readingItem = q[idx] as QueuedReadingLog;
+            readingItem.chars = (readingItem.sessions ??[]).reduce((a: any, b: any) => a + (b.chars || 0), 0);
+            await readingQueueStorage.setValue(q);
+            renderQueue();
+          }
+        } else {
+          const q = await videoQueueStorage.getValue();
+          const idx = q.findIndex((x: any) => x.id === item.id);
+          if (idx !== -1) {
+            const sessions = q[idx].sessions ?? [];
+            q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
+            const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
+            q[idx].time = Math.round(totalSecs / 60);
+            await videoQueueStorage.setValue(q);
+            renderQueue();
+          }
+        }
+      });
+    });
 
     el.querySelector('.qi-send')!.addEventListener('click', async () => {
       const btn = el.querySelector('.qi-send') as HTMLButtonElement;
@@ -808,37 +908,6 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
       const sent = await checkAndSend([{ id: item.id, el }], false);
       if (!sent) btn.disabled = false;
     });
-
-      el.querySelectorAll('.qi-session-remove').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          const sId = (e.target as HTMLElement).closest('.qi-session')!.getAttribute('data-session-id');
-          if (type === 'reading') {
-            const q = await readingQueueStorage.getValue();
-            const idx = q.findIndex((x: any) => x.id === item.id);
-            if (idx !== -1) {
-              const sessions = q[idx].sessions ??[];
-              q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
-              const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-              q[idx].time = totalSecs;
-              const readingItem = q[idx] as QueuedReadingLog;
-              readingItem.chars = (readingItem.sessions ??[]).reduce((a: any, b: any) => a + (b.chars || 0), 0);
-              await readingQueueStorage.setValue(q);
-              renderQueue();
-            }
-          } else {
-            const q = await videoQueueStorage.getValue();
-            const idx = q.findIndex((x: any) => x.id === item.id);
-            if (idx !== -1) {
-              const sessions = q[idx].sessions ?? [];
-              q[idx].sessions = sessions.filter((s: any) => s.id !== sId);
-              const totalSecs = q[idx].sessions.reduce((a: any, b: any) => a + b.secs, 0);
-              q[idx].time = Math.round(totalSecs / 60);
-              await videoQueueStorage.setValue(q);
-              renderQueue();
-            }
-          }
-        });
-      });
 
       return el;
 }
@@ -1020,10 +1089,30 @@ async function sendOne(id: string, el: HTMLElement) {
   const payloads = getPayloadsForItem(item, el);
 
   let success = true;
-  for (const p of payloads) { if (!(await submitLog(p))) success = false; }
+  let lastError = '';
+  let lastErrorCode = 0;
 
-  if (success) { showStatus('✓ Sent'); removeOne(id, type); }
-  else { showStatus('⚠ Failed', true); el.classList.remove('sending'); btn.disabled = false; btn.textContent = 'Send'; }
+  for (const p of payloads) {
+    const res = await submitLog(p) as any;
+    if (res === true || res?.success === true) {
+      // success
+    } else {
+      success = false;
+      lastError = res?.error || 'Unknown error';
+      lastErrorCode = res?.status || 0;
+    }
+  }
+
+  if (success) {
+    showStatus('Log sent to Nihongo Tracker');
+    removeOne(id, type);
+  } else {
+    el.classList.remove('sending');
+    btn.disabled = false;
+    btn.textContent = 'Send';
+    const errText = lastErrorCode ? `⚠ Failed [${lastErrorCode}]: ${lastError}` : `⚠ Failed: ${lastError}`;
+    showStatus(errText, true);
+  }
 }
 
 async function removeOne(id: string, type: 'video' | 'reading') {
@@ -1034,6 +1123,12 @@ async function removeOne(id: string, type: 'video' | 'reading') {
 }
 
 sendAllBtn.addEventListener('click', async () => {
+  const cfg = await configStorage.getValue() as any;
+  if (cfg.warnSendAll !== false) {
+    const ok = await showConfirmModal('Send All', 'Are you sure you want to send all pending logs?', 'warnSendAll');
+    if (!ok) return;
+  }
+
   const items = Array.from(queueListEl.querySelectorAll('.qi')) as HTMLElement[];
   sendAllBtn.disabled = true;
   const toSend = items.filter(el => el.style.display !== 'none').map(el => ({id: el.dataset.id!, el}));
@@ -1042,7 +1137,9 @@ sendAllBtn.addEventListener('click', async () => {
 });
 
 clearAllBtn.addEventListener('click', async () => {
-  if (!confirm('Clear all pending logs in this section?')) return;
+  const ok = await showConfirmModal('Clear All', 'Are you sure you want to clear all pending logs?');
+  if (!ok) return;
+
   if (currentFilter === 'all' || currentFilter === 'video') await videoQueueStorage.setValue([]);
   if (currentFilter === 'all' || currentFilter === 'reading') await readingQueueStorage.setValue([]);
   renderQueue();
@@ -1120,6 +1217,8 @@ saveVideoBtn.addEventListener('click', async () => {
     hideButtons: hideBtnsEl.checked,
     hideIfNotJapanese: hideIfNotJpEl.checked,
     hideMusic: hideMusicEl.checked,
+    enablePlaylistLogger: playlistLoggerEl.checked,
+    playlistHideNonJapanese: playlistHideNonJpEl.checked,
     showTotalInBadge: showTotalEl.value === 'total'
   });
   showStatus('✓ Video Settings Saved');
@@ -1138,6 +1237,8 @@ resetVideoBtn.addEventListener('click', async () => {
     hideButtons: false,
     hideIfNotJapanese: false,
     hideMusic: false,
+    enablePlaylistLogger: true,
+    playlistHideNonJapanese: true,
     showTotalInBadge: true
   });
   loadConfig();

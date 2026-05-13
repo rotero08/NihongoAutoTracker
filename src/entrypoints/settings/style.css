@@ -102,8 +102,8 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .qi-search-sub { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
 .qi-spin-group { display: flex; align-items: center; background: rgba(255,255,255,.03); border: 1px solid var(--bdr); border-radius: 4px; padding: 2px 6px; gap: 4px; }
-.qi-spin-group input { width: 44px; background: transparent; border: none; color: var(--text); font-family: var(--mono); text-align: right; outline: none; appearance: textfield; -webkit-appearance: textfield; -moz-appearance: textfield; font-size: 13px; font-weight: 600; padding: 0; }
-.qi-spin-group input.qi-chars { width: 56px; color: var(--amber); }
+.qi-spin-group input { width: 44px; background: transparent; border: none; color: var(--amber); font-family: var(--mono); text-align: right; outline: none; appearance: textfield; -webkit-appearance: textfield; -moz-appearance: textfield; font-size: 13px; font-weight: 600; padding: 0; }
+.qi-spin-group input.qi-chars { width: 56px; color: var(--text); }
 .qi-spin-group input.qi-vol { width: 28px; color: var(--text); }
 .qi-vol-group { background: rgba(255,255,255,.02); }
 .qi-spin-group input::-webkit-inner-spin-button, .qi-spin-group input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -134,6 +134,12 @@ body { font-family: var(--sans); font-size: 14px; line-height: 1.55; }
 .qi-session-chars::-webkit-inner-spin-button, .qi-session-chars::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .qi-session-date-input { background: transparent; border: 1px solid transparent; color: var(--muted); font-family: var(--mono); font-size: 10px; outline: none; cursor: pointer; border-radius: 3px; padding: 2px 4px; transition: color .15s; color-scheme: dark; flex: 1; text-align: right; }
 .qi-session-date-input:hover, .qi-session-date-input:focus { color: var(--text); }
+
+/* ── Session Collapsible ── */
+.qi-sessions { margin-top: 6px; border-top: 1px solid var(--bdr); padding-top: 5px; display: block; }
+.session-summary { font-family: var(--mono); font-size: 11px; font-weight: bold; color: var(--muted); cursor: pointer; user-select: none; padding-bottom: 6px; outline: none; transition: color .15s; }
+.session-summary:hover { color: var(--text); }
+.session-list { display: flex; flex-direction: column; gap: 3px; }
 
 /* ── Tooltips ────────────────────────────────────────────────── */
 .tooltip-wrap { position: relative; display: inline-flex; }
