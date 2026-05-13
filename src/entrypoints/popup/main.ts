@@ -226,9 +226,9 @@ async function sendItem(id: string, el: HTMLElement): Promise<boolean> {
               chapters: media.chapters, volumes: media.volumes,
             };
             readingItem.mediaId = media.contentId;
-            readingItem.volume = volume !== undefined ? volume : 1;
-          } else { readingItem.volume = volume || 1; }
-        } else { readingItem.volume = volume || 1; }
+            readingItem.volume = readingItem.volume || volume || 1;
+          } else { readingItem.volume = readingItem.volume || volume || 1; }
+        } else { readingItem.volume = readingItem.volume || volume || 1; }
       }
     } catch (e) { console.error("Anilist fetch error", e); }
   }
@@ -428,7 +428,11 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
           e.preventDefault();
           descInput.value = native;
 
-          const { volume } = parseTitle(native);
+          // FIX: Preserve the existing volume in the UI or item
+          const currentUiVol = volumeEl ? Number(volumeEl.value) : undefined;
+          const { volume: parsedVolume } = parseTitle(native);
+          const finalVolume = Math.max(1, currentUiVol || item.volume || parsedVolume || 1);
+
           item.mediaData = {
             contentId: m.contentId,
             contentTitleNative: native,
@@ -438,9 +442,9 @@ function buildItem(item: any, type: 'video' | 'reading'): HTMLElement {
             chapters: m.chapters, volumes: m.volumes,
           };
           item.mediaId = m.contentId;
-          item.volume = volume || 1;
+          item.volume = finalVolume;
           item.description = native;
-          if (volumeEl) volumeEl.value = String(item.volume || 1);
+          if (volumeEl) volumeEl.value = String(item.volume);
 
           const q = await readingQueueStorage.getValue();
           const idx = q.findIndex((x: any) => x.id === item.id);

@@ -220,30 +220,45 @@ async function liveSyncQueue() {
   isSyncing = true;
 
   try {
-    const title = getTTUTitle();
+    const rawTitle = getTTUTitle();
+    const { query: parsedTitle, volume: parsedVolume } = parseTitle(rawTitle);
     const dateStr = new Date().toISOString();
     const secs = Math.round(ttuState.timeMs / 1000);
 
     const queue = await readingQueueStorage.getValue();
-    let existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
+    let existing = queue.find(q => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
 
     const linkMap = await ttuLinkStorage.getValue() || {};
-    const linkedMedia = linkMap[title];
+    const linkedMedia = linkMap[rawTitle];
 
-    await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { title, timeMs: ttuState.timeMs, chars: ttuState.chars });
+    await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
 
     if (!existing) {
       existing = {
-        id: crypto.randomUUID(), type: 'reading', contentTitleNative: title, contentTitleEnglish: '',
-        originalTitle: title, description: title, chars: ttuState.chars, time: secs,
+        id: crypto.randomUUID(), type: 'reading',
+        contentTitleNative: parsedTitle,
+        contentTitleEnglish: '',
+        originalTitle: rawTitle,
+        description: parsedTitle,
+        chars: ttuState.chars, time: secs,
+        volume: parsedVolume || 1,
         date: dateStr, private: false, tags:[],
         sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
         readerName: getReaderName()
       };
       queue.push(existing);
     } else {
-      existing.originalTitle = existing.originalTitle || title;
+      existing.originalTitle = existing.originalTitle || rawTitle;
       existing.readerName = getReaderName();
+
+      // Only set these if they aren't explicitly overridden / matched yet
+      if (!existing.mediaId || existing.mediaId === 'web-reading') {
+        existing.contentTitleNative = existing.contentTitleNative || parsedTitle;
+        if (parsedVolume !== undefined && !existing.volume) {
+          existing.volume = parsedVolume;
+        }
+      }
+
       existing.sessions = existing.sessions ||[];
       const sIdx = existing.sessions.findIndex((s:any) => s.id === ttuState.id);
 
@@ -862,6 +877,11 @@ function setupTTUChronometer() {
     }
   }, 1000);
 
+  wrapper.addEventListener('nt-linker-refresh', () => {
+    refreshLinkerUI();
+    updateUI();
+  });
+
   pt.el.insertAdjacentElement(pt.pos, wrapper);
   updateHistoryData().then(() => updateUI());
   refreshLinkerUI();
@@ -1081,10 +1101,10 @@ browser.storage.onChanged.addListener((changes, area) => {
 
   if (area === 'local' && changes['readingQueue']) {
     const queue = (changes['readingQueue'].newValue as any[]) ||[];
-    const title = getTTUTitle();
-    const exists = queue.some((q: any) => q.originalTitle === title || q.contentTitleNative === title);
+    const rawTitle = getTTUTitle();
+    const existing = queue.find((q: any) => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
 
-    if (!exists && ttuState.timeMs > 0) {
+    if (!existing && ttuState.timeMs > 0) {
       ttuState.timeMs = 0; ttuState.chars = 0;
       const currentCount = extractTTUCharCount();
       globalSessionStartChar = currentCount !== null ? currentCount : -1;
@@ -1094,6 +1114,35 @@ browser.storage.onChanged.addListener((changes, area) => {
       const charsVal = document.querySelector('#nt-ttu-val-chars');
       if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
       if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+    } else if (existing) {
+      // Sync matching state back from Settings/Popup
+      ttuLinkStorage.getValue().then(links => {
+        links = links || {};
+        let updated = false;
+
+        if (existing.mediaId && existing.mediaId !== 'web-reading') {
+          if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
+            links[rawTitle] = {
+              mediaId: existing.mediaId,
+              volume: existing.volume || 1,
+              mediaData: existing.mediaData
+            };
+            updated = true;
+          }
+        } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
+          if (links[rawTitle]) {
+            delete links[rawTitle];
+            updated = true;
+          }
+        }
+
+        if (updated) {
+          ttuLinkStorage.setValue(links).then(() => {
+            const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+            if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          });
+        }
+      });
     }
   }
 });

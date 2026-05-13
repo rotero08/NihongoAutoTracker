@@ -163,7 +163,7 @@ body {
 .ghost-num {
   background: none; border: none; outline: none;
   font-family: var(--mono); font-size: 10px;
-  color: var(--amber); font-weight: bold;
+  color: var(--text); font-weight: bold;
   padding: 0; margin: 0; width: 20px; text-align: right;
   cursor: text; border-radius: 2px; flex-shrink: 0;
   appearance: textfield;
@@ -175,8 +175,8 @@ body {
 .ghost-num:focus { background: rgba(240,180,41,.14); outline: none; }
 
 /* Clarified custom text widths */
-.ghost-num.num-chars { width: 40px; color: var(--text); }
-.ghost-num.num-vol { width: 24px; color: var(--text); }
+.ghost-num.num-chars { width: 40px; color: var(--amber); }
+.ghost-num.num-vol { width: 24px; color: var(--amber); }
 
 .unit-lbl {
   font-size: 10px; color: var(--dim); margin-left: 3px; margin-right: 5px; flex-shrink: 0;
