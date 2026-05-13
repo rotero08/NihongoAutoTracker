@@ -47,7 +47,7 @@ Never forget to log a video again. The extension integrates smoothly into your v
 Track your reading progress actively and seamlessly sync with popular web readers. 
 
 * **Reader Integration:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Manabe Reader in the background.
-* **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time. 
+* **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time on non-reader websites (e.g. Wikipedia, Asahi Shinbun). Can be customized.
 * **Smart Matching:** Automatically searches and matches your reading material (Light Novels) to ensure accurate logging to NihongoTracker.
 
 <p align="center">
@@ -74,6 +74,7 @@ Track your reading progress actively and seamlessly sync with popular web reader
 * **Flexible Logic:** Toggle time tracking, switch between auto and manual modes, and set playlist-specific Japanese content filters.
 * **Toggable Options:** Various toggable options to personalize your viewing and reading experience.
 * **Regex Engine:** Power users can define custom regex rules for strict control over automatic title and volume detection.
+* And more
 
 ## 🛠️ Installation for Development 
 
