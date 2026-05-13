@@ -87,4 +87,6 @@ Track your reading progress actively and seamlessly sync with popular web reader
 
 Run `pnpm run zip:all` to build for both Chrome and Firefox simultaneously. Compiled files will be located in the `.output/` directory.
 
-***
+## ⚖️ Attribution
+
+This extension interacts with [NihongoTracker](https://nihongotracker.com). All data retrieved from the site is licensed under **CC BY-NC-SA 4.0**. This is an independent project and is not affiliated with or endorsed by NihongoTracker. Consistent with the source license, this extension is strictly NonCommercial.
