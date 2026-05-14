@@ -4,6 +4,7 @@ export default defineConfig({
   srcDir: 'src',
   manifest: {
     name: 'NihongoAutoTracker',
+    description: 'An unofficial extension for NihongoTracker that automates and streamlines your Japanese immersion logging.',
     version: '3.4.1',
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs'],
     host_permissions: [
