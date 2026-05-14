@@ -815,20 +815,41 @@ function setupTTUChronometer() {
     updateUI();
   });
 
+  // --- FOOLPROOF SAVE & QUEUE BUTTON ---
+  let isProcessingLog = false;
   btnLog.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (getReaderConfig(currentConfig).autoSave !== false) return;
-    await saveSessionAndQueue(); await updateHistoryData(); updateUI();
+    if (isProcessingLog) return; // Prevent double click
+
+    isProcessingLog = true;
+    btnLog.style.opacity = '0.3';
+    btnLog.style.cursor = 'wait';
+
+  try {
+    await saveSessionAndQueue();
+    await updateHistoryData();
+  } finally {
+    isProcessingLog = false;
+    updateUI(); // updateUI naturally restores button opacity and cursor
+  }
   });
 
+  // --- FOOLPROOF DIRECT SEND BUTTON ---
+  let isProcessingDirect = false;
   btnDirect.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
+    if (isProcessingDirect) return; // Prevent double click
 
     const title = getTTUTitle();
     const links = await ttuLinkStorage.getValue() || {};
     const linkedMedia = links[title];
     if (!linkedMedia) return;
+
+    isProcessingDirect = true;
+    btnDirect.style.opacity = '0.3';
+    btnDirect.style.cursor = 'wait';
 
     const secs = Math.round(ttuState.timeMs / 1000);
     const minutes = Math.max(1, Math.round(secs / 60));
@@ -860,8 +881,15 @@ function setupTTUChronometer() {
       globalSessionStartChar = currentCount !== null ? currentCount : -1;
       globalManualCharOffset = 0; ttuState.running = false;
 
-      await updateHistoryData(); updateUI();
-    } catch (err) { showToast('Error', 'Failed to send log', true); }
+      await updateHistoryData();
+    } catch (err) {
+      showToast('Error', 'Failed to send log', true);
+    } finally {
+      isProcessingDirect = false;
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh')); // Refresh UI state
+      updateUI();
+    }
   });
 
   (window as any).ntChronoInterval = setInterval(() => {

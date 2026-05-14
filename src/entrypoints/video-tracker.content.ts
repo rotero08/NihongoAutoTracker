@@ -1063,6 +1063,10 @@ export default defineContentScript({
         // --- ONLY IF IT IS TRULY A NEW VIDEO ---
         addDebugLog('INFO', 'VideoTracker', `New Video Context Detected`, { url: cleanedHref });
 
+        // ADD THESE TWO LINES: Force close modals if the video context changes
+        document.getElementById('nt-playlist-modal')?.remove();
+        document.getElementById('nt-modal-popup')?.remove();
+
         flushPlayClock();
         if (trackedVideo && watchedSecs >= 60 && currentUrl && !state.hasTriggered) {
           finalizeSession(watchedSecs, currentUrl, currentSessionId);
@@ -1245,6 +1249,11 @@ export default defineContentScript({
 
       trigger();
       window.addEventListener('yt-navigate-finish', trigger);
+
+      window.addEventListener('yt-navigate-start', () => {
+        document.getElementById('nt-playlist-modal')?.remove();
+        document.getElementById('nt-modal-popup')?.remove();
+      });
 
       const observer = new MutationObserver((mutations) => {
         if (mutations.some(m => m.addedNodes.length > 0)) trigger();
