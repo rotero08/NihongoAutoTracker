@@ -16,23 +16,66 @@ function fmtSecs(s: number): string {
   return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${m}:${p(sec)}`;
 }
 
-function toast(msg: string, err = false) {
-  const el = document.createElement('div');
-  Object.assign(el.style, {
-    position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
-    background: err ? '#1a0f0f' : '#0f1a0f', color: err ? '#f0706a' : '#3ddc84',
-    border: `1px solid ${err ? 'rgba(240,112,106,.4)' : 'rgba(61,220,132,.4)'}`,
-                borderRadius: '5px', padding: '9px 15px', fontFamily: "'Courier New',monospace",
-                fontSize: '13px', boxShadow: '0 4px 20px rgba(0,0,0,.6)', writingMode: 'horizontal-tb',
-                direction: 'ltr', textAlign: 'left', lineHeight: '1.4', pointerEvents: 'none',
-  });
-  el.textContent = msg;
-  document.body.appendChild(el);
-  setTimeout(() => {
-    el.style.opacity = '0';
-    el.style.transition = 'opacity 0.5s';
-    setTimeout(() => el.remove(), 500);
+function showToast(title: string, msg: string, err = false) {
+  let container = document.getElementById('nt-toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'nt-toast-container';
+    Object.assign(container.style, {
+      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
+      display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none'
+    });
+    document.body.appendChild(container);
+
+    const style = document.createElement('style');
+    style.textContent = `
+    @keyframes nt-toast-deplete { from { width: 100%; } to { width: 0%; } }
+    @keyframes nt-toast-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .nt-toast {
+      pointer-events: auto; position: relative; overflow: hidden;
+      background: #0f1a0f; color: #3ddc84; border: 1px solid rgba(61,220,132,.4);
+      border-radius: 5px; padding: 12px 15px 16px 15px;
+      font-family: 'Courier New', monospace; font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.6); width: 300px; box-sizing: border-box;
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+      transition: opacity 0.3s, transform 0.3s; animation: nt-toast-slide-in 0.3s ease-out;
+      direction: ltr; text-align: left; line-height: 1.4;
+    }
+    .nt-toast.nt-err { background: #1a0f0f; color: #f0706a; border-color: rgba(240,112,106,.4); }
+    .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
+    .nt-toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; opacity: 0.6; transition: opacity 0.2s; font-family: sans-serif; }
+    .nt-toast-close:hover { opacity: 1; }
+    .nt-toast-content { display: flex; flex-direction: column; gap: 4px; flex: 1; word-break: break-word; }
+    .nt-toast-title { font-weight: bold; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
+    .nt-toast-msg { opacity: 0.9; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
+  toast.innerHTML = `
+  <div class="nt-toast-content">
+  ${title ? `<span class="nt-toast-title">${title}</span>` : ''}
+  ${msg ? `<span class="nt-toast-msg">${msg}</span>` : ''}
+  </div>
+  <button class="nt-toast-close">×</button>
+  <div class="nt-toast-bar"></div>
+  `;
+  container.appendChild(toast);
+
+  const timeout = setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    setTimeout(() => toast.remove(), 300);
   }, 3000);
+
+  toast.querySelector('.nt-toast-close')!.addEventListener('click', () => {
+    clearTimeout(timeout);
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    setTimeout(() => toast.remove(), 300);
+  });
 }
 
 if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
@@ -41,11 +84,9 @@ if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
       const g = globalThis as any;
       if (!g.__nt_toastSink) g.__nt_toastSink = 'video';
       if (g.__nt_toastSink !== 'video') return;
-
       const title = String(req.title || '');
-      const msg = req.message;
-      const text = msg ? `${title}: ${msg}` : title;
-      toast(text, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
+      const msg = req.message || '';
+      showToast(title, msg, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
     }
   });
 }
@@ -345,10 +386,15 @@ function injectModalStyles() {
   style.id = 'nt-modal-styles';
   style.textContent = `
   #nt-modal-popup { z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; cursor:default; }
-  .nt-modal { background:#0d0d12; border:1px solid #222d42; border-radius:8px; width:330px; max-width:90vw; padding:20px; color:#dde4f0; box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark; }
-  .nt-modal-header { display:flex; align-items:center; gap:12px; }
+  .nt-modal {
+    background:#0d0d12; border:1px solid #222d42; border-radius:8px;
+    width:330px; max-width:90vw; padding:20px; color:#dde4f0;
+    box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark;
+    display: flex; flex-direction: column; max-height: 85vh;
+  }
+  .nt-modal-header { display:flex; align-items:center; gap:12px; flex-shrink: 0; }
 
-  /* UPDATED: Sleek borderless SVG container for the NT logo */
+  /* Sleek borderless SVG container for the NT logo */
   .nt-logo-sq { width:32px; height:32px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:transparent; }
   .nt-logo-sq svg { width:100%; height:100%; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
 
@@ -360,7 +406,7 @@ function injectModalStyles() {
   .nt-link-btn.active { color:#F5B831; pointer-events:none; }
 
   /* --- FORM STYLING --- */
-  .nt-form-group { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; width:100%; box-sizing:border-box; }
+  .nt-form-group { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; width:100%; box-sizing:border-box; flex-shrink: 0; }
   .nt-form-group label { color:#8A8A9A; font-size:11px; font-weight:bold; letter-spacing:.5px; }
   .nt-form-group input, .nt-form-group select { background:#14141e; border:1px solid #222d42; color:#fff; padding:8px 12px; border-radius:6px; font-family:inherit; font-size:12px; outline:none; transition:border .2s, background .2s; box-sizing:border-box; width:100%; min-width:0; }
   .nt-form-group input:focus { border-color:#F5B831; background:#1a1a24; }
@@ -389,17 +435,17 @@ function injectModalStyles() {
   .nt-spin-btns button:hover { color:#dde4f0; background:#1e1e28; }
   #nt-spin-up { border-bottom:1px solid #222d42; }
 
-  .nt-form-row { display:flex; gap:12px; width:100%; }
+  .nt-form-row { display:flex; gap:12px; width:100%; flex-shrink: 0; }
   .nt-form-row .nt-form-group { margin-bottom:0; flex: 1; }
 
-  .nt-modal-footer { display:flex; gap:12px; margin-top:20px; }
+  .nt-modal-footer { display:flex; gap:12px; margin-top:20px; flex-shrink: 0; }
   .nt-modal-footer button { flex:1; padding:10px; border:none; border-radius:4px; font-family:inherit; font-weight:bold; cursor:pointer; font-size:12px; transition:opacity .2s; box-sizing:border-box; }
   .nt-modal-footer button:hover { opacity:.8; }
   #nt-modal-cancel { background:#1E1E28; color:#A0A0B0; }
   #nt-modal-submit { background:#F5B831; color:#111; }
 
   /* --- CUSTOM AMBER CHECKBOX --- */
-  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; }
+  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; flex-shrink: 0; }
   .nt-pl-chk {
     -webkit-appearance:none; appearance:none; width:16px; height:16px; border:1.5px solid #5a6a85;
     border-radius:3px; background:#14141e; cursor:pointer; position:relative; display:inline-block;
@@ -767,7 +813,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
     };
   }).filter(v => v.id);
 
-  if (videos.length === 0) { toast("No valid videos found in playlist"); return; }
+  if (videos.length === 0) { showToast("Playlist Error", "No valid videos found in playlist", true); return; }
 
   const modal = document.createElement('div');
   modal.id = 'nt-playlist-modal';
@@ -786,7 +832,8 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
   </div>
   </div>
 
-  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:16px; display:flex; flex-direction:column; gap:4px;">
+  <!-- GAP FIXED: Reduced margin-bottom from 16px to 8px -->
+  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:8px; display:flex; flex-direction:column; gap:4px; flex-shrink:1;">
   ${videos.map((v, i) => `
     <label class="pl-vid-row" id="pl-row-${i}" style="display:${hideNonJp && !v.isJp ? 'none' : 'flex'}; gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;">
     <input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" style="margin:0; flex-shrink:0; width:14px; height:14px;" />
@@ -802,17 +849,20 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
     <span id="pl-time-${i}" style="color:#FFB800; font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>
     </label>
     `).join('')}
+    </div>
 
-    <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:16px; padding:20px 0; text-align:center;">
+    <!-- GAP FIXED: Reduced padding and margin-bottom -->
+    <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:8px; padding:10px 0; text-align:center; flex-shrink:0;">
     <div style="font-size:14px; color:#dde4f0; font-weight:bold;">Confirm Logging</div>
     <div style="font-size:12px; color:#a9b4c8;">Are you sure you want to log <span id="pl-confirm-count" style="color:#F5B831; font-weight:bold;">0</span> videos directly?</div>
     </div>
 
-    <div class="nt-modal-footer" id="pl-footer-main">
+    <!-- GAP FIXED: Added margin-top: 4px to override global 20px -->
+    <div class="nt-modal-footer" id="pl-footer-main" style="margin-top: 4px;">
     <button id="pl-cancel" class="nt-btn-ghost">Cancel</button><button id="pl-submit" class="nt-btn-amber">Log Selected</button>
     </div>
 
-    <div class="nt-modal-footer" id="pl-footer-confirm" style="display:none;">
+    <div class="nt-modal-footer" id="pl-footer-confirm" style="display:none; margin-top: 4px;">
     <button id="pl-confirm-no" class="nt-btn-ghost">Go Back</button><button id="pl-confirm-yes" class="nt-btn-amber">Yes, Log Them</button>
     </div>`;
 
@@ -831,7 +881,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
         const maxScrollLeft = el.scrollWidth - el.clientWidth;
         const scrollLeft = el.scrollLeft;
 
-        const atStart = scrollLeft <= 2; // Buffer for fractional scroll values
+        const atStart = scrollLeft <= 2;
         const atEnd = scrollLeft >= maxScrollLeft - 2;
 
         if (atStart) {
@@ -874,6 +924,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
 
       videos.forEach(async (v, i) => {
         try {
+          // FIXED: Replaced truncated code ".id}" with full template string
           const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
           if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
           if (data?.channel?.contentId) {
@@ -889,7 +940,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
 
       modal.querySelector('#pl-toggle-jp')!.addEventListener('click', (e) => {
         hideNonJp = !hideNonJp;
-        (e.target as HTMLElement).textContent = hideNonJp ? 'Show Non-JP videos' : 'Hide Non-JP videos';
+        (e.target as HTMLElement).textContent = hideNonJp ? 'Show Non-JP' : 'Hide Non-JP';
       videos.forEach((v, i) => {
         const row = modal.querySelector(`#pl-row-${i}`) as HTMLElement;
         if (row) row.style.display = (hideNonJp && !v.isJp) ? 'none' : 'flex';
@@ -966,7 +1017,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
           });
           if(ok === true || (ok as any)?.success) successCount++;
         }
-        toast(`Logged ${successCount}/${checked.length} videos`);
+        showToast('Success', `Logged ${successCount}/${checked.length} videos`);
         modal.remove();
       });
 }
@@ -1147,90 +1198,60 @@ export default defineContentScript({
       });
 
       // --- REPLACEMENT FOR PERFORMANT INJECTION ---
-      const runInjectionCycle = async () => {
+      const runInjectionCycle = () => {
         const vid = document.querySelector<HTMLVideoElement>('video');
-        if (vid) {
-          attach(vid);
-          if (!state.hasTriggered) {
-            ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cachedConfig, cachedChannelName, resetSession);
-          }
-        }
+        if (vid) attach(vid);
 
-        // Playlist Logger Injection
         if (cachedConfig.enablePlaylistLogger !== false) {
-          // New YouTube Podcasts and modern playlists use ytd-page-header-renderer (#buttons)
-          const fullMenu =
-          document.querySelector('ytd-page-header-renderer #buttons') ||
-          document.querySelector('ytd-page-header-renderer #actions-inner') ||
-          document.querySelector('ytd-page-header-renderer #actions ytd-menu-renderer') ||
-          document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper') ||
-          document.querySelector('ytd-playlist-header-renderer #actions ytd-menu-renderer') ||
-          document.querySelector('ytd-playlist-header-renderer ytd-menu-renderer');
+          // Strictly standard YouTube playlist containers
+          const containers = [
+            document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper'),
+            document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed')
+          ].filter(Boolean);
 
-          const inlineMenu =
-          document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') ||
-          document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu');
-
-          [fullMenu, inlineMenu].forEach(container => {
+          containers.forEach(container => {
             if (container && !container.querySelector('.nt-playlist-logger')) {
               const btn = document.createElement('button');
               btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-
               btn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="#F5B831"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
 
               Object.assign(btn.style, {
                 background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: '40px', height: '40px', borderRadius: '50%', padding: '0',
-                transition: 'background-color 0.2s'
+                width: '40px', height: '40px', borderRadius: '50%', transition: 'background-color 0.2s'
               });
 
-              btn.title = "Log Playlist Videos to NT";
-
-              btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+              btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
               btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
+              btn.onclick = (e) => {
+                e.stopPropagation();
+                showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null);
+              };
 
-          btn.onclick = (e) => {
-            e.stopPropagation();
-            showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null);
-          };
-
-          container.appendChild(btn);
+              // Insert at start for best visibility
+              container.insertBefore(btn, container.firstChild);
             }
           });
-        } else {
-          document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
         }
       };
 
-      // PERFORMANCE FIX: Debounce the injection cycle to prevent freezing the browser
-      let injectionTimer: number | null = null;
-      const triggerInjection = () => {
-        if (injectionTimer) window.clearTimeout(injectionTimer);
-        injectionTimer = window.setTimeout(runInjectionCycle, 400);
+      // Debounce the injection to keep YouTube snappy
+      let timer: number | null = null;
+      const trigger = () => {
+        if (timer) clearTimeout(timer);
+        timer = window.setTimeout(runInjectionCycle, 500);
       };
 
-      // 1. Run immediately on load
-      triggerInjection();
+      trigger();
+      window.addEventListener('yt-navigate-finish', trigger);
 
-      // 2. Listen to YouTube's internal navigation event
-      window.addEventListener('yt-navigate-finish', () => {
-        triggerInjection();
-        setTimeout(triggerInjection, 1500); // Backup check for slow-loading pages
-      });
-
-      // 3. MutationObserver as a fallback, now perfectly debounced!
       const observer = new MutationObserver((mutations) => {
-        for (let i = 0; i < mutations.length; i++) {
-          if (mutations[i].addedNodes.length > 0) {
-            triggerInjection();
-            break;
-          }
-        }
+        if (mutations.some(m => m.addedNodes.length > 0)) trigger();
       });
 
-      const appRoot = document.querySelector('ytd-app') || document.body;
-      observer.observe(appRoot, { childList: true, subtree: true });
+      // Observe only the main content area for maximum performance
+      const root = document.querySelector('ytd-app') || document.body;
+      observer.observe(root, { childList: true, subtree: true });
       // ---------------------------------------------
   },
 });

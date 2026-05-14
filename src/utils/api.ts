@@ -3,22 +3,67 @@ import { addDebugLog } from './storage';
 export function notify(title: string, message: string) {
   try {
     const injectToast = (t: string, m: string) => {
-      const el = document.createElement('div');
-      Object.assign(el.style, {
-        position: 'fixed', top: '20px', right: '20px', zIndex: '2147483647',
-        background: m.toLowerCase().includes('fail') ? '#1a0f0f' : '#10101f',
-                    color: m.toLowerCase().includes('fail') ? '#f0706a' : '#dde4f0',
-                    borderLeft: `4px solid ${m.toLowerCase().includes('fail') ? '#f0706a' : '#f0b429'}`,
-                    borderRadius: '4px', padding: '12px 20px', fontFamily: "system-ui, -apple-system, sans-serif",
-                    fontSize: '13px', boxShadow: '0 4px 15px rgba(0,0,0,0.6)',
-                    pointerEvents: 'none', transition: 'opacity 0.5s ease', opacity: '1', textAlign: 'left'
-      });
-      el.innerHTML = `<strong style="color: ${m.toLowerCase().includes('fail') ? '#f0706a' : '#f0b429'}; font-size: 14px;">${t}</strong>${m ? '<br/><span style="opacity: 0.8; margin-top: 4px; display: inline-block;">' + m + '</span>' : ''}`;
-      document.body.appendChild(el);
-      setTimeout(() => {
-        el.style.opacity = '0';
-        setTimeout(() => el.remove(), 500);
+      const err = m.toLowerCase().includes('fail') || t.toLowerCase().includes('fail');
+      let container = document.getElementById('nt-toast-container');
+
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'nt-toast-container';
+        Object.assign(container.style, {
+          position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
+          display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none'
+        });
+        document.body.appendChild(container);
+
+        const style = document.createElement('style');
+        style.textContent = `
+        @keyframes nt-toast-deplete { from { width: 100%; } to { width: 0%; } }
+        @keyframes nt-toast-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .nt-toast {
+          pointer-events: auto; position: relative; overflow: hidden;
+          background: #0f1a0f; color: #3ddc84; border: 1px solid rgba(61,220,132,.4);
+          border-radius: 5px; padding: 12px 15px 16px 15px;
+          font-family: 'Courier New', monospace; font-size: 13px;
+          box-shadow: 0 4px 20px rgba(0,0,0,.6); width: 300px; box-sizing: border-box;
+          display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+          transition: opacity 0.3s, transform 0.3s; animation: nt-toast-slide-in 0.3s ease-out;
+          direction: ltr; text-align: left; line-height: 1.4;
+        }
+        .nt-toast.nt-err { background: #1a0f0f; color: #f0706a; border-color: rgba(240,112,106,.4); }
+        .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
+        .nt-toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; opacity: 0.6; transition: opacity 0.2s; font-family: sans-serif; }
+        .nt-toast-close:hover { opacity: 1; }
+        .nt-toast-content { display: flex; flex-direction: column; gap: 4px; flex: 1; word-break: break-word; }
+        .nt-toast-title { font-weight: bold; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
+        .nt-toast-msg { opacity: 0.9; }
+        `;
+        document.head.appendChild(style);
+      }
+
+      const toast = document.createElement('div');
+      toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
+      toast.innerHTML = `
+      <div class="nt-toast-content">
+      ${t ? `<span class="nt-toast-title">${t}</span>` : ''}
+      ${m ? `<span class="nt-toast-msg">${m}</span>` : ''}
+      </div>
+      <button class="nt-toast-close">×</button>
+      <div class="nt-toast-bar"></div>
+      `;
+      container.appendChild(toast);
+
+      const timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
       }, 3000);
+
+      toast.querySelector('.nt-toast-close')!.addEventListener('click', () => {
+        clearTimeout(timeout);
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(100%)';
+        setTimeout(() => toast.remove(), 300);
+      });
     };
 
     if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
