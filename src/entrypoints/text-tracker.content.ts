@@ -951,6 +951,10 @@ function showToast(title: string, msg: string, err = false) {
       display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
       transition: opacity 0.3s, transform 0.3s; animation: nt-toast-slide-in 0.3s ease-out;
       direction: ltr; text-align: left; line-height: 1.4;
+      writing-mode: horizontal-tb !important;
+      flex-direction: row !important;
+      direction: ltr !important;
+      text-align: left !important;
     }
     .nt-toast.nt-err { background: #1a0f0f; color: #f0706a; border-color: rgba(240,112,106,.4); }
     .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
