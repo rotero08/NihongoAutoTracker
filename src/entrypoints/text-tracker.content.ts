@@ -934,7 +934,8 @@ function showToast(title: string, msg: string, err = false) {
     container.id = 'nt-toast-container';
     Object.assign(container.style, {
       position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
-      display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none'
+      display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none',
+      writingMode: 'horizontal-tb'
     });
     document.body.appendChild(container);
 

@@ -1,4 +1,4 @@
-import { addDebugLog } from './storage';
+// if (!container) {import { addDebugLog } from './storage';
 
 export function notify(title: string, message: string) {
   try {
@@ -11,7 +11,9 @@ export function notify(title: string, message: string) {
         container.id = 'nt-toast-container';
         Object.assign(container.style, {
           position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
-          display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none'
+          display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none',
+          // ADD THIS LINE:
+          writingMode: 'horizontal-tb'
         });
         document.body.appendChild(container);
 
