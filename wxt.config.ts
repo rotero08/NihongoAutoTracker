@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: {
     name: 'NihongoAutoTracker',
     description: 'An unofficial extension for NihongoTracker that automates and streamlines your Japanese immersion logging.',
-    version: '3.4.2',
+    version: '3.4.3',
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs'],
     host_permissions: [
       'https://nihongotracker.app/*',
