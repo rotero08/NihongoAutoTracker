@@ -122,8 +122,12 @@ export default defineBackground(() => {
       const base: any = {
         type,
         mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : (item.channelId || "web-video")),
-                                description: item.description || item.contentTitleNative, episodes: 0, pages: 0, unknownDate: false, volume: item.volume || 1,
-                                mediaData: item.mediaData || (type === 'reading' ? { contentId: 'web-reading', contentTitleNative: item.contentTitleNative } : { channelId: item.channelId || 'web-video', channelTitle: item.contentTitleNative })
+        description: item.description || item.contentTitleNative,
+        episodes: 0,
+        pages: 0,
+        unknownDate: false,
+        volume: item.volume || 1,
+        mediaData: item.mediaData || (type === 'reading' ? { contentId: 'web-reading', contentTitleNative: item.contentTitleNative } : { channelId: item.channelId || 'web-video', channelTitle: item.contentTitleNative })
       };
 
       if (type === 'video' && (item.channelId || item.mediaData?.channelId)) {
@@ -132,15 +136,16 @@ export default defineBackground(() => {
           channelId: item.mediaData?.channelId || item.channelId || 'web-video',
           channelTitle: media.channelTitle || item.mediaData?.channelTitle || item.contentTitleNative,
           ...(media.channelImage ? { channelImage: media.channelImage } : {}),
-                                ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
+          ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
         };
       }
 
       let payloads =[];
       if (!item.sessions || item.sessions.length === 0) {
-        payloads =[{ ...base, time: type === 'reading' ? Math.max(1, Math.round((item.time||0)/60)) : item.time||0, date: item.date, chars: item.chars || 0 }];
+        payloads = [{ ...base, time: type === 'reading' ? Math.max(1, Math.round((item.time||0)/60)) : item.time||0, date: item.date, chars: item.chars || 0 }];
       } else {
-        payloads = item.sessions.map((s:any) => ({ ...base, time: type === 'reading' ? Math.max(1, Math.round(s.secs / 60)) : Math.max(1, Math.round(s.secs / 60)), date: s.date, chars: s.chars || 0 }));
+        // OPTIMIZED: Removed Math.round calculation duplication
+        payloads = item.sessions.map((s:any) => ({ ...base, time: Math.max(1, Math.round(s.secs / 60)), date: s.date, chars: s.chars || 0 }));
       }
 
       let success = true;

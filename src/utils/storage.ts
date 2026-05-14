@@ -130,8 +130,8 @@ export async function addDebugLog(level: 'INFO'|'WARN'|'ERROR', source: string, 
     logs.unshift({ timestamp: new Date().toISOString(), level, source, message, data: dataStr });
     if (logs.length > 200) logs.length = 200; // Limit memory footprint
     await debugLogStorage.setValue(logs);
-    console.log(`[NT-DEBUG] [${level}] ${source}: ${message}`, data || '');
+    //console.log(`[NT-DEBUG] [${level}] ${source}: ${message}`, data || '');
   } catch (e) {
-    console.error('Failed to write debug log', e);
+    //console.error('Failed to write debug log', e);
   }
 }

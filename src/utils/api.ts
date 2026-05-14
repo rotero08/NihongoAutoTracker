@@ -2,12 +2,41 @@ import { addDebugLog } from './storage';
 
 export function notify(title: string, message: string) {
   try {
+    const injectToast = (t: string, m: string) => {
+      const el = document.createElement('div');
+      Object.assign(el.style, {
+        position: 'fixed', top: '20px', right: '20px', zIndex: '2147483647',
+        background: m.toLowerCase().includes('fail') ? '#1a0f0f' : '#10101f',
+                    color: m.toLowerCase().includes('fail') ? '#f0706a' : '#dde4f0',
+                    borderLeft: `4px solid ${m.toLowerCase().includes('fail') ? '#f0706a' : '#f0b429'}`,
+                    borderRadius: '4px', padding: '12px 20px', fontFamily: "system-ui, -apple-system, sans-serif",
+                    fontSize: '13px', boxShadow: '0 4px 15px rgba(0,0,0,0.6)',
+                    pointerEvents: 'none', transition: 'opacity 0.5s ease', opacity: '1', textAlign: 'left'
+      });
+      el.innerHTML = `<strong style="color: ${m.toLowerCase().includes('fail') ? '#f0706a' : '#f0b429'}; font-size: 14px;">${t}</strong>${m ? '<br/><span style="opacity: 0.8; margin-top: 4px; display: inline-block;">' + m + '</span>' : ''}`;
+      document.body.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 500);
+      }, 3000);
+    };
+
     if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
       browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
-        if (tabs[0]?.id) browser.tabs.sendMessage(tabs[0].id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+        const tabId = tabs[0]?.id;
+        if (tabId && browser.scripting && browser.scripting.executeScript) {
+          browser.scripting.executeScript({
+            target: { tabId },
+            func: injectToast,
+            args: [title, message]
+          }).catch(() => null);
+        } else if (tabId) {
+          browser.tabs.sendMessage(tabId, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+        }
       }).catch(() => null);
       return;
     }
+
     if (browser.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: 'NOTIFY', title, message }).catch(() => null);
     }

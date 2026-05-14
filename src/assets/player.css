@@ -48,13 +48,16 @@ position: relative; /* Necessary for the pseudo-element hover */
 background-color: rgba(195, 195, 195, 0.2) !important;
 }
 
-.nt-brand-label {
-  color: #f0b429;
-  font-weight: 700;
-  font-size: 14px;
-  font-family: "Roboto", "Arial", sans-serif !important;
-  line-height: 1 !important;
+.nt-badge-logo {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  flex-shrink: 0 !important;
+  display: block !important;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));
 }
+
+.nt-brand-label { display: none; }
 
 .nt-time-label {
   color: #ffffff;

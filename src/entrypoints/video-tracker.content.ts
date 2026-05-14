@@ -3,6 +3,10 @@ import { configStorage, videoQueueStorage, addDebugLog } from '@/utils/storage';
 import { resolveVideoChannelMedia, submitLog } from '@/utils/api';
 import '@/assets/player.css';
 
+// Import the SVG as raw text and force it to be 100% of its container
+import rawLogoSvg from '../../public/NihongoAutoTracker.svg?raw';
+const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;"');
+
 const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
 
 function fmtSecs(s: number): string {
@@ -343,7 +347,11 @@ function injectModalStyles() {
   #nt-modal-popup { z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; cursor:default; }
   .nt-modal { background:#0d0d12; border:1px solid #222d42; border-radius:8px; width:330px; max-width:90vw; padding:20px; color:#dde4f0; box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark; }
   .nt-modal-header { display:flex; align-items:center; gap:12px; }
-  .nt-logo-sq { width:30px; height:30px; border:1px solid #F5B831; color:#F5B831; display:flex; align-items:center; justify-content:center; border-radius:4px; font-weight:bold; font-size:15px; box-sizing:border-box; flex-shrink:0; }
+
+  /* UPDATED: Sleek borderless SVG container for the NT logo */
+  .nt-logo-sq { width:32px; height:32px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:transparent; }
+  .nt-logo-sq svg { width:100%; height:100%; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
+
   .nt-title-area { display:flex; flex-direction:column; gap:4px; }
   .nt-brand-name { font-weight:bold; font-size:13px; letter-spacing:.5px; }
   .nt-badge { background:#3E1C1F; color:#E57373; border:1px solid #5A2A2E; font-size:9px; padding:2px 6px; border-radius:12px; font-weight:bold; width:max-content; }
@@ -430,6 +438,14 @@ function injectModalStyles() {
     box-sizing: border-box;
   }
 
+  .pl-scroll-title {
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* IE/Edge */
+  }
+  .pl-scroll-title::-webkit-scrollbar {
+    display: none !important; /* Chrome/Safari/Webkit */
+  }
+
   .nt-btn-amber { background:#F5B831 !important; color:#111 !important; border:none !important; }
   .nt-btn-ghost { background:transparent !important; color:#a9b4c8 !important; border:1px solid #222d42 !important; }
   .nt-btn-ghost:hover { color:#dde4f0 !important; border-color:#5a6a85 !important; }
@@ -471,7 +487,12 @@ function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; vide
   popup.innerHTML = `
   <div class="nt-modal">
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
-  <div class="nt-modal-header"><div class="nt-logo-sq">日</div><div class="nt-title-area"><span class="nt-brand-name">NihongoAutoTracker</span><span class="nt-badge">MANUAL LOG</span></div></div>
+  <div class="nt-modal-header">
+  <div class="nt-logo-sq" style="border:none; display:flex; align-items:center; justify-content:center;">
+  ${inlineLogo}
+  </div>
+  <div class="nt-title-area"><span class="nt-brand-name">NihongoAutoTracker</span><span class="nt-badge">MANUAL LOG</span></div>
+  </div>
   </div>
 
   <div style="display:flex; justify-content:flex-start; gap:10px; font-size:10px; font-weight:bold; margin-bottom:16px;">
@@ -617,8 +638,21 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
     el.id = 'nt-status-badge';
     el.style.position = 'relative';
     el.style.cursor = 'pointer';
+
+    // Add Flex layout to guarantee exact center alignment regardless of parent
+    el.style.display = 'inline-flex';
+    el.style.alignItems = 'center';
+    el.style.height = '100%';
+    el.style.padding = '0 6px';
+
     if (containerData.isFallback) el.classList.add('nt-absolute-pill');
-    el.innerHTML = `<div class="nt-pill-visual-wrapper"><span class="nt-brand-label">NT</span><span class="nt-time-label">0:00</span></div>`;
+
+    el.innerHTML = `<div class="nt-pill-visual-wrapper" style="display:flex; align-items:center; gap:6px;">
+    <div class="nt-badge-logo" style="width:18px; height:18px; flex-shrink:0; pointer-events:none; display:flex; align-items:center; justify-content:center;">
+    ${inlineLogo}
+    </div>
+    <span class="nt-time-label">0:00</span>
+    </div>`;
 
     el.onclick = async (e) => {
       if ((e.target as HTMLElement).closest('#nt-modal-popup')) return;
@@ -690,16 +724,25 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
   const existing = document.getElementById('nt-playlist-modal');
   if (existing) { existing.remove(); return; }
 
-  const parent = isInline ? document.querySelector('ytd-playlist-panel-renderer') : document.body;
-  const rendererSelector = isInline ? 'ytd-playlist-panel-video-renderer' : 'ytd-playlist-video-renderer';
-  const items = Array.from(parent?.querySelectorAll(rendererSelector) ||[]);
+  // Target the primary container so we don't accidentally grab right-sidebar recommendations
+  const parent = isInline
+  ? document.querySelector('ytd-playlist-panel-renderer')
+  : (document.querySelector('ytd-two-column-browse-results-renderer #primary') || document.body);
+
+  // Added support for podcast/course grids (ytd-rich-grid-media)
+  const rendererSelector = isInline
+  ? 'ytd-playlist-panel-video-renderer'
+  : 'ytd-playlist-video-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
+
+  const items = Array.from(parent?.querySelectorAll(rendererSelector) || []);
 
   let hideNonJp = (await configStorage.getValue() as any).playlistHideNonJapanese ?? true;
 
   const videos = items.map(el => {
     const titleEl = el.querySelector('#video-title');
     const titleText = titleEl?.textContent?.trim() || 'Unknown';
-    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a');
+    // Added specific fallback for podcast grid links (a#video-title-link)
+    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a#video-title-link') || el.querySelector('a');
     const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer') || el.querySelector('.badge-shape-wiz__text');
 
     let domTime = 1;
@@ -716,7 +759,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
       url: url,
       id: idMatch ? idMatch[1] : null,
       time: domTime,
-      isJp: (titleText.match(JP_RE) ||[]).length > 0,
+      isJp: (titleText.match(JP_RE) || []).length > 0,
                            channelId: null as string | null,
                            channelTitle: null as string | null,
                            channelImage: null as string | null,
@@ -732,23 +775,33 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
   modal.innerHTML = `
   <div class="nt-modal-header" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
   <div style="display:flex; gap:12px; align-items:center;">
-  <div class="nt-logo-sq">日</div><div class="nt-title-area"><span class="nt-brand-name">Log Playlist Videos</span></div>
+  <div class="nt-logo-sq" style="border:none; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); display:flex; align-items:center; justify-content:center;">
+  ${inlineLogo}
+  </div>
+  <div class="nt-title-area"><span class="nt-brand-name">Log Playlist Videos</span></div>
   </div>
   <div id="pl-top-actions" style="display:flex; gap:10px;">
-  <button id="pl-toggle-jp" style="background:none; border:none; color:#a9b4c8; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">${hideNonJp ? 'Show Non-JP videos' : 'Hide Non-JP videos'}</button>
-  <button id="pl-toggle-all" style="background:none; border:none; color:#F5B831; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">Select All</button>
+  <button id="pl-toggle-jp" style="background:none; border:none; color:#a9b4c8; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">${hideNonJp ? 'Show Non-JP' : 'Hide Non-JP'}</button>
+  <button id="pl-toggle-all" style="background:none; border:none; color:#FFB800; font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">Select All</button>
   </div>
   </div>
 
-  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:16px; display:flex; flex-direction:column; gap:8px;">
+  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:16px; display:flex; flex-direction:column; gap:4px;">
   ${videos.map((v, i) => `
-    <label class="pl-vid-row" id="pl-row-${i}" style="display:${hideNonJp && !v.isJp ? 'none' : 'flex'}; gap:12px; align-items:center; font-size:11px; cursor:pointer; padding:2px 0;">
-    <input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" />
-    <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v.title.replace(/</g, '&lt;')}</span>
-    <span id="pl-time-${i}" style="color:#F5B831; font-family:monospace; flex-shrink:0; text-align:right; width:65px; font-weight:bold;">...</span>
+    <label class="pl-vid-row" id="pl-row-${i}" style="display:${hideNonJp && !v.isJp ? 'none' : 'flex'}; gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;">
+    <input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" style="margin:0; flex-shrink:0; width:14px; height:14px;" />
+
+    <!-- Tighter Enumeration with Dot -->
+    <span style="font-family:ui-monospace,SFMono-Regular,monospace; color:#8A8A9A; width:14px; text-align:right; flex-shrink:0; font-size:10px; margin-right:2px;">${i + 1}.</span>
+
+    <!-- Title Container (Fade added dynamically via JS below) -->
+    <div class="pl-scroll-title" id="pl-title-${i}" style="flex:1; overflow-x:auto; white-space:nowrap; padding: 2px 0; font-size:11px; scrollbar-width:none; -ms-overflow-style:none;">
+    ${v.title.replace(/</g, '&lt;')}
+    </div>
+
+    <span id="pl-time-${i}" style="color:#FFB800; font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>
     </label>
     `).join('')}
-    </div>
 
     <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:16px; padding:20px 0; text-align:center;">
     <div style="font-size:14px; color:#dde4f0; font-weight:bold;">Confirm Logging</div>
@@ -764,6 +817,41 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
     </div>`;
 
     document.body.appendChild(modal);
+
+    const titleEls = modal.querySelectorAll('.pl-scroll-title');
+    titleEls.forEach((el) => {
+      const updateMask = () => {
+        const isOverflowing = el.scrollWidth > el.clientWidth;
+        if (!isOverflowing) {
+          (el as HTMLElement).style.webkitMaskImage = 'none';
+          (el as HTMLElement).style.maskImage = 'none';
+          return;
+        }
+
+        const maxScrollLeft = el.scrollWidth - el.clientWidth;
+        const scrollLeft = el.scrollLeft;
+
+        const atStart = scrollLeft <= 2; // Buffer for fractional scroll values
+        const atEnd = scrollLeft >= maxScrollLeft - 2;
+
+        if (atStart) {
+          (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, black 85%, transparent 100%)';
+          (el as HTMLElement).style.maskImage = 'linear-gradient(to right, black 85%, transparent 100%)';
+        } else if (atEnd) {
+          (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, transparent 0%, black 15%)';
+          (el as HTMLElement).style.maskImage = 'linear-gradient(to right, transparent 0%, black 15%)';
+        } else {
+          (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%)';
+          (el as HTMLElement).style.maskImage = 'linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%)';
+        }
+      };
+
+      const observer = new ResizeObserver(() => updateMask());
+      observer.observe(el);
+      el.addEventListener('scroll', updateMask, { passive: true });
+      updateMask();
+    });
+
     const rect = btn.getBoundingClientRect();
     modal.style.position = 'fixed';
     modal.style.top = isInline ? `${rect.bottom + 10}px` : `${rect.bottom + 20}px`;
@@ -784,7 +872,6 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
       };
       setTimeout(() => document.addEventListener('click', clickOutsideHandler), 10);
 
-      // Fetch unique data for EACH video from API
       videos.forEach(async (v, i) => {
         try {
           const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
@@ -1071,20 +1158,37 @@ export default defineContentScript({
 
         // Playlist Logger Injection
         if (cachedConfig.enablePlaylistLogger !== false) {
-          const fullMenu = document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper') || document.querySelector('ytd-playlist-header-renderer ytd-menu-renderer');
-          const inlineMenu = document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') || document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu');
+          // New YouTube Podcasts and modern playlists use ytd-page-header-renderer (#buttons)
+          const fullMenu =
+          document.querySelector('ytd-page-header-renderer #buttons') ||
+          document.querySelector('ytd-page-header-renderer #actions-inner') ||
+          document.querySelector('ytd-page-header-renderer #actions ytd-menu-renderer') ||
+          document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper') ||
+          document.querySelector('ytd-playlist-header-renderer #actions ytd-menu-renderer') ||
+          document.querySelector('ytd-playlist-header-renderer ytd-menu-renderer');
+
+          const inlineMenu =
+          document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') ||
+          document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu');
 
           [fullMenu, inlineMenu].forEach(container => {
             if (container && !container.querySelector('.nt-playlist-logger')) {
               const btn = document.createElement('button');
               btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+
               btn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="#F5B831"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
-              Object.assign(btn.style, { background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '6px', transition: 'filter .15s' });
+
+              Object.assign(btn.style, {
+                background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: '40px', height: '40px', borderRadius: '50%', padding: '0',
+                transition: 'background-color 0.2s'
+              });
+
               btn.title = "Log Playlist Videos to NT";
 
-              // Amber all the time, brighter on hover
-              btn.onmouseenter = () => btn.style.filter = 'brightness(1.2)';
-              btn.onmouseleave = () => btn.style.filter = 'brightness(1)';
+              btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+              btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
 
           btn.onclick = (e) => {
             e.stopPropagation();
@@ -1099,27 +1203,32 @@ export default defineContentScript({
         }
       };
 
-      // 1. Run immediately on load
-      runInjectionCycle();
+      // PERFORMANCE FIX: Debounce the injection cycle to prevent freezing the browser
+      let injectionTimer: number | null = null;
+      const triggerInjection = () => {
+        if (injectionTimer) window.clearTimeout(injectionTimer);
+        injectionTimer = window.setTimeout(runInjectionCycle, 400);
+      };
 
-      // 2. Listen to YouTube's internal navigation event (extremely performant)
+      // 1. Run immediately on load
+      triggerInjection();
+
+      // 2. Listen to YouTube's internal navigation event
       window.addEventListener('yt-navigate-finish', () => {
-        // Delay slightly to allow YouTube's SPA to render the new elements
-        setTimeout(runInjectionCycle, 500);
-        setTimeout(runInjectionCycle, 2000);
+        triggerInjection();
+        setTimeout(triggerInjection, 1500); // Backup check for slow-loading pages
       });
 
-      // 3. MutationObserver as a fallback for elements that load late
+      // 3. MutationObserver as a fallback, now perfectly debounced!
       const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-          if (mutation.addedNodes.length > 0) {
-            runInjectionCycle();
+        for (let i = 0; i < mutations.length; i++) {
+          if (mutations[i].addedNodes.length > 0) {
+            triggerInjection();
             break;
           }
         }
       });
 
-      // We only observe the main app container to keep it fast
       const appRoot = document.querySelector('ytd-app') || document.body;
       observer.observe(appRoot, { childList: true, subtree: true });
       // ---------------------------------------------
