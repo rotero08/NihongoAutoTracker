@@ -11,7 +11,7 @@ Logs are stored in a local queue, giving you complete control over your data bef
 
 * **Session Management:** Group multiple short sessions of the same media together.
 * **Manual Overrides:** Edit time, character counts, dates, volume and title before hitting "Send".
-* **Match Media:** If not previously match, you can optionally match it manually before sending. A green checkmark appears when matched.
+* **Smart Matching:** Search and match your reading material (Light Novels) to ensure accurate logging to NihongoTracker. A green checkmark appears when matched.
 * **End-of-Day Sync:** Optionally set the extension to automatically flush your queue and send everything right before midnight.
 
 <p align="center">
@@ -21,8 +21,8 @@ Logs are stored in a local queue, giving you complete control over your data bef
       <td align="center"><b>Full Dashboard View</b></td>
     </tr>
     <tr>
-      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/3151fdd7-4498-448b-9572-652374fa728b" /></td>
-      <td valign="top"><img width="450" alt="Full Settings and Queue Page" src="https://github.com/user-attachments/assets/8c8518e3-f571-4fc3-b067-d7bfbf1ecbcb" /></td>
+      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/c1f24f88-7e2c-4849-90a4-eb6a60d4cf99" /></td>
+      <td valign="top"><img width="450" alt="Full Settings and Queue Page" src="https://github.com/user-attachments/assets/ca3687e0-023f-4126-9bb0-200552b9361d" /></td>
     </tr>
   </table>
 </p>
@@ -31,16 +31,17 @@ Logs are stored in a local queue, giving you complete control over your data bef
 Never forget to log a video again. The extension integrates smoothly into your viewing experience without cluttering the screen.
 
 * **In-Player Badge:** Injects a sleek, non-intrusive tracking badge directly into the player to monitor current and total session time.
-* **Playlist Logger:** Bulk-log entire playlists or select specific videos directly from the YouTube sidebar or playlist header. Includes smart filters to automatically hide non-Japanese content.
 * **Quick Context Menu:** Right-click any YouTube video or link to log it instantly to NihongoTracker without opening a single menu.
 * **Smart Auto-Logging:** Optionally set thresholds (e.g., 95% completion or 30 minutes watched) to log content automatically in the background without sending it to the queue.
 
 <p align="center">
- <img width="800" alt="YouTube Tracking Badge" src="https://github.com/user-attachments/assets/f395ec3c-23cc-4f19-a653-d4498e474664" />
+ <img width="800" alt="YouTube Tracking Badge" src="https://github.com/user-attachments/assets/e58e8de0-f7c7-449e-ac5a-f0b197d2ccc9" />
 </p>
 
+* **Playlist Logger:** Bulk-log entire playlists or select specific videos directly from the YouTube sidebar or playlist header. Includes smart filters to automatically hide non-Japanese content.
+
 <p align="center">
-  <img width="400" alt="Playlist Logger Selector" src="https://github.com/user-attachments/assets/b14c87e4-60a1-44cd-ab55-1026462c879a" />
+  <img width="400" alt="Playlist Logger Selector" src="https://github.com/user-attachments/assets/7229d5e0-0114-49d7-a136-e5869f221dab" />
 </p>
 
 ### Reading & Context Menu Logging
@@ -48,12 +49,12 @@ Track your reading progress actively and seamlessly sync with popular web reader
 
 * **Reader Integration:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Manabe Reader in the background.
 * **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time on non-reader websites (e.g. Wikipedia, Asahi Shinbun). Can be customized.
-* **Smart Matching:** Automatically searches and matches your reading material (Light Novels) to ensure accurate logging to NihongoTracker.
+* **Integrated Matching Logic:** Match your reading material inside the reader before sending it to the queue, ensuring every send is correctly matched.
 
 <p align="center">
   <table>
     <tr>
-      <td align="center"><b>Smart Title Matching</b></td>
+      <td align="center"><b>Reader Integration</b></td>
       <td align="center"><b>Session History & Tracking</b></td>
     </tr>
     <tr>
