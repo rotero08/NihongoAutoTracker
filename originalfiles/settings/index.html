@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>NihongoAutoTracker — Settings</title>
+  <link rel="stylesheet" href="./style.css"/>
+</head>
+<body>
+<div class="shell">
+
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <img src="/NihongoAutoTracker.svg" style="width:100%; height:100%; object-fit:contain;" alt="NAT" />
+      </div>
+      <div><div class="brand-name">NihongoAutoTracker</div><div class="brand-ver">v3.4.3</div></div>
+    </div>
+    <div class="nav-group">
+
+      <a class="nav-item active" data-tab="queue">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="10" y2="12"/></svg></span>
+        Queue <span id="nav-badge" class="nav-badge hidden">0</span>
+      </a>
+
+      <a class="nav-item" data-tab="api">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><circle cx="5.5" cy="10.5" r="3"/><path d="M8 8l5-5M13 3h-2M13 3v2"/></svg></span>
+        API Key
+      </a>
+
+      <a class="nav-item" data-tab="video">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><polygon points="4,2 4,14 13,8" stroke="none" fill="currentColor"/></svg></span>
+        Video
+      </a>
+
+      <a class="nav-item" data-tab="overlay">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2.5 2"/></svg></span>
+        Overlay
+      </a>
+
+      <a class="nav-item" data-tab="readers">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1"/><line x1="5" y1="7" x2="11" y2="7"/><line x1="5" y1="10" x2="9" y2="10"/></svg></span>
+        Readers
+      </a>
+
+      <!-- NEW DEBUG TAB -->
+      <a class="nav-item" id="nav-debug" data-tab="debug" style="display:none">
+        <span class="nav-icon"><svg viewBox="0 0 16 16"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        Debug
+      </a>
+
+    </div>
+
+    <!-- ADVANCED OPTION TOGGLE -->
+    <div style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--bdr);">
+      <label class="toggle" style="font-size: 11px;">
+        <input type="checkbox" id="debug-mode" class="toggle-chk"/>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        Advanced
+      </label>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- Queue -->
+    <section class="tab active" id="tab-queue">
+      <div class="tab-head">
+        <h2>Pending Logs</h2>
+        <div class="tab-actions" id="queue-actions" style="display:none">
+          <button id="send-all-btn" class="btn btn-amber btn-sm">Send All</button>
+          <button id="clear-all-btn" class="btn btn-ghost btn-sm">Clear All</button>
+        </div>
+      </div>
+
+      <div class="field" style="margin-bottom: 16px; background: rgba(240,180,41,.05); border: 1px solid rgba(240,180,41,.2); border-radius: 6px; padding: 12px 16px;">
+        <div class="tooltip-wrap" style="display:flex; width:100%;">
+          <label class="toggle" style="flex:1;">
+            <input type="checkbox" id="auto-send-end-of-day" class="toggle-chk"/>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            Automatically send today's queued logs at end of day
+          </label>
+          <span class="tooltip">This would also send unmatched media</span>
+        </div>
+      </div>
+
+      <div class="queue-tabs">
+        <button class="q-tab active" data-filter="all">All</button>
+        <button class="q-tab" data-filter="video">Video</button>
+        <button class="q-tab" data-filter="reading">Reading</button>
+      </div>
+
+      <div class="info-box">
+        <strong>ⓘ Auto-Sum & Overrides:</strong> Editing individual sessions updates the total automatically. If you manually set the <em>Total</em> higher than the sum, the Total takes priority and sends as one combined log.
+      </div>
+
+      <div id="queue-list"></div>
+    </section>
+
+    <!-- API Key -->
+    <section class="tab" id="tab-api">
+      <div class="tab-head"><h2>API Key</h2></div>
+      <p class="hint">Get this from your NihongoTracker account <a href="https://nihongotracker.app/settings" target="_blank" rel="noopener noreferrer" style="color: var(--amber); text-decoration: underline; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">settings</a> page.</p>
+      <div class="field">
+        <label class="label">API Key</label>
+        <div class="row-inline">
+          <input type="password" id="api-key" class="input" placeholder="Paste your key here…" autocomplete="off"/>
+          <button id="toggle-key" class="btn btn-ghost btn-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><ellipse cx="8" cy="8" rx="6" ry="4"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>
+          </button>
+        </div>
+        <div id="api-status" class="api-status"></div>
+      </div>
+      <button id="save-api-btn" class="btn btn-amber">Save API Key</button>
+    </section>
+
+    <!-- Video -->
+    <section class="tab" id="tab-video">
+      <div class="tab-head"><h2>Video Tracking</h2></div>
+
+      <div class="field">
+          <label class="label">Auto-Queue Threshold Type</label>
+          <div class="thresh-row">
+            <label class="thresh-opt"><input type="radio" name="queue-thresh-type" value="time" checked/> Minutes watched</label>
+            <label class="thresh-opt"><input type="radio" name="queue-thresh-type" value="percent"/> Percentage</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Auto-Queue Threshold <span id="queue-thresh-unit" class="label-val">1 min</span></label>
+          <div id="queue-thresh-slider-wrap" style="display:none">
+            <input type="range" id="queue-threshold-pct" class="slider" min="0" max="100" step="1" value="5"/>
+            <div class="slider-ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+          </div>
+          <div id="queue-thresh-minutes-wrap">
+            <div class="thresh-spinner">
+              <input type="number" id="queue-threshold-min" class="input" min="1" value="1" placeholder="1"/>
+              <div class="thresh-spin-btns">
+                <button type="button" class="thresh-spin-up queue-thresh-spin-up" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg></button>
+                <button type="button" class="thresh-spin-dn queue-thresh-spin-dn" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg></button>
+              </div>
+            </div>
+            <p class="hint" style="margin-top:7px;margin-bottom:0">Queue video automatically when watched time reaches this threshold.</p>
+          </div>
+        </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="auto-send" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Automatically send video based on threshold
+        </label>
+      </div>
+
+      <div id="auto-config">
+        <div class="field">
+          <label class="label">Threshold Type</label>
+          <div class="thresh-row">
+            <label class="thresh-opt"><input type="radio" name="thresh-type" value="time" checked/> Minutes watched</label>
+            <label class="thresh-opt"><input type="radio" name="thresh-type" value="percent"/> Percentage</label>
+          </div>
+        </div>
+        <div class="field">
+          <label class="label">Threshold Value <span id="thresh-unit" class="label-val">95%</span></label>
+          <div id="thresh-slider-wrap">
+            <input type="range" id="threshold-pct" class="slider" min="0" max="100" step="1" value="95"/>
+            <div class="slider-ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+          </div>
+          <div id="thresh-minutes-wrap">
+            <div class="thresh-spinner">
+              <input type="number" id="threshold-min" class="input" min="1" value="30" placeholder="30"/>
+              <div class="thresh-spin-btns">
+                <button type="button" class="thresh-spin-up" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,5 5,1 9,5"/></svg></button>
+                <button type="button" class="thresh-spin-dn" tabindex="-1"><svg viewBox="0 0 10 6"><polyline points="1,1 5,5 9,1"/></svg></button>
+              </div>
+            </div>
+            <p class="hint" style="margin-top:7px;margin-bottom:0">Send when accumulated watch time reaches this many minutes.</p>
+          </div>
+        </div>
+
+
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="hide-buttons" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide Log button on video players
+        </label>
+      </div>
+
+      <div class="field" id="hide-jp-field">
+        <label class="toggle">
+          <input type="checkbox" id="hide-if-not-jp" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide Log button if content is not Japanese
+        </label>
+      </div>
+
+      <div class="field" id="hide-music-field">
+        <label class="toggle">
+          <input type="checkbox" id="hide-music" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide Log button on music videos
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="enable-playlist-logger" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Show Playlist Logger button on YouTube
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="playlist-hide-non-jp" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Hide non-Japanese videos in Playlist Logger by default
+        </label>
+      </div>
+
+      <div class="field" id="show-total-field">
+        <label class="label">Badge Display Mode</label>
+        <select id="show-total-badge" class="input">
+          <option value="session">Current Session Only</option>
+          <option value="total">Current Session / Total Time</option>
+        </select>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="save-video-btn" class="btn btn-amber">Save</button>
+        <button id="reset-video-btn" class="btn btn-ghost">Revert to Default</button>
+      </div>
+    </section>
+
+    <!-- Overlay -->
+    <section class="tab" id="tab-overlay">
+      <div class="tab-head"><h2>Text Overlay</h2></div>
+      <p class="hint">A small draggable timer overlay shown on Japanese pages while you read.</p>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="track-time" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Include active reading time in context-menu logs
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="label">Default Position</label>
+        <div class="pos-grid">
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-left"/> Top Left</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-right"/> Top Right</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="bottom-left"/> Bottom Left</label>
+          <label class="pos-opt"><input type="radio" name="overlay-pos" value="bottom-right"/> Bottom Right</label>
+          <label class="pos-opt pos-wide"><input type="radio" name="overlay-pos" value="hidden"/> Hidden</label>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; margin-bottom:36px">
+        <button id="save-overlay-btn" class="btn btn-amber">Save</button>
+        <button id="reset-overlay-btn" class="btn btn-ghost">Revert to Default</button>
+      </div>
+
+      <!-- Sites sub-section -->
+      <div class="sub-head">
+        <h3>Sites</h3>
+      </div>
+      <p class="hint" style="margin-top:0">
+        <strong style="color:var(--text)">It auto-detects japanese characters in a website to force the overlay.</strong><br/>
+        To control where the overlay appears, click a domain to edit it inline.<br/>
+        <strong style="color:var(--text)">Note:</strong> Sites in the Allow list force the overlay to appear, bypassing auto-detection. Sites on the Skip list, skips them even if it detects japanese characters.
+      </p>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" id="allow-list-only" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Only show overlay on Allow sites (disables auto-detection completely)
+        </label>
+      </div>
+
+      <!-- Allow -->
+      <div class="sites-group">
+        <div class="sites-toggle-head" data-group="allow">
+          <div class="sites-head-left">
+            <span class="sites-head-label allow">Allow</span>
+            <span class="sites-head-count" id="allow-count">0</span>
+          </div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
+        </div>
+        <div class="sites-body" id="allow-body">
+          <div class="site-list" id="allow-list"></div>
+          <div class="add-site-row">
+            <input type="text" id="allow-input" class="input" placeholder="e.g. example.jp"/>
+            <button id="allow-add" class="btn btn-amber btn-sm">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skip -->
+      <div class="sites-group">
+        <div class="sites-toggle-head" data-group="skip">
+          <div class="sites-head-left">
+            <span class="sites-head-label skip">Skip</span>
+            <span class="sites-head-count" id="skip-count">0</span>
+          </div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
+        </div>
+        <div class="sites-body" id="skip-body">
+          <div class="site-list" id="skip-list"></div>
+          <div class="add-site-row">
+            <input type="text" id="skip-input" class="input" placeholder="e.g. example.com"/>
+            <button id="skip-add" class="btn btn-amber btn-sm">Add</button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Readers -->
+    <section class="tab" id="tab-readers">
+      <div class="tab-head"><h2>Readers</h2></div>
+      <p class="hint">Configure tracking behaviour for supported reading applications.</p>
+
+      <!-- Global Reader Settings -->
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="reader-auto-save" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Auto-sync sessions to queue in the background
+        </label>
+      </div>
+
+      <div class="field" style="margin-top: 16px;">
+        <label class="toggle">
+          <input type="checkbox" id="reader-direct-send" class="toggle-chk"/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Directly send to NT if matched
+        </label>
+      </div>
+
+      <!-- Individual Site Enable Toggles -->
+      <div class="sub-head"><h3>Supported Sites</h3></div>
+
+      <!-- TTU -->
+      <div class="reader-card">
+        <div class="reader-card-left">
+          <span class="reader-card-name">TTU Reader</span>
+          <span class="reader-card-url">reader.ttsu.app</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="ttu-enabled" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <!-- Yatsu -->
+      <div class="reader-card">
+        <div class="reader-card-left">
+          <span class="reader-card-name">Yatsu Reader</span>
+          <span class="reader-card-url">app.yatsu.moe</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="yatsu-enabled" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <!-- Manabe -->
+      <div class="reader-card" style="margin-bottom: 0;">
+        <div class="reader-card-left">
+          <span class="reader-card-name">Manabe Reader</span>
+          <span class="reader-card-url">manga.manabe.es</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="manabe-enabled" class="toggle-chk" checked/>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <!-- Regex Rules -->
+      <div class="sites-group" style="margin-top: 24px; margin-bottom: 8px;">
+        <div class="sites-toggle-head" data-group="regex">
+          <div class="sites-head-left">
+            <span class="sites-head-label">Title/Volume Regex Rules</span>
+          </div>
+          <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
+        </div>
+        <div class="sites-body" id="regex-body" style="padding: 12px;">
+          <p class="hint" style="margin-top:0; margin-bottom:12px;">
+            <strong style="color:var(--text)">Order Matters!</strong> Rules are evaluated from top to bottom. The first regex that successfully matches will be used. Put highly specific edge cases at the top, and broad generic cases at the bottom. Use capture group 1 <code>(.*?)</code> to extract the Title, and group 2 <code>(\d+)</code> to extract the Volume.
+          </p>
+          <div class="site-list" id="regex-list" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;"></div>
+          <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--bdr); padding-top: 16px;">
+            <input type="text" id="regex-desc-input" class="input" placeholder="Description (e.g., specific publisher or naming format)" style="padding: 8px 12px;" />
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="regex-val-input" class="input" placeholder="Regex e.g. ^(.*?)\s+(\d+)$" style="font-family: var(--mono); flex: 1; padding: 8px 12px;" />
+              <button id="regex-add" class="btn btn-amber btn-sm" style="white-space: nowrap; padding: 0 16px;">Add Rule</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; margin-top: 24px;">
+        <button id="reset-readers-btn" class="btn btn-ghost">Revert to Default</button>
+      </div>
+    </section>
+
+    <!-- Debug (Advanced) Tab -->
+    <section class="tab" id="tab-debug">
+      <div class="tab-head">
+        <h2>System Debug Logs</h2>
+        <div class="tab-actions">
+          <button id="clear-debug-btn" class="btn btn-ghost btn-sm">Clear Logs</button>
+          <button id="refresh-debug-btn" class="btn btn-amber btn-sm">Refresh</button>
+        </div>
+      </div>
+      <p class="hint" style="margin-top:0">Logs are continually collected locally to help diagnose tracking or API issues.</p>
+      <div class="debug-container" id="debug-logs-list">
+        <!-- Logs dynamically populated -->
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- Modal for unmatched media warning -->
+<div id="unmatched-modal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Unmatched Media</h3>
+    <p>You are about to send logs that hasn't been matched to any media. Proceed?</p>
+    <label class="toggle" style="margin-top: 10px;">
+      <input type="checkbox" id="dont-warn-chk" class="toggle-chk"/>
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      Don't warn me again
+    </label>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn btn-ghost">Cancel</button>
+      <button id="modal-proceed" class="btn btn-amber">Proceed</button>
+    </div>
+  </div>
+</div>
+
+<div id="status" class="status-toast hidden"></div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

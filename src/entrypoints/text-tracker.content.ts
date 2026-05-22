@@ -1,25 +1,24 @@
+/**
+ * ── Text Tracker Content Script ──────────────────────────────────────────────
+ *
+ * Injected into all web pages to provide:
+ * 1. A reading time overlay/chronometer on Japanese pages
+ * 2. TTU/Yatsu/Manabe ebook reader integration with character tracking
+ * 3. Context menu "Log to NihongoTracker" support (provides active time)
+ *
+ * Uses shared library modules for constants, storage, utilities, and API calls.
+ */
+
 import { defineContentScript } from '#imports';
-import { configStorage, readingQueueStorage, ttuHistoryStorage, ttuLinkStorage, addDebugLog } from '@/utils/storage';
+import { configStorage } from '@/lib/storage/config';
+import { readingQueueStorage } from '@/lib/storage/queues';
+import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
+import { addDebugLog } from '@/lib/storage/debug';
+import { submitLog } from '@/lib/api/nihongotracker';
+import { SKIP_HOSTS_DEFAULT, JP_DOMAINS_DEFAULT, JP_RE, TTU_HOSTS, DEFAULT_TITLE_REGEXES } from '@/lib/constants';
+import { fmt } from '@/lib/utils/time';
+import { parseTitle } from '@/lib/utils/text-parsing';
 import '@/assets/overlay.css';
-import { submitLog } from '@/utils/api';
-
-const SKIP_HOSTS_DEFAULT =['youtube.com','youtu.be','crunchyroll.com','animekai.to','music.youtube.com','nihongotracker.app', 'mail.google.com', 'mail.proton.me'];
-const JP_DOMAINS_DEFAULT =[
-  'nhk.or.jp','nhk.jp','news.yahoo.co.jp','yomiuri.co.jp','asahi.com','mainichi.jp',
-'nikkei.com','tokyoreporter.com','watanoc.com','aozora.gr.jp','syosetu.com','kakuyomu.jp',
-'pixiv.net','nicovideo.jp','comic-walker.com','manga-raw.club','jisho.org',
-'wanikani.com','bunpro.jp','satorireader.com',
-];
-const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
-const TTU_HOSTS =['reader.ttsu.app', 'app.yatsu.moe', 'manga.manabe.es'];
-
-const DEFAULT_TITLE_REGEXES =[
-  { desc: "YomiYasu Prefix (e.g., 'YomiYasu - Title 1')", re: "^YomiYasu\\s*-\\s*(.*?)\\s+(?:v|vol|第)?(\\d+)" },
-  { desc: "Publisher/Label Trailing (e.g., 'Title 18 (MFブックス)')", re: "^(.*?)\\s+(?:v|vol|第)?(\\d+)\\s*(?:巻)?\\s*\\([^)]+\\)$" },
-  { desc: "Volume Format 第X巻 (e.g., 'Title 第2巻')", re: "^(.*?)\\s+第(\\d+)巻$" },
-  { desc: "Volume Format vX (e.g., 'Title v1')", re: "^(.*?)\\s+v(\\d+)$" },
-  { desc: "Standard Space Number (e.g., 'Title 1')", re: "^(.*?)\\s+(\\d+)$" }
-];
 
 let currentConfig: any = {};
 let websiteOverlayDismissed = false;
@@ -71,11 +70,6 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
   return result;
 }
 
-function fmt(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60), sec = s % 60;
-  return `${m}:${String(sec).padStart(2, '0')}`;
-}
 
 const ttuState = {
   id: crypto.randomUUID(),
@@ -101,32 +95,11 @@ function getTTUTitle() {
   return title.trim() || document.title;
 }
 
-function parseTitle(docTitle: string) {
-  let title = docTitle;
-  let volume: number | undefined = undefined;
-
-  if (/^\d+$/.test(docTitle)) return { query: docTitle, volume: undefined };
-
-  const regexes = currentConfig.titleRegexes ?? DEFAULT_TITLE_REGEXES;
-
-  for (const item of regexes) {
-    try {
-      const regex = new RegExp(item.re, 'i');
-      const match = docTitle.match(regex);
-      if (match && match[1]) {
-        title = match[1].trim();
-        if (match[2]) volume = parseInt(match[2], 10);
-        return { query: title, volume };
-      }
-    } catch(e) {}
-  }
-
-  const fallback = docTitle.match(/^(.*?[a-zA-Z\u3040-\u30ff\u4e00-\u9fff]+.*?)(\d+)$/);
-  if (fallback) {
-    title = fallback[1].trim();
-    volume = parseInt(fallback[2], 10);
-  }
-  return { query: title, volume };
+/* parseTitle is now imported from @/lib/utils/text-parsing.
+ * The shared version accepts optional custom regexes as a second parameter.
+ * We wrap it here to always pass the current config's regex rules. */
+function parseTitleWithConfig(docTitle: string) {
+  return parseTitle(docTitle, currentConfig.titleRegexes);
 }
 
 // --- TTU CHARACTERS CACHING ---
@@ -227,7 +200,7 @@ async function liveSyncQueue() {
 
   try {
     const rawTitle = getTTUTitle();
-    const { query: parsedTitle, volume: parsedVolume } = parseTitle(rawTitle);
+    const { query: parsedTitle, volume: parsedVolume } = parseTitleWithConfig(rawTitle);
     const dateStr = new Date().toISOString();
     const secs = Math.round(ttuState.timeMs / 1000);
 
@@ -281,7 +254,7 @@ async function liveSyncQueue() {
     }
 
     if (linkedMedia) {
-      existing.mediaId = linkedMedia.mediaId;
+      existing.mediaId = String(linkedMedia.mediaId);
       existing.mediaData = linkedMedia.mediaData;
       existing.volume = linkedMedia.volume;
       existing.contentTitleNative = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
@@ -504,7 +477,7 @@ function setupTTUChronometer() {
     if (match && match.mediaId) {
       linkerEdit.style.display = 'none'; linkerCompact.style.display = 'flex';
       linkLabel.textContent = match.mediaData.contentTitleNative || 'Linked';
-      linkInput.value = match.mediaData.contentTitleNative || parseTitle(title).query;
+      linkInput.value = match.mediaData.contentTitleNative || parseTitleWithConfig(title).query;
       const v = Math.max(1, Number(match.volume || 1));
       volPill.textContent = `Vol ${v}`;
       const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
@@ -517,8 +490,8 @@ function setupTTUChronometer() {
       }
     } else {
       linkerEdit.style.display = 'flex'; linkerCompact.style.display = 'none';
-      linkInput.value = parseTitle(title).query;
-      const { volume } = parseTitle(title);
+      linkInput.value = parseTitleWithConfig(title).query;
+      const { volume } = parseTitleWithConfig(title);
       const v = Math.max(1, Number(volume || Number((volPill.textContent || '').replace(/\D/g, '')) || 1));
       volPill.textContent = `Vol ${v}`;
       if (volAnchor && volPill.parentElement !== volAnchor) volAnchor.appendChild(volPill);
@@ -582,7 +555,7 @@ function setupTTUChronometer() {
 
     const queue = await readingQueueStorage.getValue();
     const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
-    if (existing) { existing.mediaId = 'web-reading'; existing.mediaData = null; await readingQueueStorage.setValue(queue); }
+    if (existing) { existing.mediaId = 'web-reading'; existing.mediaData = undefined; await readingQueueStorage.setValue(queue); }
     refreshLinkerUI();
   });
 
@@ -620,7 +593,7 @@ function setupTTUChronometer() {
 
     row.addEventListener('click', async () => {
       const title = getTTUTitle();
-      const { volume } = parseTitle(title);
+      const { volume } = parseTitleWithConfig(title);
       const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
       volPill.textContent = `Vol ${selectedVolume}`;
 

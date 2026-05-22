@@ -1,84 +1,36 @@
+/**
+ * ── Video Tracker Content Script ─────────────────────────────────────────────
+ *
+ * Injected into YouTube (and other video sites) to track watching time.
+ * Provides:
+ * 1. Badge overlay on video players showing session/total time
+ * 2. Auto-queue and auto-send based on configurable thresholds
+ * 3. Manual log modal and playlist logger
+ *
+ * Uses shared library modules for constants, storage, utilities, and API calls.
+ */
+
 import { defineContentScript } from '#imports';
-import { configStorage, videoQueueStorage, addDebugLog } from '@/utils/storage';
-import { resolveVideoChannelMedia, submitLog } from '@/utils/api';
+import { configStorage } from '@/lib/storage/config';
+import { videoQueueStorage } from '@/lib/storage/queues';
+import { addDebugLog } from '@/lib/storage/debug';
+import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
+import { JP_RE } from '@/lib/constants';
+import { fmtSecs } from '@/lib/utils/time';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
+import { cleanUrl } from '@/lib/utils/url';
+import { showToast } from '@/lib/utils/toast';
+import { isMusic, isLikelyJapanese } from '@/lib/utils/japanese';
+import { injectModalStyles, localTodayISODate, dateInputToISO } from '@/lib/ui/video-modal';
+import { shouldHideBadge, BADGE_ID, BADGE_TIME_CLASS } from '@/lib/ui/video-badge';
 import '@/assets/player.css';
 
 // Import the SVG as raw text and force it to be 100% of its container
 import rawLogoSvg from '../../public/NihongoAutoTracker.svg?raw';
 const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;"');
+/* showToast is now imported from @/lib/utils/toast */
 
-const JP_RE = /[\u3040-\u30ff\u4e00-\u9fff]/g;
-
-function fmtSecs(s: number): string {
-  s = Math.floor(s);
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${m}:${p(sec)}`;
-}
-
-function showToast(title: string, msg: string, err = false) {
-  let container = document.getElementById('nt-toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'nt-toast-container';
-    Object.assign(container.style, {
-      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
-      display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none',
-      writingMode: 'horizontal-tb'
-    });
-    document.body.appendChild(container);
-
-    const style = document.createElement('style');
-    style.textContent = `
-    @keyframes nt-toast-deplete { from { width: 100%; } to { width: 0%; } }
-    @keyframes nt-toast-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-    .nt-toast {
-      pointer-events: auto; position: relative; overflow: hidden;
-      background: #0f1a0f; color: #3ddc84; border: 1px solid rgba(61,220,132,.4);
-      border-radius: 5px; padding: 12px 15px 16px 15px;
-      font-family: 'Courier New', monospace; font-size: 13px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.6); width: 300px; box-sizing: border-box;
-      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
-      transition: opacity 0.3s, transform 0.3s; animation: nt-toast-slide-in 0.3s ease-out;
-      direction: ltr; text-align: left; line-height: 1.4;
-    }
-    .nt-toast.nt-err { background: #1a0f0f; color: #f0706a; border-color: rgba(240,112,106,.4); }
-    .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
-    .nt-toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; opacity: 0.6; transition: opacity 0.2s; font-family: sans-serif; }
-    .nt-toast-close:hover { opacity: 1; }
-    .nt-toast-content { display: flex; flex-direction: column; gap: 4px; flex: 1; word-break: break-word; }
-    .nt-toast-title { font-weight: bold; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
-    .nt-toast-msg { opacity: 0.9; }
-    `;
-    document.head.appendChild(style);
-  }
-
-  const toast = document.createElement('div');
-  toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
-  toast.innerHTML = `
-  <div class="nt-toast-content">
-  ${title ? `<span class="nt-toast-title">${title}</span>` : ''}
-  ${msg ? `<span class="nt-toast-msg">${msg}</span>` : ''}
-  </div>
-  <button class="nt-toast-close">×</button>
-  <div class="nt-toast-bar"></div>
-  `;
-  container.appendChild(toast);
-
-  const timeout = setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-
-  toast.querySelector('.nt-toast-close')!.addEventListener('click', () => {
-    clearTimeout(timeout);
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    setTimeout(() => toast.remove(), 300);
-  });
-}
-
+/* ── SHOW_TOAST message listener ── */
 if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
   browser.runtime.onMessage.addListener((req: any) => {
     if (req?.action === 'SHOW_TOAST') {
@@ -92,76 +44,8 @@ if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
   });
 }
 
-function cleanUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    if (u.hostname.includes('youtube.com') || u.hostname.includes('youtu.be')) {
-      const v = u.searchParams.get('v');
-      if (v) {
-        return `https://www.youtube.com/watch?v=${v}`;
-      }
-    }
-    return u.origin + u.pathname;
-  } catch { return url; }
-}
+/* isMusic and isLikelyJapanese are now imported from @/lib/utils/japanese */
 
-function stripVideoTitle(title: string): string {
-  return title.replace(/^\(\d+\)\s*/, '').replace(/\s*-\s*YouTube\s*$/i, '').trim();
-}
-
-function isMusic(): boolean {
-  const host = window.location.hostname;
-  if (host === 'music.youtube.com') return true;
-
-  if (host.includes('youtube.com')) {
-    const isLive = !!document.querySelector('.ytp-live, .re-live-badge, [is-live]');
-    const hasMusicMetadata = !!document.querySelector('ytd-structured-description-content-renderer');
-    const playerResponse = (window as any).ytInitialPlayerResponse;
-    const isMusicCategory = playerResponse?.videoDetails?.categoryId === "10";
-
-    if (isLive) return hasMusicMetadata;
-    if (isMusicCategory) return true;
-
-    const g = document.querySelector('meta[itemprop="genre"]');
-    if (g?.getAttribute('content') === 'Music') return true;
-    if (document.querySelector('ytd-music-watch-metadata-renderer')) return true;
-
-    const secondaryInfo = (document.querySelector('ytd-video-secondary-info-renderer') as HTMLElement | null)?.innerText || '';
-    if (secondaryInfo.includes('Auto-generated by YouTube') || secondaryInfo.includes('Provided to YouTube')) return true;
-  }
-  return false;
-}
-
-function isLikelyJapanese(): boolean {
-  const host = window.location.hostname;
-  if (host.includes('animekai') || host.includes('crunchyroll')) return true;
-
-  if (host.includes('youtube.com')) {
-    try {
-      const playerResponse = (window as any).ytInitialPlayerResponse;
-      const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      if (tracks) {
-        for (const track of tracks) if (track.languageCode === 'ja') return true;
-      }
-    } catch (e) {}
-
-    const docTitle = document.title.replace(/^\(\d+\)\s*/, '');
-    if ((docTitle.match(JP_RE) ??[]).length >= 1) return true;
-
-    const titleEl = document.querySelector<HTMLElement>('#title h1 yt-formatted-string, h1.ytd-watch-metadata');
-    if (titleEl && (titleEl.innerText.match(JP_RE) ??[]).length >= 1) return true;
-
-    const channelEl = document.querySelector<HTMLElement>('#owner ytd-channel-name yt-formatted-string, ytd-channel-name a');
-    if (channelEl && (channelEl.innerText.match(JP_RE) ??[]).length >= 1) return true;
-
-    const descEl = document.querySelector<HTMLElement>('#description-inline-expander yt-attributed-string, ytd-expandable-video-description-body-renderer');
-    if (descEl) {
-      const sample = descEl.innerText?.slice(0, 1000) ?? '';
-      if ((sample.match(JP_RE) ??[]).length >= 3) return true;
-    }
-  }
-  return false;
-}
 
 let _jpCacheUrl = '';
 let _jpCacheResult = false;
@@ -182,7 +66,7 @@ const ytApiInFlight: Record<string, Promise<any>> = {};
 async function fetchYouTubeVideoData(url: string) {
   const clean = cleanUrl(url);
   if (ytApiCache[clean]) return ytApiCache[clean];
-  if (ytApiInFlight[clean]) return ytApiInFlight[clean];
+  if (clean in ytApiInFlight) return await ytApiInFlight[clean];
 
   ytApiInFlight[clean] = (async () => {
     try {
@@ -381,138 +265,7 @@ async function removeFromQueue(url: string) {
   }
 }
 
-function injectModalStyles() {
-  if (document.getElementById('nt-modal-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'nt-modal-styles';
-  style.textContent = `
-  #nt-modal-popup { z-index:2147483647; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; cursor:default; }
-  .nt-modal {
-    background:#0d0d12; border:1px solid #222d42; border-radius:8px;
-    width:330px; max-width:90vw; padding:20px; color:#dde4f0;
-    box-shadow:0 10px 40px rgba(0,0,0,.8); box-sizing:border-box; color-scheme:dark;
-    display: flex; flex-direction: column; max-height: 85vh;
-  }
-  .nt-modal-header { display:flex; align-items:center; gap:12px; flex-shrink: 0; }
-
-  /* Sleek borderless SVG container for the NT logo */
-  .nt-logo-sq { width:32px; height:32px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:transparent; }
-  .nt-logo-sq svg { width:100%; height:100%; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }
-
-  .nt-title-area { display:flex; flex-direction:column; gap:4px; }
-  .nt-brand-name { font-weight:bold; font-size:13px; letter-spacing:.5px; }
-  .nt-badge { background:#3E1C1F; color:#E57373; border:1px solid #5A2A2E; font-size:9px; padding:2px 6px; border-radius:12px; font-weight:bold; width:max-content; }
-  .nt-link-btn { background:none; border:none; color:#5a6a85; cursor:pointer; font-family:inherit; font-size:10px; font-weight:bold; padding:0; transition:color .2s; }
-  .nt-link-btn:hover { color:#dde4f0; }
-  .nt-link-btn.active { color:#F5B831; pointer-events:none; }
-
-  /* --- FORM STYLING --- */
-  .nt-form-group { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; width:100%; box-sizing:border-box; flex-shrink: 0; }
-  .nt-form-group label { color:#8A8A9A; font-size:11px; font-weight:bold; letter-spacing:.5px; }
-  .nt-form-group input, .nt-form-group select { background:#14141e; border:1px solid #222d42; color:#fff; padding:8px 12px; border-radius:6px; font-family:inherit; font-size:12px; outline:none; transition:border .2s, background .2s; box-sizing:border-box; width:100%; min-width:0; }
-  .nt-form-group input:focus { border-color:#F5B831; background:#1a1a24; }
-
-  /* --- CUSTOM NUMBER INPUT SPINNER --- */
-  .nt-form-group input[type=number]::-webkit-inner-spin-button,
-  .nt-form-group input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
-  .nt-form-group input[type=number] { -moz-appearance:textfield; }
-
-  .nt-number-wrapper {
-    position:relative; display:flex; width:100%; background:#14141e; border:1px solid #222d42;
-    border-radius:6px; box-sizing:border-box; overflow:hidden; transition:border .2s, background .2s;
-  }
-  .nt-number-wrapper:focus-within { border-color:#F5B831; background:#1a1a24; }
-  .nt-number-wrapper input {
-    border:none !important; background:transparent !important; border-radius:0 !important;
-    padding-right:0 !important; flex:1; outline:none !important; min-width:0; box-shadow:none !important;
-  }
-  .nt-spin-btns {
-    display:flex; flex-direction:column; width:26px; border-left:1px solid #222d42; background:#14141e;
-  }
-  .nt-spin-btns button {
-    flex:1; background:transparent; border:none; color:#5a6a85; cursor:pointer; display:flex;
-    align-items:center; justify-content:center; transition:color 0.15s, background 0.15s; padding:0; margin:0;
-  }
-  .nt-spin-btns button:hover { color:#dde4f0; background:#1e1e28; }
-  #nt-spin-up { border-bottom:1px solid #222d42; }
-
-  .nt-form-row { display:flex; gap:12px; width:100%; flex-shrink: 0; }
-  .nt-form-row .nt-form-group { margin-bottom:0; flex: 1; }
-
-  .nt-modal-footer { display:flex; gap:12px; margin-top:20px; flex-shrink: 0; }
-  .nt-modal-footer button { flex:1; padding:10px; border:none; border-radius:4px; font-family:inherit; font-weight:bold; cursor:pointer; font-size:12px; transition:opacity .2s; box-sizing:border-box; }
-  .nt-modal-footer button:hover { opacity:.8; }
-  #nt-modal-cancel { background:#1E1E28; color:#A0A0B0; }
-  #nt-modal-submit { background:#F5B831; color:#111; }
-
-  /* --- CUSTOM AMBER CHECKBOX --- */
-  .nt-modal-opt { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:11px; color:#a9b4c8; flex-shrink: 0; }
-  .nt-pl-chk {
-    -webkit-appearance:none; appearance:none; width:16px; height:16px; border:1.5px solid #5a6a85;
-    border-radius:3px; background:#14141e; cursor:pointer; position:relative; display:inline-block;
-    flex-shrink:0; margin:0; outline:none; transition:all 0.15s ease;
-  }
-  .nt-pl-chk:checked { background:#F5B831; border-color:#F5B831; }
-  .nt-pl-chk:checked::after {
-    content:''; position:absolute; left:4px; top:1px; width:4px; height:8px;
-    border:solid white; border-width:0 2.2px 2.2px 0; transform:rotate(45deg);
-  }
-
-  /* --- CUSTOM SCROLLBAR (Fixed Overlap) --- */
-  #nt-playlist-modal-list {
-  padding-right: 24px !important;
-  margin-right: 0 !important;
-  scrollbar-width: thin;
-  scrollbar-color: #222d42 transparent;
-  box-sizing: border-box;
-  }
-  #nt-playlist-modal-list::-webkit-scrollbar {
-  width: 6px;
-  }
-  #nt-playlist-modal-list::-webkit-scrollbar-track {
-  background: transparent;
-  }
-  #nt-playlist-modal-list::-webkit-scrollbar-thumb {
-  background: #222d42;
-  border-radius: 10px;
-  }
-  #nt-playlist-modal-list::-webkit-scrollbar-thumb:hover {
-  background: #F5B831;
-  }
-
-  .pl-vid-row {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .pl-scroll-title {
-    scrollbar-width: none !important; /* Firefox */
-    -ms-overflow-style: none !important; /* IE/Edge */
-  }
-  .pl-scroll-title::-webkit-scrollbar {
-    display: none !important; /* Chrome/Safari/Webkit */
-  }
-
-  .nt-btn-amber { background:#F5B831 !important; color:#111 !important; border:none !important; }
-  .nt-btn-ghost { background:transparent !important; color:#a9b4c8 !important; border:1px solid #222d42 !important; }
-  .nt-btn-ghost:hover { color:#dde4f0 !important; border-color:#5a6a85 !important; }
-  `;
-  document.head.appendChild(style);
-}
-
-function localTodayISODate(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
-
-function dateInputToISO(dateStr: string): string {
-  const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(dateStr || '');
-  if (!m) return new Date().toISOString();
-  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
-  const now = new Date();
-  return new Date(year, month - 1, day, now.getHours(), now.getMinutes(), 0, 0).toISOString();
-}
+/* injectModalStyles(), localTodayISODate(), dateInputToISO() — imported from @/lib/ui/video-modal */
 
 function showNTEditModal(badgeEl: HTMLElement, data: { channelName: string; videoTitle: string; url: string; totalSecs: number; videoDurationSecs: number; showTotal: boolean; channelId: string | null; onToggleShowTotal: (v: boolean) => void; }, onConfirm: (d: any) => Promise<void> | void, onClose?: (submitted: boolean) => void) {
   injectModalStyles();
@@ -671,7 +424,7 @@ function getTimestampContainer(vid: HTMLVideoElement): {el: HTMLElement; isFallb
 }
 
 function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: {hasTriggered: boolean; isManualLogging: boolean}, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
-  const shouldHide = cfg.hideButtons || (cfg.hideIfNotJapanese && !isLikelyJapaneseCached()) || (cfg.hideMusic && isMusic());
+  const shouldHide = shouldHideBadge(cfg, isLikelyJapaneseCached(), isMusic());
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
   if (shouldHide) { el?.remove(); return; }
 
@@ -1016,7 +769,7 @@ async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean) {
                                      time: v.time, date: new Date().toISOString(),
                                      private: false, episodes: 0, pages: 0, unknownDate: false
           });
-          if(ok === true || (ok as any)?.success) successCount++;
+          if(ok?.success) successCount++;
         }
         showToast('Success', `Logged ${successCount}/${checked.length} videos`);
         modal.remove();
@@ -1184,7 +937,7 @@ export default defineContentScript({
               cachedConfig = c;
               const badge = document.getElementById('nt-status-badge');
               if (badge) {
-                const shouldHide = c.hideButtons || (c.hideIfNotJapanese && !isLikelyJapaneseCached()) || (c.hideMusic && isMusic());
+                const shouldHide = shouldHideBadge(c, isLikelyJapaneseCached(), isMusic());
                 if (shouldHide) badge.remove();
               }
             }
