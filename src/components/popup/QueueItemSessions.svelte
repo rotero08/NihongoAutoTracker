@@ -12,7 +12,7 @@
     itemId: string;
     isReading: boolean;
     onRemoveSession: (sessionId: string) => void;
-    onSessionChange: () => void;
+    onSessionChange: (sessionIdx: number, field: string, val: any) => void;
   }
 
   let { sessions, itemId, isReading, onRemoveSession, onSessionChange }: Props = $props();
@@ -45,7 +45,7 @@
           class="ghost-num chars"
           type="number"
           value={session.chars || 0}
-          oninput={onSessionChange}
+          onchange={(e) => onSessionChange(i, 'chars', (e.target as HTMLInputElement).value)}
         />
         <span class="unit">chars</span>
       {/if}
@@ -55,7 +55,7 @@
         type="number"
         min="1"
         value={Math.max(1, Math.round(session.secs / 60))}
-        oninput={onSessionChange}
+        onchange={(e) => onSessionChange(i, 'mins', (e.target as HTMLInputElement).value)}
       />
       <span class="unit">min</span>
 
@@ -63,6 +63,7 @@
         class="ghost-date"
         type="datetime-local"
         value={toLocalDT(session.date)}
+        onchange={(e) => onSessionChange(i, 'date', (e.target as HTMLInputElement).value)}
       />
 
       <button

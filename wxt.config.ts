@@ -11,6 +11,14 @@ export default defineConfig({
   /* ── Use Firefox for development ─────────────────────────── */
   browser: 'firefox',
 
+  webExt: {
+    startUrls: [
+      'https://www.youtube.com/watch?v=jNVxpEiJIR4',
+      'https://reader.ttsu.app',
+      'https://app.yatsu.moe',
+    ],
+  },
+
   /* ── Extension manifest configuration ──────────────────────── */
   manifest: {
     name: 'NihongoAutoTracker',
@@ -22,6 +30,10 @@ export default defineConfig({
       'https://nihongotracker.app/*',
       'https://*.nihongotracker.app/*',
     ],
+    action: {
+      // @ts-ignore
+      default_area: 'navbar',
+    },
     browser_specific_settings: {
       gecko: {
         id: 'nihongo-auto-tracker@nta.com',

@@ -64,6 +64,18 @@
     await load();
   }
 
+  async function handleRegexEdit(idx: number, field: 'desc' | 're', val: string) {
+    const cfg = await configStorage.getValue() as any;
+    const current = [...(cfg.titleRegexes ?? [...DEFAULT_TITLE_REGEXES])];
+    if (idx < 0 || idx >= current.length) return;
+    if (field === 're') {
+      try { new RegExp(val); } catch { onStatus('⚠ Invalid Regex', true); return; }
+    }
+    current[idx] = { ...current[idx], [field]: val };
+    await configStorage.setValue({ ...cfg, titleRegexes: current });
+    await load();
+  }
+
   async function reset() {
     const cfg = await configStorage.getValue() as any;
     await configStorage.setValue({ ...cfg, readerAutoSave: true, readerDirectSend: false, ttuEnabled: true, yatsuEnabled: true, manabeEnabled: true, titleRegexes: [...DEFAULT_TITLE_REGEXES] });
@@ -164,8 +176,27 @@
             <button class="arrow-btn" disabled={i === regexes.length - 1} onclick={() => moveRegex(i, 1)}>▼</button>
           </div>
           <div class="regex-body-inner">
-            <div class="regex-row"><span class="regex-label">Desc</span><span class="regex-val">{rule.desc}</span></div>
-            <div class="regex-row"><span class="regex-label">Regex</span><span class="regex-val mono">{rule.re}</span></div>
+            <div class="regex-row">
+              <span class="regex-label">Desc</span>
+              <input
+                type="text"
+                class="regex-input-val"
+                value={rule.desc}
+                onchange={(e) => handleRegexEdit(i, 'desc', (e.target as HTMLInputElement).value)}
+                aria-label="Regex description"
+              />
+            </div>
+            <div class="regex-row">
+              <span class="regex-label">Regex</span>
+              <input
+                type="text"
+                class="regex-input-val mono"
+                style="font-family: var(--mono);"
+                value={rule.re}
+                onchange={(e) => handleRegexEdit(i, 're', (e.target as HTMLInputElement).value)}
+                aria-label="Regex pattern"
+              />
+            </div>
           </div>
           <button class="regex-remove" onclick={() => removeRegex(i)}>×</button>
         </div>
@@ -195,7 +226,22 @@
   .regex-body-inner { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
   .regex-row { display: flex; align-items: center; gap: 8px; }
   .regex-label { font-size: 10px; color: var(--muted); text-transform: uppercase; font-weight: 700; width: 45px; }
-  .regex-val { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-  .regex-val.mono { color: var(--amber); font-family: var(--mono); }
+  .regex-input-val {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    width: 100%;
+    outline: none;
+    transition: background .15s, border-color .15s;
+  }
+  .regex-input-val:hover, .regex-input-val:focus {
+    border-color: var(--bdr);
+    background: rgba(255,255,255,.02);
+  }
+  .regex-input-val.mono { color: var(--amber); }
   .regex-remove { background: none; border: none; color: var(--red); cursor: pointer; font-size: 16px; padding: 8px; margin-left: 4px; border-left: 1px dashed var(--bdr); display: flex; align-items: center; }
 </style>

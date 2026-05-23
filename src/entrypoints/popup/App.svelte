@@ -12,6 +12,7 @@
   import QueueList from '@/components/popup/QueueList.svelte';
   import ConfirmModal from '@/components/popup/ConfirmModal.svelte';
   import StatusToast from '@/components/popup/StatusToast.svelte';
+  import '@/styles/popup-shared.css';
 
   /* ── Reactive state ──────────────────────────────────────────── */
   let videoQueue: any[] = $state([]);

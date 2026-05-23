@@ -44,7 +44,10 @@
 </script>
 
 {#if open}
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="modal-overlay" onclick={() => close(false)}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="modal-box" onclick={(e) => e.stopPropagation()}>
     <h3>{title}</h3>
     <p>{desc}</p>

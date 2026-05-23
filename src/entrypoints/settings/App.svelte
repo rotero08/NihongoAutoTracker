@@ -81,13 +81,11 @@
 <!-- Status toast -->
 <div
   class="status-toast"
-  class:visible={statusVisible}
+  class:hidden={!statusVisible}
   class:err={statusErr}
 >
   {statusMsg}
 </div>
 
 <style>
-  /* Override visibility behavior for the toast (original uses .hidden class) */
-  .status-toast.visible { opacity: 1 !important; pointer-events: auto !important; }
 </style>

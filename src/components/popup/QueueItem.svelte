@@ -9,11 +9,10 @@
   import { configStorage } from '@/lib/storage/config';
   import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
   import { searchAniList, type AniListSearchResult } from '@/lib/api/anilist';
-  import { stripVideoTitle, escapeHtml } from '@/lib/utils/text-parsing';
+  import { stripVideoTitle, parseTitleForUI, escapeHtml } from '@/lib/utils/text-parsing';
   import { toLocalDT } from '@/lib/utils/time';
   import QueueItemSessions from './QueueItemSessions.svelte';
   import SearchDropdown from './SearchDropdown.svelte';
-  import type { QueuedVideoLog, QueuedReadingLog } from '@/lib/types';
 
   interface Props {
     item: any;
@@ -28,6 +27,7 @@
   const isRead = $derived(type === 'reading');
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
+  let isUnlinkHovered = $state(false);
 
   /* ── Computed display values ──────────────────────────────────── */
   const rawTitle = $derived(item.description || item.contentTitleNative || 'Unknown Title');
@@ -36,7 +36,7 @@
   const isLinked = $derived(
     isRead
       ? !!(item.mediaId && item.mediaId !== 'web-reading')
-      : !!((item.channelId && item.channelId !== 'web-video') || (item.mediaData?.channelId && item.mediaData.channelId !== 'web-video'))
+      : true /* All YouTube videos tracked show as matched */
   );
 
   let channelName = $derived(
@@ -71,26 +71,135 @@
     }
   }
 
-  function handleSearchSelect(result: AniListSearchResult) {
+  let blurTimeout: any;
+  function handleBlur() {
+    blurTimeout = setTimeout(() => {
+      searchDropdown?.close();
+    }, 200);
+  }
+
+  function handleFocus() {
+    clearTimeout(blurTimeout);
+    if (isRead && titleValue.trim().length >= 2) {
+      searchDropdown?.search(titleValue.trim());
+    }
+  }
+
+  async function handleUnlink(e: Event) {
+    e.preventDefault();
+    e.stopPropagation();
+    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const q = await qStorage.getValue();
+    const idx = q.findIndex((x: any) => x.id === item.id);
+    if (idx > -1) {
+      q[idx] = { ...q[idx], mediaId: 'web-reading', mediaData: undefined };
+      await qStorage.setValue(q as any);
+      onRefresh();
+    }
+  }
+
+  async function persistField(field: string, value: any) {
+    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const q = await qStorage.getValue();
+    const idx = q.findIndex((x: any) => x.id === item.id);
+    if (idx > -1) {
+      q[idx] = { ...q[idx], [field]: value };
+      await qStorage.setValue(q as any);
+      onRefresh();
+    }
+  }
+
+  async function handleTitleChange(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    await persistField('description', val);
+  }
+
+  async function handleSearchSelect(result: AniListSearchResult) {
     const native = result.title?.contentTitleNative || result.contentTitleNative || 'Unknown';
     titleValue = native;
-    item.mediaData = {
-      contentId: result.contentId,
-      contentTitleNative: native,
-      contentTitleEnglish: result.title?.contentTitleEnglish || result.contentTitleEnglish,
-      contentTitleRomaji: result.title?.contentTitleRomaji || result.contentTitleRomaji,
-      contentImage: result.coverImage || result.contentImage,
-      coverImage: result.coverImage || result.contentImage,
-      chapters: result.chapters,
-      volumes: result.volumes,
-    };
-    item.mediaId = result.contentId;
-    item.description = native;
 
-    readingQueueStorage.getValue().then(q => {
-      const idx = q.findIndex((x: any) => x.id === item.id);
-      if (idx > -1) { q[idx] = item; readingQueueStorage.setValue(q); }
-    });
+    const { volume: parsedVolume } = parseTitleForUI(native);
+    const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
+
+    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const q = await qStorage.getValue() as any[];
+    const idx = q.findIndex((x: any) => x.id === item.id);
+    if (idx > -1) {
+      q[idx] = {
+        ...q[idx],
+        description: native,
+        mediaId: String(result.contentId),
+        mediaData: {
+          contentId: result.contentId,
+          contentTitleNative: native,
+          contentTitleEnglish: result.title?.contentTitleEnglish || result.contentTitleEnglish,
+          contentTitleRomaji: result.title?.contentTitleRomaji || result.contentTitleRomaji,
+          contentImage: result.coverImage || result.contentImage,
+          coverImage: result.coverImage || result.contentImage,
+          chapters: result.chapters,
+          volumes: result.volumes,
+        },
+        volume: finalVolume,
+      };
+      await qStorage.setValue(q as any);
+      onRefresh();
+    }
+  }
+
+  /* ── Input Handlers ──────────────────────────────────────────── */
+  async function handleCharsChange(e: Event) {
+    const val = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
+    await persistField('chars', val);
+  }
+
+  async function handleTimeChange(e: Event) {
+    const val = Math.max(1, Number((e.target as HTMLInputElement).value) || 1);
+    await persistField('time', isRead ? val * 60 : val);
+  }
+
+  async function handleVolumeChange(e: Event) {
+    const val = Math.max(1, Number((e.target as HTMLInputElement).value) || 1);
+    await persistField('volume', val);
+  }
+
+  async function handleDateChange(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    try {
+      const iso = new Date(val).toISOString();
+      await persistField('date', iso);
+    } catch {}
+  }
+
+  async function handleSessionChange(sessionIdx: number, field: string, val: any) {
+    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const q = await qStorage.getValue();
+    const idx = q.findIndex((x: any) => x.id === item.id);
+    if (idx === -1) return;
+
+    const entry = q[idx] as any;
+    if (!entry.sessions || !entry.sessions[sessionIdx]) return;
+
+    const session = entry.sessions[sessionIdx];
+    if (field === 'chars') {
+      session.chars = Math.max(0, Number(val) || 0);
+    } else if (field === 'mins') {
+      session.secs = Math.max(1, Number(val) || 1) * 60;
+    } else if (field === 'date') {
+      try {
+        session.date = new Date(val).toISOString();
+      } catch {}
+    }
+
+    const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+    if (isRead) {
+      entry.time = sumSecs;
+      entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+    } else {
+      entry.time = Math.round(sumSecs / 60);
+    }
+
+    await qStorage.setValue(q as any);
+    onRefresh();
   }
 
   /* ── Actions ─────────────────────────────────────────────────── */
@@ -150,7 +259,7 @@
     } else {
       entry.time = Math.round(totalSecs / 60);
     }
-    await qStorage.setValue(q);
+    await qStorage.setValue(q as any);
     onRefresh();
   }
 
@@ -192,7 +301,7 @@
   <div class="qi-title-row">
     <div class="qi-search-wrap">
       {#if isRead}
-        <svg class="qi-search-icon" viewBox="0 0 24 24">
+        <svg class="qi-search-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
@@ -204,15 +313,31 @@
         value={titleValue}
         title={displayTitle}
         oninput={handleTitleInput}
-        onblur={() => searchDropdown?.close()}
-        onfocus={() => { if (isRead) searchDropdown?.showIfHasResults(); }}
+        onchange={handleTitleChange}
+        onblur={handleBlur}
+        onfocus={handleFocus}
+        aria-label="Item title"
       />
       {#if isRead}
         <SearchDropdown bind:this={searchDropdown} onSelect={handleSearchSelect} />
       {/if}
     </div>
     {#if isLinked}
-      <span class="qi-link-status" title="Matched">✓</span>
+      {#if isRead}
+        <button
+          type="button"
+          class="qi-link-status"
+          title="Unlink AniList"
+          onclick={handleUnlink}
+          onmouseenter={() => isUnlinkHovered = true}
+          onmouseleave={() => isUnlinkHovered = false}
+          style={isUnlinkHovered ? 'color: var(--red)' : 'color: var(--green)'}
+        >
+          {isUnlinkHovered ? '✗' : '✓'}
+        </button>
+      {:else}
+        <span class="qi-link-status" title="Matched" style="cursor:default">✓</span>
+      {/if}
     {/if}
     <button class="qi-del" title="Remove" onclick={handleDelete}>×</button>
   </div>
@@ -220,13 +345,36 @@
   <!-- Meta row with EDITABLE inputs (matches original ghost-num pattern) -->
   <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
     {#if isRead}
-      <input class="ghost-num num-chars qi-chars-num" type="number" min="0" value={item.chars || 0} />
+      <input
+        class="ghost-num num-chars qi-chars-num"
+        type="number"
+        min="0"
+        value={item.chars || 0}
+        onchange={handleCharsChange}
+        aria-label="Character count"
+      />
       <span class="unit-lbl">chars</span>
     {/if}
-    <input class="ghost-num qi-time-num" type="number" min="1" value={displayMins} title="Total minutes" />
+    <input
+      class="ghost-num qi-time-num"
+      type="number"
+      min="1"
+      value={displayMins}
+      title="Total minutes"
+      onchange={handleTimeChange}
+      aria-label="Duration in minutes"
+    />
     <span class="unit-lbl">min</span>
     {#if isRead}
-      <input class="ghost-num num-vol qi-vol" type="number" min="1" value={Math.max(1, Number(item.volume || 1))} title="Volume" />
+      <input
+        class="ghost-num num-vol qi-vol"
+        type="number"
+        min="1"
+        value={Math.max(1, Number(item.volume || 1))}
+        title="Volume"
+        onchange={handleVolumeChange}
+        aria-label="Volume number"
+      />
       <span class="unit-lbl">vol</span>
     {/if}
     <span class="qi-meta-sep">·</span>
@@ -234,7 +382,14 @@
       <span class="qi-channel" title="{channelName} {urlDisplay}">{channelName} {urlDisplay}</span>
     </div>
     <div style="flex-basis: 100%; height: 0;"></div>
-    <input class="ghost-date qi-date" type="datetime-local" value={toLocalDT(defaultDateStr)} style="text-align:left; margin-left:0;" />
+    <input
+      class="ghost-date qi-date"
+      type="datetime-local"
+      value={toLocalDT(defaultDateStr)}
+      style="text-align:left; margin-left:0;"
+      onchange={handleDateChange}
+      aria-label="Log date"
+    />
     <button class="qi-send" onclick={handleSend} disabled={sending} style="margin-left:auto;">Send</button>
   </div>
 
@@ -244,6 +399,6 @@
     itemId={item.id}
     isReading={isRead}
     onRemoveSession={handleRemoveSession}
-    onSessionChange={() => {}}
+    onSessionChange={handleSessionChange}
   />
 </div>

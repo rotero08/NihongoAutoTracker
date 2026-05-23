@@ -79,7 +79,7 @@
 </div>
 
 <div class="field">
-  <label class="label">Default Position</label>
+  <span class="label">Default Position</span>
   <div class="pos-grid">
     <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-left" bind:group={overlayPos} /> Top Left</label>
     <label class="pos-opt"><input type="radio" name="overlay-pos" value="top-right" bind:group={overlayPos} /> Top Right</label>
@@ -112,27 +112,27 @@
 
 <!-- Allow list -->
 <div class="sites-group">
-  <div class="sites-toggle-head" class:open={allowOpen} role="button" tabindex="0" onclick={() => allowOpen = !allowOpen} onkeydown={e => e.key === 'Enter' && (allowOpen = !allowOpen)}>
+  <button type="button" class="sites-toggle-head" class:open={allowOpen} style="width:100%; border:1px solid var(--bdr); text-align:left; background:var(--surf2);" onclick={() => allowOpen = !allowOpen}>
     <div class="sites-head-left">
       <span class="sites-head-label allow">Allow</span>
       <span class="sites-head-count" id="allow-count">{allowSites.length}</span>
     </div>
     <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
-  </div>
+  </button>
   {#if allowOpen}
   <div class="sites-body open" id="allow-body">
     <div class="site-list" id="allow-list">
       {#each allowSites as site}
         <div class="site-item">
           <span class="site-item-host">{site}</span>
-          <button class="site-remove" onclick={() => removeSite(site, 'allow')}>
+          <button class="site-remove" onclick={() => removeSite(site, 'allow')} aria-label="Remove allowed site" title="Remove site">
             <svg viewBox="0 0 10 10"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
           </button>
         </div>
       {/each}
     </div>
     <div class="add-site-row">
-      <input type="text" id="allow-input" class="input" placeholder="e.g. example.jp" bind:value={allowInput} />
+      <input type="text" id="allow-input" class="input" placeholder="e.g. example.jp" bind:value={allowInput} aria-label="New allowed site domain" />
       <button id="allow-add" class="btn btn-amber btn-sm" onclick={() => addSite('allow')}>Add</button>
     </div>
   </div>
@@ -141,27 +141,27 @@
 
 <!-- Skip list -->
 <div class="sites-group">
-  <div class="sites-toggle-head" class:open={skipOpen} role="button" tabindex="0" onclick={() => skipOpen = !skipOpen} onkeydown={e => e.key === 'Enter' && (skipOpen = !skipOpen)}>
+  <button type="button" class="sites-toggle-head" class:open={skipOpen} style="width:100%; border:1px solid var(--bdr); text-align:left; background:var(--surf2);" onclick={() => skipOpen = !skipOpen}>
     <div class="sites-head-left">
       <span class="sites-head-label skip">Skip</span>
       <span class="sites-head-count" id="skip-count">{skipSites.length}</span>
     </div>
     <span class="sites-chevron"><svg viewBox="0 0 12 8"><polyline points="1,1 6,7 11,1"/></svg></span>
-  </div>
+  </button>
   {#if skipOpen}
   <div class="sites-body open" id="skip-body">
     <div class="site-list" id="skip-list">
       {#each skipSites as site}
         <div class="site-item">
           <span class="site-item-host">{site}</span>
-          <button class="site-remove" onclick={() => removeSite(site, 'skip')}>
+          <button class="site-remove" onclick={() => removeSite(site, 'skip')} aria-label="Remove skipped site" title="Remove site">
             <svg viewBox="0 0 10 10"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
           </button>
         </div>
       {/each}
     </div>
     <div class="add-site-row">
-      <input type="text" id="skip-input" class="input" placeholder="e.g. example.com" bind:value={skipInput} />
+      <input type="text" id="skip-input" class="input" placeholder="e.g. example.com" bind:value={skipInput} aria-label="New skipped site domain" />
       <button id="skip-add" class="btn btn-amber btn-sm" onclick={() => addSite('skip')}>Add</button>
     </div>
   </div>

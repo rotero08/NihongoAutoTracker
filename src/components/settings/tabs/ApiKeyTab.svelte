@@ -56,7 +56,7 @@
       bind:value={apiKey}
       onchange={save}
     />
-    <button id="toggle-key" class="btn btn-ghost btn-icon" onclick={() => showKey = !showKey}>
+    <button id="toggle-key" class="btn btn-ghost btn-icon" onclick={() => showKey = !showKey} aria-label="Toggle API Key Visibility" title="Toggle Visibility">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><ellipse cx="8" cy="8" rx="6" ry="4"/><circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none"/></svg>
     </button>
   </div>
