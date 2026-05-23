@@ -74,7 +74,11 @@ const ttuState = {
 const stateRefs = {
   globalSessionStartChar: -1,
   globalManualCharOffset: 0,
-  globalLastTick: Date.now()
+  globalLastTick: Date.now(),
+  lastSectionIndex: -1,
+  lastSectionId: '',
+  lastSectionTotal: 0,
+  visitedSections: new Map<number, number>()
 };
 
 let isSyncing = false;
@@ -195,9 +199,12 @@ async function saveSessionAndQueue() {
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
+
   const currentCount = extractAdvancedCharCount();
-  stateRefs.globalSessionStartChar = currentCount !== null ? currentCount : -1;
+  stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
   stateRefs.globalManualCharOffset = 0;
+  stateRefs.lastSectionIndex = -1;
+  stateRefs.visitedSections.clear();
   ttuState.running = false;
 
   showToast('Success', 'Session queued!');
@@ -232,7 +239,10 @@ function setupTTUChronometer() {
   setupTTUChronometerUI(pt, currentConfig, ttuState, stateRefs, {
     getTTUTitle,
     parseTitleWithConfig,
-    extractTTUCharCount: () => extractAdvancedCharCount(),
+    extractTTUCharCount: () => {
+      const res = extractAdvancedCharCount();
+      return res !== null ? res.current : null;
+    },
     getReaderName,
     getReaderConfig,
     liveSyncQueue,
@@ -248,9 +258,50 @@ function setupTTUChronometer() {
       const now = Date.now();
       ttuState.timeMs += (now - stateRefs.globalLastTick);
 
-      const currentCount = extractAdvancedCharCount();
-      if (currentCount !== null) {
-        let diff = currentCount - stateRefs.globalSessionStartChar;
+      const charData = extractAdvancedCharCount();
+      if (charData !== null) {
+        const { current, total, sectionIndex } = charData;
+
+        if (sectionIndex !== null) {
+          // Initialize tracking history on first valid section index
+          if (stateRefs.lastSectionIndex === -1) {
+            stateRefs.lastSectionIndex = sectionIndex;
+            stateRefs.lastSectionTotal = total;
+            stateRefs.visitedSections.set(sectionIndex, 0);
+          }
+
+          // Sequential section change detected
+          if (stateRefs.lastSectionIndex !== sectionIndex) {
+            if (sectionIndex > stateRefs.lastSectionIndex) {
+              // --- FORWARD PROGRESSION ---
+              if (stateRefs.visitedSections.has(sectionIndex)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(sectionIndex) || 0;
+              } else {
+                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                stateRefs.visitedSections.set(sectionIndex, stateRefs.globalManualCharOffset);
+              }
+            } else {
+              // --- BACKWARD PROGRESSION (sectionIndex < lastSectionIndex) ---
+              if (stateRefs.visitedSections.has(sectionIndex)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(sectionIndex) || 0;
+              } else {
+                // Backward scroll too fast (skipped chapters): mathematically adjust the offset
+                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                stateRefs.visitedSections.set(sectionIndex, stateRefs.globalManualCharOffset);
+              }
+            }
+            stateRefs.globalSessionStartChar = 0; // Reset start boundaries for the new section
+          }
+
+          stateRefs.lastSectionIndex = sectionIndex;
+          stateRefs.lastSectionTotal = total;
+        }
+
+        if (stateRefs.globalSessionStartChar === -1) {
+          stateRefs.globalSessionStartChar = current;
+        }
+
+        let diff = current - stateRefs.globalSessionStartChar;
         if (diff < 0) diff = 0;
         ttuState.chars = diff + stateRefs.globalManualCharOffset;
       }
@@ -379,7 +430,10 @@ browser.storage.onChanged.addListener((changes, area) => {
 
     if (!existing && ttuState.timeMs > 0) {
       ttuState.timeMs = 0; ttuState.chars = 0;
-      stateRefs.globalSessionStartChar = extractAdvancedCharCount() ?? -1;
+
+      const initCount = extractAdvancedCharCount();
+      stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+
       stateRefs.globalManualCharOffset = 0;
 
       const timeVal = document.querySelector('#nt-ttu-val-time');
