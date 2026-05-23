@@ -1,9 +1,6 @@
-/**
- * ── Manabe Reader Adapter ────────────────────────────────────────────────────
- * Implements ReaderAdapter for manga.manabe.es.
- */
 import type { TrackerConfig } from '../../types';
 import type { ReaderAdapter } from './types';
+import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
 export const manabeAdapter: ReaderAdapter = {
   name: 'Manabe Reader',
@@ -20,7 +17,9 @@ export const manabeAdapter: ReaderAdapter = {
   },
 
   extractCharCount(): number | null {
-    /* Manabe uses page-based tracking as a character proxy */
+    const advancedCount = extractAdvancedCharCount('.reader-container, .book-content');
+    if (advancedCount !== null) return advancedCount;
+
     const pageEls = document.querySelectorAll('.page-indicator, [data-page], .current-page');
     for (const el of pageEls) {
       const text = (el as HTMLElement).innerText || '';

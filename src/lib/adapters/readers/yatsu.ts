@@ -1,9 +1,6 @@
-/**
- * ── Yatsu Reader Adapter ─────────────────────────────────────────────────────
- * Implements ReaderAdapter for app.yatsu.moe.
- */
 import type { TrackerConfig } from '../../types';
 import type { ReaderAdapter } from './types';
+import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
 export const yatsuAdapter: ReaderAdapter = {
   name: 'Yatsu Reader',
@@ -20,6 +17,9 @@ export const yatsuAdapter: ReaderAdapter = {
   },
 
   extractCharCount(): number | null {
+    const advancedCount = extractAdvancedCharCount('#reader-container, .book-content, [data-ref="container"]');
+    if (advancedCount !== null) return advancedCount;
+
     const statsEls = document.querySelectorAll('.stats span, .reader-stats span, [data-chars]');
     for (const el of statsEls) {
       const text = (el as HTMLElement).innerText || '';

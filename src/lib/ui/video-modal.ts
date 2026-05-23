@@ -15,7 +15,158 @@
 
 import type { UITheme } from './types';
 import { DEFAULT_THEME } from './types';
-import { generateThemeCssVariables } from './themes';
+import { generateThemeCssVariables, getTheme } from './themes';
+import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
+
+// Restores original brand logo and guarantees it is completely shadow-free
+const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');
+
+export function showNTEditModal(
+  badgeEl: HTMLElement,
+  themeName: string,
+  data: {
+    channelName: string;
+    videoTitle: string;
+    url: string;
+    totalSecs: number;
+    videoDurationSecs: number;
+    showTotal: boolean;
+    channelId: string | null;
+    onToggleShowTotal: (v: boolean) => void;
+  },
+  onConfirm: (d: any) => Promise<void> | void,
+  onClose?: (submitted: boolean) => void
+) {
+  const activeTheme = getTheme(themeName);
+  injectModalStyles(activeTheme);
+
+  const existingPopup = document.getElementById('nt-modal-popup');
+  if (existingPopup) {
+    const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
+    if (typeof closer === 'function') closer(false);
+    else existingPopup.remove();
+    return;
+  }
+
+  const popup = document.createElement('div');
+  popup.id = 'nt-modal-popup';
+  const today = localTodayISODate();
+  const totalMins = Math.max(1, Math.round(data.videoDurationSecs / 60));
+
+  popup.innerHTML = `
+  <div class="nt-modal">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+  <div class="nt-modal-header">
+  <div class="nt-logo-sq" style="border:none; display:flex; align-items:center; justify-content:center;">
+  ${inlineLogo}
+  </div>
+  <div class="nt-title-area"><span class="nt-brand-name">NihongoAutoTracker</span><span class="nt-badge">MANUAL LOG</span></div>
+  </div>
+  </div>
+
+  <div style="display:flex; justify-content:flex-start; gap:10px; font-size:10px; font-weight:bold; margin-bottom:16px;">
+  <span style="color:var(--muted);">DISPLAY:</span>
+  <button id="nt-badge-session" class="nt-link-btn ${!data.showTotal ? 'active' : ''}">Session Only</button>
+  <span style="color:var(--bdr2);">|</span>
+  <button id="nt-badge-total" class="nt-link-btn ${data.showTotal ? 'active' : ''}">Session / Total</button>
+  </div>
+
+  <div class="nt-form-group">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+  <label>VIDEO TITLE</label><span style="font-size:9px; color:#8A8A9A; max-width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${data.channelName.replace(/"/g, '&quot;')}">${data.channelName.replace(/</g, '&lt;')}</span>
+  </div>
+  <input type="text" id="nt-edit-desc" value="${data.videoTitle.replace(/"/g, '&quot;')}"/>
+  </div>
+
+  <div class="nt-form-row">
+  <div class="nt-form-group">
+  <label>MINUTES</label>
+  <div class="nt-number-wrapper">
+  <input type="number" id="nt-edit-time" value="${totalMins}" min="1"/>
+  <div class="nt-spin-btns">
+  <button type="button" id="nt-spin-up">
+  <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 5L5 1L9 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <button type="button" id="nt-spin-down">
+  <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  </div>
+  </div>
+  </div>
+  <div class="nt-form-group"><label>DATE</label><input type="date" id="nt-edit-date" value="${today}"/></div>
+  </div>
+
+  <div class="nt-modal-opt">
+  <input type="checkbox" id="nt-clear-sessions" class="nt-pl-chk" />
+  <label for="nt-clear-sessions">Clear sessions with this log</label>
+  </div>
+
+  <div class="nt-modal-footer">
+  <button id="nt-modal-cancel">Cancel</button><button id="nt-modal-submit">Log Video</button>
+  </div>
+  </div>`;
+
+  popup.addEventListener('click', e => e.stopPropagation());
+
+  let closed = false;
+  let closeListener: ((e: Event) => void) | null = null;
+  const closeModal = (submitted: boolean) => {
+    if (closed) return;
+    closed = true;
+    if (closeListener) document.removeEventListener('click', closeListener);
+    popup.remove();
+    if (onClose) onClose(submitted);
+  };
+  (popup as any).__ntCloseModal = closeModal;
+  document.body.appendChild(popup);
+
+  const rect = badgeEl.getBoundingClientRect();
+  popup.style.position = 'fixed';
+  popup.style.bottom = `${window.innerHeight - rect.top + 10}px`;
+  popup.style.left = `${rect.left}px`;
+
+  requestAnimationFrame(() => {
+    const popRect = popup.getBoundingClientRect();
+    if (popRect.left < 0) popup.style.left = '10px';
+    if (popRect.right > window.innerWidth) popup.style.left = `${window.innerWidth - popRect.width - 10}px`;
+  });
+
+  const btnSession = popup.querySelector('#nt-badge-session')!;
+  const btnTotal = popup.querySelector('#nt-badge-total')!;
+  btnSession.addEventListener('click', () => { btnSession.classList.add('active'); btnTotal.classList.remove('active'); data.onToggleShowTotal(false); });
+  btnTotal.addEventListener('click', () => { btnTotal.classList.add('active'); btnSession.classList.remove('active'); data.onToggleShowTotal(true); });
+  popup.querySelector('#nt-modal-cancel')!.addEventListener('click', () => closeModal(false));
+
+  const timeInput = popup.querySelector('#nt-edit-time') as HTMLInputElement;
+  popup.querySelector('#nt-spin-up')!.addEventListener('click', () => {
+    timeInput.value = String(Number(timeInput.value || 0) + 1);
+  });
+  popup.querySelector('#nt-spin-down')!.addEventListener('click', () => {
+    timeInput.value = String(Math.max(1, Number(timeInput.value || 0) - 1));
+  });
+
+  const submitBtn = popup.querySelector('#nt-modal-submit') as HTMLButtonElement;
+  submitBtn.addEventListener('click', async () => {
+    submitBtn.textContent = 'Logging...';
+    submitBtn.style.opacity = '0.7';
+    submitBtn.style.pointerEvents = 'none';
+    popup.querySelector('#nt-modal-cancel')?.setAttribute('disabled', 'true');
+
+    const timeRaw = Number(timeInput.value);
+    const timeVal = Math.max(1, Number.isFinite(timeRaw) ? timeRaw : 1);
+    const dateRaw = (popup.querySelector('#nt-edit-date') as HTMLInputElement).value;
+    const dateIso = dateRaw ? dateInputToISO(dateRaw) : new Date().toISOString();
+    const clearSessions = !!(popup.querySelector('#nt-clear-sessions') as HTMLInputElement | null)?.checked;
+
+    await onConfirm({ title: data.channelName, desc: (popup.querySelector('#nt-edit-desc') as HTMLInputElement).value, time: timeVal, date: dateIso, clearSessions });
+    closeModal(true);
+  });
+
+  setTimeout(() => {
+    closeListener = (e: Event) => { if (!popup.contains(e.target as Node) && !badgeEl.contains(e.target as Node)) closeModal(false); };
+    document.addEventListener('click', closeListener);
+  }, 0);
+}
 
 /**
  * Inject the modal CSS styles into the page <head>.
