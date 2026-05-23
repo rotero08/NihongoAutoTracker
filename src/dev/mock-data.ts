@@ -60,13 +60,13 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
       { id: 'sess-r2', secs: 1800, chars: 4100, date: new Date(Date.now() - 3600000).toISOString() },
       { id: 'sess-r3', secs: 1200, chars: 3120, date: new Date().toISOString() },
     ],
-    mediaId: '101280',
+    mediaId: '',
     mediaData: {
-      contentId: '101280',
+      contentId: '',
       contentTitleNative: '転生したらスライムだった件',
       contentTitleEnglish: 'That Time I Got Reincarnated as a Slime',
     },
-    originalTitle: '転生したらスライムだった件 3',
+    originalTitle: '転生したらスライムだった件',
     readerName: 'TTU Reader',
   },
   {
@@ -80,11 +80,12 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     date: new Date(Date.now() - 43200000).toISOString(),
     volume: 1,
     private: false,
+    mediaId: '',
     tags: [],
     sessions: [
       { id: 'sess-r4', secs: 1800, chars: 3200, date: new Date(Date.now() - 43200000).toISOString() },
     ],
-    originalTitle: '薬屋のひとりごと 1',
+    originalTitle: '薬屋のひとりごと',
     readerName: 'Yatsu Reader',
   },
 ];

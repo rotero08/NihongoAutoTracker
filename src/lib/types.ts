@@ -47,6 +47,8 @@ export interface TrackerConfig {
   /** Badge display: true = "session / total", false = "session only" */
   showTotalInBadge?: boolean;
 
+  theme?: 'nihongo' | 'dark' | 'light' | 'amethyst';
+
   /* ── Overlay ───────────────────────────── */
   /** Include reading time in context-menu logs */
   trackTime?: boolean;

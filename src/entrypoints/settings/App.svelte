@@ -1,36 +1,27 @@
-<!--
-  ── Settings App.svelte ──────────────────────────────────────────────────────
-  Root component for the extension settings page.
-  Manages tab routing via sidebar navigation.
-  Replaces 1454 lines of imperative settings/main.ts.
--->
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { configStorage } from '@/lib/storage/config';
-  import Sidebar from '@/components/settings/Sidebar.svelte';
-  import QueueTab from '@/components/settings/tabs/QueueTab.svelte';
-  import ApiKeyTab from '@/components/settings/tabs/ApiKeyTab.svelte';
-  import VideoTab from '@/components/settings/tabs/VideoTab.svelte';
-  import OverlayTab from '@/components/settings/tabs/OverlayTab.svelte';
-  import ReadersTab from '@/components/settings/tabs/ReadersTab.svelte';
-  import DebugTab from '@/components/settings/tabs/DebugTab.svelte';
+  import { onMount } from "svelte";
+  import { configStorage } from "@/lib/storage/config";
+  import Sidebar from "@/components/settings/Sidebar.svelte";
+  import QueueTab from "@/components/settings/tabs/QueueTab.svelte";
+  import ApiKeyTab from "@/components/settings/tabs/ApiKeyTab.svelte";
+  import ThemeTab from "@/components/settings/tabs/ThemeTab.svelte";
+  import VideoTab from "@/components/settings/tabs/VideoTab.svelte";
+  import OverlayTab from "@/components/settings/tabs/OverlayTab.svelte";
+  import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
+  import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
+  import { showToast } from "@/lib/utils/toast"; // Route via dynamic shared helper
+  import { applyThemeToDocument } from "@/lib/ui/themes";
 
-  /* Import the original settings stylesheet globally */
-  import '@/styles/settings-shared.css';
+  /* Import unchanged settings stylesheet globally */
+  import "@/styles/settings-shared.css";
 
   /* ── Reactive state ── */
-  let activeTab = $state('queue');
+  let activeTab = $state("queue");
   let queueCount = $state(0);
   let debugMode = $state(false);
-  let statusMsg = $state('');
-  let statusErr = $state(false);
-  let statusVisible = $state(false);
-  let statusTimer: any;
 
   function showStatus(msg: string, err = false) {
-    statusMsg = msg; statusErr = err; statusVisible = true;
-    clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { statusVisible = false; }, 3000);
+    showToast(err ? "Error" : "Success", msg, err);
   }
 
   function handleTabChange(tab: string) {
@@ -39,7 +30,7 @@
 
   function handleDebugToggle(enabled: boolean) {
     debugMode = enabled;
-    if (!enabled && activeTab === 'debug') activeTab = 'queue';
+    if (!enabled && activeTab === "debug") activeTab = "queue";
   }
 
   function handleQueueCountChange(count: number) {
@@ -47,8 +38,19 @@
   }
 
   onMount(async () => {
-    const cfg = await configStorage.getValue() as any;
+    const cfg = (await configStorage.getValue()) as any;
     debugMode = cfg.debugMode ?? false;
+    applyThemeToDocument(cfg.theme ?? "nihongo", cfg.font ?? "sans");
+
+    /* Live update variables if changed in storage */
+    browser.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes["config"]) {
+        const nextTheme =
+          (changes["config"].newValue as any)?.theme ?? "nihongo";
+        const nextFont = (changes["config"].newValue as any)?.font ?? "sans";
+        applyThemeToDocument(nextTheme, nextFont);
+      }
+    });
   });
 </script>
 
@@ -62,30 +64,23 @@
   />
 
   <main class="main">
-    {#if activeTab === 'queue'}
-      <QueueTab onStatus={showStatus} onQueueCountChange={handleQueueCountChange} />
-    {:else if activeTab === 'api'}
+    {#if activeTab === "queue"}
+      <QueueTab
+        onStatus={showStatus}
+        onQueueCountChange={handleQueueCountChange}
+      />
+    {:else if activeTab === "api"}
       <ApiKeyTab onStatus={showStatus} />
-    {:else if activeTab === 'video'}
+    {:else if activeTab === "theme"}
+      <ThemeTab onStatus={showStatus} />
+    {:else if activeTab === "video"}
       <VideoTab onStatus={showStatus} />
-    {:else if activeTab === 'overlay'}
+    {:else if activeTab === "overlay"}
       <OverlayTab onStatus={showStatus} />
-    {:else if activeTab === 'readers'}
+    {:else if activeTab === "readers"}
       <ReadersTab onStatus={showStatus} />
-    {:else if activeTab === 'debug'}
+    {:else if activeTab === "debug"}
       <DebugTab onStatus={showStatus} />
     {/if}
   </main>
 </div>
-
-<!-- Status toast -->
-<div
-  class="status-toast"
-  class:hidden={!statusVisible}
-  class:err={statusErr}
->
-  {statusMsg}
-</div>
-
-<style>
-</style>

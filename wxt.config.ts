@@ -13,11 +13,11 @@ export default defineConfig({
   browser: 'firefox',
 
   /* ── Runner configuration to lock toolbar layout profiles ─── */
-  runner: {
+  webExt: {
     // Tells the runner where to securely store your layout customizations
     firefoxProfile: path.resolve(__dirname, '.wxt/firefox-profile'),
     keepProfileChanges: true,
-    
+
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',
       'https://reader.ttsu.app',
@@ -36,7 +36,7 @@ export default defineConfig({
       'https://nihongotracker.app/*',
       'https://*.nihongotracker.app/*',
     ],
-    
+
     action: {
       // @ts-ignore - Tells Firefox to anchor this button on the navigation bar (toolbar)
       default_area: 'navbar',

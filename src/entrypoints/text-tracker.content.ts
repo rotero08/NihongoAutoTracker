@@ -18,10 +18,102 @@ import { submitLog } from '@/lib/api/nihongotracker';
 import { SKIP_HOSTS_DEFAULT, JP_DOMAINS_DEFAULT, JP_RE, TTU_HOSTS, DEFAULT_TITLE_REGEXES } from '@/lib/constants';
 import { fmt } from '@/lib/utils/time';
 import { parseTitle } from '@/lib/utils/text-parsing';
+import { getTheme } from '@/lib/ui/themes';
+import { showToast } from '@/lib/utils/toast';
 import '@/assets/overlay.css';
 
 let currentConfig: any = {};
 let websiteOverlayDismissed = false;
+
+function injectThemeStyles(themeName: string, fontName: string) {
+  const theme = getTheme(themeName);
+  let style = document.getElementById('nt-theme-styles') as HTMLStyleElement;
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'nt-theme-styles';
+    document.head.appendChild(style);
+  }
+
+  const fontValue = fontName === 'sans' ? "system-ui, -apple-system, sans-serif" : (fontName === 'serif' ? "Georgia, serif" : "'Courier New', monospace");
+
+  // Solved reader transparency: force fallback background hexes to prevent visibility overlap
+  let surfaceColor = theme.colors.surface;
+  let surfaceAltColor = theme.colors.surfaceAlt;
+  let borderColor = theme.colors.border;
+  let textPrimaryColor = theme.colors.text;
+  let mutedColor = theme.colors.muted;
+  let accentColor = theme.colors.accent;
+  let accentHoverColor = theme.colors.accentHover;
+
+  // Linked Default: If it's the classic Nihongo theme, force it to match the exact original reader styling
+  if (themeName === 'nihongo') {
+    surfaceColor = '#252525';
+    surfaceAltColor = '#1c1c1c';
+    borderColor = '#3a3a3a';
+    textPrimaryColor = '#ececec';
+    mutedColor = '#aaa';
+    accentColor = '#f0b429';
+    accentHoverColor = '#ffcc33';
+  }
+
+  style.textContent = `
+    :root {
+      --nt-bg: ${theme.colors.bg};
+      --nt-surface: ${surfaceColor};
+      --nt-surfaceAlt: ${surfaceAltColor};
+      --nt-border: ${borderColor};
+      --nt-borderHover: ${theme.colors.borderHover};
+      --nt-text: ${textPrimaryColor};
+      --nt-muted: ${mutedColor};
+      --nt-accent: ${accentColor};
+      --nt-accentHover: ${accentHoverColor};
+      --nt-success: ${theme.colors.success};
+      --nt-error: ${theme.colors.error};
+      --nt-font: ${fontValue};
+      --nt-font-mono: ${theme.typography.mono};
+      --nt-rounded-box: ${theme.borderRadius}px;
+      --nt-rounded-btn: ${theme.borderRadiusSmall}px;
+    }
+    #nt-overlay {
+      background: var(--nt-surface, #0f0f1a) !important;
+      border: 1px solid var(--nt-border, #1c2333) !important;
+      color: var(--nt-text, #dde4f0) !important;
+      border-radius: ${theme.borderRadius}px !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
+      font-family: var(--nt-font) !important;
+    }
+    #nt-overlay .nt-handle {
+      color: var(--nt-muted) !important;
+    }
+    #nt-overlay .nt-time {
+      color: var(--nt-accent) !important;
+      font-family: var(--nt-font) !important;
+    }
+    #nt-overlay .nt-ctrl {
+      color: var(--nt-muted) !important;
+      background: var(--nt-surfaceAlt, #13131f) !important;
+      border: 1px solid var(--nt-border, #1c2333) !important;
+      border-radius: ${theme.borderRadiusSmall}px !important;
+      font-family: var(--nt-font) !important;
+    }
+    #nt-overlay .nt-ctrl:hover {
+      color: var(--nt-text) !important;
+      border-color: var(--nt-borderHover) !important;
+    }
+    #nt-overlay .nt-close {
+      color: var(--nt-muted) !important;
+    }
+    #nt-overlay .nt-close:hover {
+      color: var(--nt-error) !important;
+    }
+    #nt-overlay .nt-edit {
+      background: var(--nt-surfaceAlt, #13131f) !important;
+      color: var(--nt-text) !important;
+      border: 1px solid var(--nt-border) !important;
+      font-family: var(--nt-font) !important;
+    }
+  `;
+}
 
 function getReaderConfig(cfg: any) {
   const host = window.location.hostname;
@@ -39,7 +131,7 @@ function getReaderConfig(cfg: any) {
 
 function isWebsiteOverlaySkipped(cfg: any): boolean {
   const host = window.location.hostname;
-  const skipSites: string[] = cfg?.skipSites ??['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
+  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
   if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
   if (skipSites.some((h: string) => host.includes(h))) return true;
   return false;
@@ -47,7 +139,7 @@ function isWebsiteOverlaySkipped(cfg: any): boolean {
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   const host = window.location.hostname;
-  const allowSites: string[] = cfg.allowSites ??[...JP_DOMAINS_DEFAULT];
+  const allowSites: string[] = cfg.allowSites ?? [...JP_DOMAINS_DEFAULT];
   const allowListOnly: boolean = cfg.allowListOnly ?? false;
 
   if (allowSites.some((d: string) => host.includes(d))) return true;
@@ -89,7 +181,7 @@ function getTTUTitle() {
     if (window.self !== window.top && window.top) {
       title = window.top.document.title || title;
     }
-  } catch (e) {}
+  } catch (e) { }
   title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '');
   title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
   return title.trim() || document.title;
@@ -221,8 +313,8 @@ async function liveSyncQueue() {
         description: parsedTitle,
         chars: ttuState.chars, time: secs,
         volume: parsedVolume || 1,
-        date: dateStr, private: false, tags:[],
-        sessions:[{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
+        date: dateStr, private: false, tags: [],
+        sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
         readerName: getReaderName()
       };
       queue.push(existing);
@@ -238,8 +330,8 @@ async function liveSyncQueue() {
         }
       }
 
-      existing.sessions = existing.sessions ||[];
-      const sIdx = existing.sessions.findIndex((s:any) => s.id === ttuState.id);
+      existing.sessions = existing.sessions || [];
+      const sIdx = existing.sessions.findIndex((s: any) => s.id === ttuState.id);
 
       if (sIdx >= 0) {
         existing.sessions[sIdx].secs = secs;
@@ -300,61 +392,61 @@ function injectTTUStyles() {
   const s = document.createElement('style');
   s.id = 'nt-ttu-styles';
   s.textContent = `
-  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 40; font-family: sans-serif; align-items: center; justify-content: center; flex-shrink: 0; width: 2rem; height: 100%; }
-  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 0; width: 100%; height: 100%; color: #f0b429; transition: opacity 0.15s ease; align-items: center; justify-content: center; user-select: none; }
-  #nt-ttu-chrono-btn:hover { opacity: 0.7; color: #ffcc33 !important; }
+  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 40; font-family: var(--nt-font, sans-serif); align-items: center; justify-content: center; flex-shrink: 0; width: 2rem; height: 100%; }
+  #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 0; width: 100%; height: 100%; color: var(--nt-accent); transition: opacity 0.15s ease; align-items: center; justify-content: center; user-select: none; }
+  #nt-ttu-chrono-btn:hover { opacity: 0.7; color: var(--nt-accentHover) !important; }
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 1.7rem; height: 1.7rem; fill: currentColor; }
-  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: #252525; border: 1px solid #3a3a3a; border-radius: 6px; width: 280px; color: #ececec; box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: var(--nt-surface, #252525); border: 1px solid var(--nt-border, #3a3a3a); border-radius: var(--nt-rounded-box, 6px); width: 280px; color: var(--nt-text); box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; font-family: var(--nt-font, sans-serif); }
   #nt-ttu-dropdown.open { display: flex; }
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
-  .nt-ttu-dd-title { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+  .nt-ttu-dd-title { font-size: 11px; color: var(--nt-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
   .nt-ttu-stats-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
   .nt-ttu-stat { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
-  .nt-ttu-stat-label { font-size: 10px; color: #999; }
-  .nt-ttu-stat-val { font-family: monospace; font-size: 14px; color: #fff; cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; transition: background 0.2s; text-align: center; }
-  .nt-ttu-stat-val:hover { background: #333; border-color: #555; }
+  .nt-ttu-stat-label { font-size: 10px; color: var(--nt-muted); }
+  .nt-ttu-stat-val { font-family: var(--nt-font-mono, monospace); font-size: 14px; color: var(--nt-text); cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; transition: background 0.2s; text-align: center; }
+  .nt-ttu-stat-val:hover { background: var(--nt-surfaceAlt, #13131f); border-color: var(--nt-borderHover); }
   .nt-ttu-stat-val.no-hover { cursor: default; }
   .nt-ttu-stat-val.no-hover:hover { background: transparent; border-color: transparent; }
   .nt-ttu-controls { display: flex; gap: 8px; justify-content: center; }
-  .nt-ttu-btn-icon { background: transparent; color: #aaa; border: none; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border-radius: 50%; }
-  .nt-ttu-btn-icon:hover:not(:disabled) { background: rgba(255,255,255,0.08); color: #fff; }
-  .nt-ttu-btn-icon.primary { color: #f0b429; }
-  .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: #ffcc33; }
+  .nt-ttu-btn-icon { background: transparent; color: var(--nt-muted); border: none; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border-radius: 50%; }
+  .nt-ttu-btn-icon:hover:not(:disabled) { background: var(--nt-surfaceAlt, #13131f); color: var(--nt-text); }
+  .nt-ttu-btn-icon.primary { color: var(--nt-accent); }
+  .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: var(--nt-accentHover); }
   .nt-ttu-btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
-  .nt-ttu-linker { margin-top: 12px; border-top: 1px solid #3a3a3a; padding-top: 12px; }
-  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: #3ddc84; padding: 4px 6px; border-radius: 4px; transition: background .15s; background: rgba(61,220,132,0.05); }
+  .nt-ttu-linker { margin-top: 12px; border-top: 1px solid var(--nt-border); padding-top: 12px; }
+  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--nt-success); padding: 4px 6px; border-radius: 4px; transition: background .15s; background: rgba(61,220,132,0.05); }
   .nt-ttu-link-compact-inner { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; }
   .nt-ttu-link-compact-inner:hover { opacity: 0.8; }
-  .nt-ttu-unlink-btn { background: none; border: none; color: #f0706a; cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
+  .nt-ttu-unlink-btn { background: none; border: none; color: var(--nt-error); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
   .nt-ttu-unlink-btn:hover { opacity: 1; }
-  .nt-ttu-vol-pill { background: transparent; border: none; color: #f0b429; font-family: monospace; font-size: 11px; padding: 0 6px; cursor: pointer; opacity: .95; }
+  .nt-ttu-vol-pill { background: transparent; border: none; color: var(--nt-accent); font-family: var(--nt-font-mono, monospace); font-size: 11px; padding: 0 6px; cursor: pointer; opacity: .95; }
   .nt-ttu-vol-pill:hover { opacity: 1; }
   .nt-ttu-vol-pill:active { transform: scale(0.98); }
   .nt-ttu-link-compact-inner svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .nt-ttu-link-edit { display: flex; flex-direction: column; gap: 6px; position: relative; }
   .nt-ttu-link-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
   .nt-ttu-link-vol-anchor { display: flex; align-items: center; flex: 0 0 auto; }
-  .nt-ttu-link-wrap { display: flex; align-items: center; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 0 6px; outline: none !important; flex: 1; min-width: 0; max-width: 100%; box-sizing: border-box; }
-  .nt-ttu-link-wrap:focus-within { border-color: #f0b429; box-shadow: 0 0 0 1px transparent; }
-  .nt-ttu-link-wrap svg { width: 12px; height: 12px; stroke: #999; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .nt-ttu-link-input { flex: 1; min-width: 0; background: transparent; border: none; color: #fff; font-family: monospace; font-size: 11px; padding: 6px; outline: none !important; }
+  .nt-ttu-link-wrap { display: flex; align-items: center; background: var(--nt-surfaceAlt, #13131f); border: 1px solid var(--nt-border); border-radius: 4px; padding: 0 6px; outline: none !important; flex: 1; min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .nt-ttu-link-wrap:focus-within { border-color: var(--nt-accent); box-shadow: 0 0 0 1px transparent; }
+  .nt-ttu-link-wrap svg { width: 12px; height: 12px; stroke: var(--nt-muted); stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .nt-ttu-link-input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--nt-text); font-family: var(--nt-font-mono, monospace); font-size: 11px; padding: 6px; outline: none !important; }
   .nt-ttu-link-input:focus { outline: none !important; box-shadow: none !important; }
-  .nt-ttu-vol-input { width: 36px; background: transparent; border: none; border-bottom: 1px solid rgba(240,180,41,.45); color: #f0b429; font-family: monospace; font-size: 11px; text-align: right; outline: none !important; padding: 0 2px; }
-  .nt-ttu-vol-input:focus { border-bottom-color: rgba(240,180,41,.9); }
+  .nt-ttu-vol-input { width: 36px; background: transparent; border: none; border-bottom: 1px solid var(--nt-accent); color: var(--nt-accent); font-family: var(--nt-font-mono, monospace); font-size: 11px; text-align: right; outline: none !important; padding: 0 2px; }
+  .nt-ttu-vol-input:focus { border-bottom-color: var(--nt-accentHover); }
   .nt-ttu-link-results { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; display: none; }
   .nt-ttu-link-results.open { display: flex; }
   .nt-ttu-link-item { display: flex; align-items: center; gap: 8px; padding: 6px; cursor: pointer; border-radius: 4px; transition: background .15s; text-align: left; }
-  .nt-ttu-link-item:hover { background: #333; }
+  .nt-ttu-link-item:hover { background: var(--nt-surfaceAlt, #13131f); }
   .nt-ttu-link-cover { width: 20px; height: 30px; object-fit: cover; border-radius: 2px; }
   .nt-ttu-link-info { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
-  .nt-ttu-link-t { font-size: 10px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nt-ttu-history { border-top: 1px solid #3a3a3a; font-size: 12px; }
-  .nt-ttu-history summary { padding: 10px 12px; cursor: pointer; color: #aaa; outline: none; user-select: none; transition: background 0.2s; }
-  .nt-ttu-history summary:hover { background: #2f2f2f; color: #fff; }
+  .nt-ttu-link-t { font-size: 10px; color: var(--nt-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nt-ttu-history { border-top: 1px solid var(--nt-border); font-size: 12px; }
+  .nt-ttu-history summary { padding: 10px 12px; cursor: pointer; color: var(--nt-muted); outline: none; user-select: none; transition: background 0.2s; }
+  .nt-ttu-history summary:hover { background: var(--nt-surfaceAlt, #13131f); color: var(--nt-text); }
   .nt-ttu-history-list { max-height: 140px; overflow-y: auto; padding: 0 12px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
-  .nt-ttu-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #bbb; background: #1c1c1c; padding: 6px 8px; border-radius: 4px; }
-  .nt-ttu-history-del { background: none; border: none; color: #f0706a; cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; opacity: .75; }
+  .nt-ttu-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--nt-text); background: var(--nt-surfaceAlt, #13131f); padding: 6px 8px; border-radius: 4px; }
+  .nt-ttu-history-del { background: none; border: none; color: var(--nt-error); cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; opacity: .75; }
   .nt-ttu-history-del:hover { opacity: 1; }
   `;
   document.head.appendChild(s);
@@ -377,6 +469,8 @@ function setupTTUChronometer() {
 
   const wrapper = document.createElement('div');
   wrapper.id = 'nt-ttu-chrono-wrapper';
+
+  // Solved static colors: mapped Total Time/Total Chars/Avg Speed to var(--nt-accent)
   wrapper.innerHTML = `
   <button id="nt-ttu-chrono-btn" title="Click to open Tracker Menu or Double Click to toggle Tracker">
   <svg viewBox="0 0 24 24"><path id="nt-ttu-main-icon-path" d="M8 5v14l11-7z"/></svg>
@@ -415,12 +509,12 @@ function setupTTUChronometer() {
   </div>
   </div>
   </div>
-  <div class="nt-ttu-dd-section" style="border-top: 1px solid #3a3a3a; background: rgba(0,0,0,0.2);">
+  <div class="nt-ttu-dd-section" style="border-top: 1px solid var(--nt-border); background: rgba(0,0,0,0.2);">
   <div class="nt-ttu-dd-title">Total Book Progress</div>
   <div class="nt-ttu-stats-row" style="margin-bottom:0;">
-  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Time</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-time" style="color:#f0b429;">0m</span></div>
-  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Chars</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-chars" style="color:#f0b429;">0</span></div>
-  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Avg Speed</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-speed" style="color:#f0b429;">0 c/m</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Time</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-time" style="color:var(--nt-accent);">0m</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Total Chars</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-chars" style="color:var(--nt-accent);">0</span></div>
+  <div class="nt-ttu-stat"><span class="nt-ttu-stat-label">Avg Speed</span><span class="nt-ttu-stat-val no-hover" id="nt-ttu-total-speed" style="color:var(--nt-accent);">0 c/m</span></div>
   </div>
   </div>
   <details class="nt-ttu-history" id="nt-ttu-history-wrap">
@@ -554,7 +648,7 @@ function setupTTUChronometer() {
     await ttuLinkStorage.setValue(links);
 
     const queue = await readingQueueStorage.getValue();
-    const existing = queue.find((q:any) => q.originalTitle === title || q.contentTitleNative === title);
+    const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
     if (existing) { existing.mediaId = 'web-reading'; existing.mediaData = undefined; await readingQueueStorage.setValue(queue); }
     refreshLinkerUI();
   });
@@ -575,55 +669,55 @@ function setupTTUChronometer() {
         });
         if (!res.ok) throw new Error();
         const data = await res.json();
-        const results = Array.isArray(data) ? data : (data.data ??[]);
+        const results = Array.isArray(data) ? data : (data.data ?? []);
 
         if (results.length === 0) { linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>'; return; }
 
         linkResults.innerHTML = '';
-    results.forEach((m: any) => {
-      const row = document.createElement('div');
-      row.className = 'nt-ttu-link-item';
-      const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
-      const img = m.coverImage || m.contentImage || '';
+        results.forEach((m: any) => {
+          const row = document.createElement('div');
+          row.className = 'nt-ttu-link-item';
+          const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
+          const img = m.coverImage || m.contentImage || '';
 
-    row.innerHTML = `
+          row.innerHTML = `
     ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
     <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
     `;
 
-    row.addEventListener('click', async () => {
-      const title = getTTUTitle();
-      const { volume } = parseTitleWithConfig(title);
-      const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
-      volPill.textContent = `Vol ${selectedVolume}`;
+          row.addEventListener('click', async () => {
+            const title = getTTUTitle();
+            const { volume } = parseTitleWithConfig(title);
+            const selectedVolume = Math.max(1, getVolFromPill() || volume || 1);
+            volPill.textContent = `Vol ${selectedVolume}`;
 
-      const links = await ttuLinkStorage.getValue() || {};
-      links[title] = {
-        mediaId: m.contentId, volume: selectedVolume,
-        mediaData: {
-          contentId: m.contentId, contentTitleNative: native,
-          contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
-          contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-          contentImage: img, coverImage: img, chapters: m.chapters, volumes: m.volumes,
-        }
-      };
-      await ttuLinkStorage.setValue(links);
+            const links = await ttuLinkStorage.getValue() || {};
+            links[title] = {
+              mediaId: m.contentId, volume: selectedVolume,
+              mediaData: {
+                contentId: m.contentId, contentTitleNative: native,
+                contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
+                contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
+                contentImage: img, coverImage: img, chapters: m.chapters, volumes: m.volumes,
+              }
+            };
+            await ttuLinkStorage.setValue(links);
 
-      const queue = await readingQueueStorage.getValue();
-      const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
-      if (existing) {
-        existing.mediaId = m.contentId; existing.volume = selectedVolume; existing.mediaData = links[title].mediaData;
-        existing.contentTitleNative = native; existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
-        existing.description = native;
-        await readingQueueStorage.setValue(queue);
-      }
+            const queue = await readingQueueStorage.getValue();
+            const existing = queue.find(q => q.originalTitle === title || q.contentTitleNative === title);
+            if (existing) {
+              existing.mediaId = m.contentId; existing.volume = selectedVolume; existing.mediaData = links[title].mediaData;
+              existing.contentTitleNative = native; existing.contentTitleEnglish = m.title?.contentTitleEnglish || m.contentTitleEnglish || '';
+              existing.description = native;
+              await readingQueueStorage.setValue(queue);
+            }
 
-      linkResults.classList.remove('open');
-      refreshLinkerUI();
-      if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
-    });
-      linkResults.appendChild(row);
-    });
+            linkResults.classList.remove('open');
+            refreshLinkerUI();
+            if (ttuState.timeMs > 0 || ttuState.chars > 0) liveSyncQueue();
+          });
+          linkResults.appendChild(row);
+        });
       } catch { linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>'; }
     }, 400);
   };
@@ -634,7 +728,7 @@ function setupTTUChronometer() {
 
   const updateHistoryData = async () => {
     const history = await ttuHistoryStorage.getValue() || {};
-    const sessions = history[getTTUTitle()] ||[];
+    const sessions = history[getTTUTitle()] || [];
 
     cachedHistoryMins = sessions.reduce((acc: any, s: any) => acc + Math.round(s.timeMs / 60000), 0);
     cachedHistoryChars = sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
@@ -663,7 +757,7 @@ function setupTTUChronometer() {
           await ttuHistoryStorage.setValue(historyNow);
 
           const q = await readingQueueStorage.getValue();
-          const filtered = q.filter((item: any) => !((item.sessions ||[]).some((s: any) => s.id === sessionId)));
+          const filtered = q.filter((item: any) => !((item.sessions || []).some((s: any) => s.id === sessionId)));
           if (filtered.length !== q.length) await readingQueueStorage.setValue(filtered);
 
           await updateHistoryData();
@@ -687,7 +781,7 @@ function setupTTUChronometer() {
     wrapper.querySelector('#nt-ttu-total-chars')!.textContent = totalChars.toString();
 
     const pauseSvg = 'M6 19h4V5H6v14zm8-14v14h4V5h-4z';
-    const playSvg  = 'M8 5v14l11-7z';
+    const playSvg = 'M8 5v14l11-7z';
     const playPath = toggleBtn.querySelector('#nt-ttu-play-path');
     const mainIconPath = btn.querySelector('#nt-ttu-main-icon-path');
 
@@ -799,13 +893,13 @@ function setupTTUChronometer() {
     btnLog.style.opacity = '0.3';
     btnLog.style.cursor = 'wait';
 
-  try {
-    await saveSessionAndQueue();
-    await updateHistoryData();
-  } finally {
-    isProcessingLog = false;
-    updateUI(); // updateUI naturally restores button opacity and cursor
-  }
+    try {
+      await saveSessionAndQueue();
+      await updateHistoryData();
+    } finally {
+      isProcessingLog = false;
+      updateUI(); // updateUI naturally restores button opacity and cursor
+    }
   });
 
   // --- FOOLPROOF DIRECT SEND BUTTON ---
@@ -829,21 +923,21 @@ function setupTTUChronometer() {
     try {
       const ok = await submitLog({
         type: 'reading', mediaId: linkedMedia.mediaId, mediaData: linkedMedia.mediaData, description: linkedMedia.mediaData.contentTitleNative || title,
-        chars: ttuState.chars, time: minutes, date: new Date().toISOString(), episodes: 0, pages: 0, volume: linkedMedia.volume || 1, private: false, tags:[]
+        chars: ttuState.chars, time: minutes, date: new Date().toISOString(), episodes: 0, pages: 0, volume: linkedMedia.volume || 1, private: false, tags: []
       });
       if (!ok) return;
 
       const dateStr = new Date().toISOString();
       const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
       const history = await ttuHistoryStorage.getValue() || {};
-      if (!history[title]) history[title] =[];
+      if (!history[title]) history[title] = [];
       history[title].push(sessionLog);
       await ttuHistoryStorage.setValue(history);
 
       const queue = await readingQueueStorage.getValue();
       const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
       if (existing) {
-        existing.sessions = (existing.sessions ||[]).filter((s: any) => s.id !== ttuState.id);
+        existing.sessions = (existing.sessions || []).filter((s: any) => s.id !== ttuState.id);
         existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
         existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
         await readingQueueStorage.setValue(queue);
@@ -900,7 +994,7 @@ function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   const footer = document.getElementById('ttu-page-footer');
   if (footer) {
     const flexGroups = Array.from(footer.children).filter(el =>
-    el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
+      el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
     if (flexGroups.length > 0) return { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' };
     return { el: footer, pos: 'afterbegin' };
   }
@@ -928,73 +1022,6 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-function showToast(title: string, msg: string, err = false) {
-  let container = document.getElementById('nt-toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'nt-toast-container';
-    Object.assign(container.style, {
-      position: 'fixed', bottom: '20px', right: '20px', zIndex: '2147483647',
-      display: 'flex', flexDirection: 'column', gap: '10px', pointerEvents: 'none',
-      writingMode: 'horizontal-tb'
-    });
-    document.body.appendChild(container);
-
-    const style = document.createElement('style');
-    style.textContent = `
-    @keyframes nt-toast-deplete { from { width: 100%; } to { width: 0%; } }
-    @keyframes nt-toast-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-    .nt-toast {
-      pointer-events: auto; position: relative; overflow: hidden;
-      background: #0f1a0f; color: #3ddc84; border: 1px solid rgba(61,220,132,.4);
-      border-radius: 5px; padding: 12px 15px 16px 15px;
-      font-family: 'Courier New', monospace; font-size: 13px;
-      box-shadow: 0 4px 20px rgba(0,0,0,.6); width: 300px; box-sizing: border-box;
-      display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
-      transition: opacity 0.3s, transform 0.3s; animation: nt-toast-slide-in 0.3s ease-out;
-      direction: ltr; text-align: left; line-height: 1.4;
-      writing-mode: horizontal-tb !important;
-      flex-direction: row !important;
-      direction: ltr !important;
-      text-align: left !important;
-    }
-    .nt-toast.nt-err { background: #1a0f0f; color: #f0706a; border-color: rgba(240,112,106,.4); }
-    .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 4px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
-    .nt-toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; opacity: 0.6; transition: opacity 0.2s; font-family: sans-serif; }
-    .nt-toast-close:hover { opacity: 1; }
-    .nt-toast-content { display: flex; flex-direction: column; gap: 4px; flex: 1; word-break: break-word; }
-    .nt-toast-title { font-weight: bold; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
-    .nt-toast-msg { opacity: 0.9; }
-    `;
-    document.head.appendChild(style);
-  }
-
-  const toast = document.createElement('div');
-  toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
-  toast.innerHTML = `
-  <div class="nt-toast-content">
-  ${title ? `<span class="nt-toast-title">${title}</span>` : ''}
-  ${msg ? `<span class="nt-toast-msg">${msg}</span>` : ''}
-  </div>
-  <button class="nt-toast-close">×</button>
-  <div class="nt-toast-bar"></div>
-  `;
-  container.appendChild(toast);
-
-  const timeout = setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-
-  toast.querySelector('.nt-toast-close')!.addEventListener('click', () => {
-    clearTimeout(timeout);
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(100%)';
-    setTimeout(() => toast.remove(), 300);
-  });
-}
-
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
     if (req.action === 'GET_ACTIVE_TIME') {
@@ -1002,9 +1029,8 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       if (nt && nt.getTotal) sendResponse({ minutes: Math.floor(nt.getTotal() / 60000) });
     }
     if (req.action === 'SHOW_TOAST') {
-      const g = globalThis as any;
-      if (!g.__nt_toastSink) g.__nt_toastSink = 'ttu';
-      if (g.__nt_toastSink !== 'ttu') return;
+      // Guard: Discard overlays inside sub-frame layers
+      if (window.self !== window.top) return;
 
       const title = String(req.title || '');
       const msg = req.message || '';
@@ -1015,6 +1041,9 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
 
 window.addEventListener('message', (event) => {
   if (event.data?.action === 'SHOW_TOAST') {
+    // Guard: Discard overlays inside sub-frame layers
+    if (window.self !== window.top) return;
+
     const title = String(event.data.title || '');
     const msg = event.data.message || '';
     showToast(title, msg, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
@@ -1072,8 +1101,8 @@ function buildOverlay(cfg: any) {
       overlay!.style.left = r.left + 'px'; overlay!.style.top = r.top + 'px';
       handle.style.cursor = 'grabbing'; e.preventDefault();
     });
-    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.left=(e.clientX-ox)+'px'; overlay!.style.top=(e.clientY-oy)+'px'; } });
-    document.addEventListener('mouseup',  () => { if (dragging) { dragging=false; handle.style.cursor='grab'; } });
+    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.left = (e.clientX - ox) + 'px'; overlay!.style.top = (e.clientY - oy) + 'px'; } });
+    document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
 
     pauseBtn.addEventListener('click', () => {
       const nt = (window as any).__nt;
@@ -1085,31 +1114,31 @@ function buildOverlay(cfg: any) {
     resetBtn.addEventListener('click', () => { (window as any).__nt.setMs(0); });
     timeEl.addEventListener('click', () => {
       const input = document.createElement('input');
-      input.type='text'; input.className='nt-edit';
-      input.value = fmt((window as any).__nt.getTotal()); input.placeholder='M:SS';
-    const commit = () => {
-      const parts = input.value.split(':').map(Number);
-      let ms = -1;
-      if (!parts.some(isNaN)) {
-        if (parts.length === 1) ms = parts[0] * 60 * 1000;
-        else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
-        else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
-      }
-      if (ms >= 0) (window as any).__nt.setMs(ms);
-      input.replaceWith(timeEl);
-    };
-    input.addEventListener('blur', commit);
-    input.addEventListener('keydown', e => { if (e.key==='Enter') input.blur(); });
-    timeEl.replaceWith(input); input.focus(); input.select();
+      input.type = 'text'; input.className = 'nt-edit';
+      input.value = fmt((window as any).__nt.getTotal()); input.placeholder = 'M:SS';
+      const commit = () => {
+        const parts = input.value.split(':').map(Number);
+        let ms = -1;
+        if (!parts.some(isNaN)) {
+          if (parts.length === 1) ms = parts[0] * 60 * 1000;
+          else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+          else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+        }
+        if (ms >= 0) (window as any).__nt.setMs(ms);
+        input.replaceWith(timeEl);
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+      timeEl.replaceWith(input); input.focus(); input.select();
     });
     setInterval(() => { timeEl.textContent = fmt((window as any).__nt.getTotal()); }, 1000);
   }
 
   const pos = cfg.overlayPosition ?? 'top-right';
   overlay.style.top = ''; overlay.style.bottom = ''; overlay.style.left = ''; overlay.style.right = '';
-  if (pos === 'top-left')     { overlay.style.top = '16px'; overlay.style.left = '16px'; }
-  if (pos === 'top-right')    { overlay.style.top = '16px'; overlay.style.right = '16px'; }
-  if (pos === 'bottom-left')  { overlay.style.bottom = '16px'; overlay.style.left = '16px'; }
+  if (pos === 'top-left') { overlay.style.top = '16px'; overlay.style.left = '16px'; }
+  if (pos === 'top-right') { overlay.style.top = '16px'; overlay.style.right = '16px'; }
+  if (pos === 'bottom-left') { overlay.style.bottom = '16px'; overlay.style.left = '16px'; }
   if (pos === 'bottom-right') { overlay.style.bottom = '16px'; overlay.style.right = '16px'; }
 
   if (cfg.overlayPosition === 'hidden') overlay.style.display = 'none';
@@ -1119,11 +1148,13 @@ function buildOverlay(cfg: any) {
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['config']) {
     const newCfg: any = changes['config'].newValue || {};
-    const oldCfg: any = changes['config'].oldValue || {};
     currentConfig = newCfg;
 
+    // Dynamically update page style variables
+    injectThemeStyles(newCfg.theme ?? 'nihongo', newCfg.font ?? 'mono');
+
     if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
-      const oldReaderCfg = getReaderConfig(oldCfg);
+      const oldReaderCfg = getReaderConfig(changes['config'].oldValue || {});
       const newReaderCfg = getReaderConfig(newCfg);
       const wasEnabled = oldReaderCfg.enabled;
       const isEnabled = newReaderCfg.enabled;
@@ -1159,7 +1190,7 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 
   if (area === 'local' && changes['readingQueue']) {
-    const queue = (changes['readingQueue'].newValue as any[]) ||[];
+    const queue = (changes['readingQueue'].newValue as any[]) || [];
     const rawTitle = getTTUTitle();
     const existing = queue.find((q: any) => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
 
@@ -1207,14 +1238,16 @@ browser.storage.onChanged.addListener((changes, area) => {
 });
 
 export default defineContentScript({
-  matches:['<all_urls>'],
+  matches: ['<all_urls>'],
   allFrames: true,
   cssInjectionMode: 'manifest',
 
   async main() {
     currentConfig = await configStorage.getValue() || {};
     const host = window.location.hostname;
-    const cfg  = currentConfig;
+    const cfg = currentConfig;
+
+    injectThemeStyles(cfg.theme ?? 'nihongo', cfg.font ?? 'mono');
 
     if (TTU_HOSTS.some(h => host.includes(h))) {
       const readerCfg = getReaderConfig(cfg);
