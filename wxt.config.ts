@@ -27,6 +27,7 @@ export default defineConfig({
       'https://www.youtube.com/watch?v=JPcsLaGA7fI&list=PLI76y3FWv18CrvaxtcS5QcAb7qaUQHtmB',
       'https://reader.ttsu.app',
       'https://app.yatsu.moe',
+      'https://manga.manabe.es/ranobe/1?yomiyasuId=6601e1448da0d5f8523883fa',
       'https://www.yomiuri.co.jp/editorial/20260506-GYT1T00155/',
     ],
   },

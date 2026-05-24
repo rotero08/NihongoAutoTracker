@@ -37,8 +37,19 @@
   let selectedTheme = $state("dark-amber");
   let selectedFont = $state("sans");
   let showCompactMenu = $state(false);
+  let customThemes = $state<any[]>([]);
 
   const total = $derived(videoQueue.length + readingQueue.length);
+
+  function isCustomThemeId(id: string): boolean {
+    return id === "custom" || id.startsWith("custom_");
+  }
+
+  // Dynamic dropdown list containing saved custom themes
+  const themeOptions = $derived([
+    ...THEME_OPTIONS,
+    ...customThemes.map((t) => ({ value: t.id, label: t.name })),
+  ]);
 
   /* ── Data loading ── */
   async function loadData() {
@@ -46,8 +57,96 @@
     readingQueue = await readingQueueStorage.getValue();
     const cfg = (await configStorage.getValue()) as any;
     hasApiKey = !!cfg?.apiKey;
-    selectedTheme = cfg?.theme ?? "dark-amber";
+    customThemes = cfg?.customThemes ?? [];
+
+    selectedTheme = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
     selectedFont = cfg?.font ?? "sans";
+  }
+
+  function applyCustomTheme(colors: any) {
+    if (!colors) return;
+    const root = document.documentElement;
+    root.style.setProperty("--color-background", colors.background);
+    root.style.setProperty("--color-surface", colors.surface);
+    root.style.setProperty(
+      "--color-surface-alt",
+      colors.surfaceAlt || colors.surface,
+    );
+    root.style.setProperty("--color-border", colors.border);
+    root.style.setProperty(
+      "--color-border-hover",
+      colors.borderHover || colors.border,
+    );
+    root.style.setProperty("--color-text", colors.text);
+    root.style.setProperty("--color-text-muted", colors.textMuted);
+    root.style.setProperty("--color-text-dimmed", colors.textMuted);
+    root.style.setProperty("--color-accent", colors.accent);
+    root.style.setProperty(
+      "--color-accent-hover",
+      colors.accentHover || colors.accent,
+    );
+  }
+
+  function clearCustomTheme() {
+    const root = document.documentElement;
+    root.style.removeProperty("--color-background");
+    root.style.removeProperty("--color-surface");
+    root.style.removeProperty("--color-surface-alt");
+    root.style.removeProperty("--color-border");
+    root.style.removeProperty("--color-border-hover");
+    root.style.removeProperty("--color-text");
+    root.style.removeProperty("--color-text-muted");
+    root.style.removeProperty("--color-text-dimmed");
+    root.style.removeProperty("--color-accent");
+    root.style.removeProperty("--color-accent-hover");
+  }
+
+  function decorateDropdownOptions() {
+    const options = document.querySelectorAll(
+      ".select-option, .option, [class*='option']",
+    );
+    options.forEach((opt) => {
+      const text = (opt.textContent || "").replace("✕", "").trim();
+      if (!text) return;
+
+      const isPreset = [
+        "Dark Amber (Default)",
+        "Charcoal Amber",
+        "Deep Ocean Dark",
+        "Nordic Light",
+        "Amethyst Purple",
+        "Theme",
+        "Font",
+      ].some((preset) => text.startsWith(preset));
+
+      if (!isPreset && customThemes.some((t) => t.name && text === t.name)) {
+        if (!opt.querySelector(".dropdown-delete-cross")) {
+          (opt as HTMLElement).style.display = "flex";
+          (opt as HTMLElement).style.justifyContent = "space-between";
+          (opt as HTMLElement).style.alignItems = "center";
+          (opt as HTMLElement).style.width = "100%";
+          (opt as HTMLElement).style.position = "relative";
+
+          const cross = document.createElement("span");
+          cross.className = "dropdown-delete-cross";
+          cross.textContent = "✕";
+          cross.style.color = "var(--color-text-muted)";
+          cross.style.fontSize = "12px";
+          cross.style.fontWeight = "bold";
+          cross.style.cursor = "pointer";
+          cross.style.padding = "2px 8px";
+          cross.style.marginLeft = "auto";
+          cross.style.transition = "color 0.15s";
+
+          cross.onmouseenter = () =>
+            (cross.style.color = "var(--color-error, #ff4444)");
+          cross.onmouseleave = () =>
+            (cross.style.color = "var(--color-text-muted)");
+
+          opt.appendChild(cross);
+        }
+      }
+    });
   }
 
   onMount(() => {
@@ -55,7 +154,22 @@
 
     async function init() {
       const cfg = (await configStorage.getValue()) as any;
-      applyThemeToDocument(cfg?.theme ?? "dark-amber", cfg?.font ?? "sans");
+      const themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
+      const fontVal = cfg?.font ?? "sans";
+      if (isCustomThemeId(themeVal)) {
+        applyThemeToDocument("dark-amber", fontVal);
+        const activeThemeObj = (cfg?.customThemes ?? []).find(
+          (t: any) => t.id === themeVal,
+        );
+        if (activeThemeObj) {
+          applyCustomTheme(activeThemeObj.colors);
+        } else if (cfg?.customColors) {
+          applyCustomTheme(cfg.customColors);
+        }
+      } else {
+        clearCustomTheme();
+        applyThemeToDocument(themeVal, fontVal);
+      }
     }
     init();
 
@@ -70,28 +184,79 @@
       }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
-        const nextTheme = val?.theme ?? "dark-amber";
+        const nextTheme = val?.selectedThemeId ?? val?.theme ?? "dark-amber";
         const nextFont = val?.font ?? "sans";
-        applyThemeToDocument(nextTheme, nextFont);
+
+        if (val?.customThemes) {
+          customThemes = val.customThemes;
+        }
+
+        selectedTheme = nextTheme;
+        selectedFont = nextFont;
+
+        if (isCustomThemeId(nextTheme)) {
+          applyThemeToDocument("dark-amber", nextFont);
+          const activeThemeObj = (val?.customThemes ?? []).find(
+            (t: any) => t.id === nextTheme,
+          );
+          if (activeThemeObj) {
+            applyCustomTheme(activeThemeObj.colors);
+          } else if (val?.customColors) {
+            applyCustomTheme(val.customColors);
+          }
+        } else {
+          clearCustomTheme();
+          applyThemeToDocument(nextTheme, nextFont);
+        }
       }
     };
     browser.storage.onChanged.addListener(storageListener);
 
-    const clickOutside = (e: MouseEvent) => {
+    const clickOutsideOrDelete = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+
+      // Intercept click on the '✕' symbol in dropdown options list to trigger Delete
+      if (target.classList.contains("dropdown-delete-cross")) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const optionEl = target.closest(
+          ".select-option, .option, [class*='option']",
+        );
+        if (optionEl) {
+          const text = (optionEl.textContent || "").replace("✕", "").trim();
+          const matchedTheme = customThemes.find((t) => t.name === text);
+          if (matchedTheme) {
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
+            const dropdownMenu = target.closest(
+              ".select-dropdown, .dropdown-menu, .compact-popover, [class*='dropdown'], [class*='popover']",
+            );
+            if (dropdownMenu instanceof HTMLElement) {
+              dropdownMenu.style.display = "none";
+            }
+            showCompactMenu = false; // explicitly close popup popover
+            handleQuickTheme("delete-" + matchedTheme.id);
+          }
+        }
+        return;
+      }
+
       // Close popover only if clicking outside of the popover and the toggle button
       if (
         target.closest(".compact-popover") ||
         target.closest(".appearance-toggle")
       ) {
+        setTimeout(decorateDropdownOptions, 30);
         return;
       }
       showCompactMenu = false;
     };
-    window.addEventListener("click", clickOutside);
+    window.addEventListener("click", clickOutsideOrDelete, true);
 
     return () => {
-      window.removeEventListener("click", clickOutside);
+      window.removeEventListener("click", clickOutsideOrDelete, true);
       browser.storage.onChanged.removeListener(storageListener);
     };
   });
@@ -99,20 +264,86 @@
   /* ── Quick Switch actions ── */
   function toggleCompactMenu() {
     showCompactMenu = !showCompactMenu;
+    if (showCompactMenu) {
+      setTimeout(decorateDropdownOptions, 30);
+    }
   }
 
   async function handleQuickTheme(val: string) {
-    selectedTheme = val;
     const cfg = (await configStorage.getValue()) as any;
-    await configStorage.setValue({ ...cfg, theme: val });
-    applyThemeToDocument(val, selectedFont);
+
+    // Handle inline custom theme deletion trigger from inside popup dropdown
+    if (val.startsWith("delete-")) {
+      const themeIdToDelete = val.replace("delete-", "");
+      const ok = await confirmModal.confirm(
+        "Delete Theme",
+        "Are you sure you want to delete this custom theme?",
+      );
+      if (!ok) return;
+
+      const updatedThemes = (cfg.customThemes ?? []).filter(
+        (t: any) => t.id !== themeIdToDelete,
+      );
+      cfg.customThemes = updatedThemes;
+      customThemes = updatedThemes;
+
+      if (
+        cfg.selectedThemeId === themeIdToDelete ||
+        cfg.theme === themeIdToDelete
+      ) {
+        cfg.theme = "dark-amber";
+        cfg.selectedThemeId = undefined;
+        cfg.customColors = undefined;
+        selectedTheme = "dark-amber";
+        clearCustomTheme();
+        applyThemeToDocument("dark-amber", selectedFont);
+      }
+      await configStorage.setValue(cfg);
+      showStatus("✓ Deleted Theme");
+      return;
+    }
+
+    selectedTheme = val;
+    if (isCustomThemeId(val)) {
+      cfg.theme = val;
+      cfg.selectedThemeId = val;
+      const activeThemeObj = (cfg.customThemes ?? []).find(
+        (t: any) => t.id === val,
+      );
+      if (activeThemeObj) {
+        cfg.customColors = { ...activeThemeObj.colors };
+      }
+      await configStorage.setValue(cfg);
+      // Base themes are set first, then our custom theme overrides them correctly
+      applyThemeToDocument("dark-amber", selectedFont);
+      if (activeThemeObj) {
+        applyCustomTheme(activeThemeObj.colors);
+      }
+    } else {
+      cfg.theme = val;
+      cfg.selectedThemeId = undefined;
+      cfg.customColors = undefined;
+      await configStorage.setValue(cfg);
+      clearCustomTheme();
+      applyThemeToDocument(val, selectedFont);
+    }
   }
 
   async function handleQuickFont(val: string) {
     selectedFont = val;
     const cfg = (await configStorage.getValue()) as any;
     await configStorage.setValue({ ...cfg, font: val });
-    applyThemeToDocument(selectedTheme, val);
+    if (isCustomThemeId(selectedTheme)) {
+      applyThemeToDocument("dark-amber", val);
+      const activeThemeObj = (cfg.customThemes ?? []).find(
+        (t: any) => t.id === selectedTheme,
+      );
+      if (activeThemeObj) {
+        applyCustomTheme(activeThemeObj.colors);
+      }
+    } else {
+      applyThemeToDocument(selectedTheme, val);
+    }
   }
 
   /* ── Settings Actions ─────────────────────────────────────────── */
@@ -404,7 +635,7 @@
         >
 
         <CustomSelect
-          options={THEME_OPTIONS}
+          options={themeOptions}
           value={selectedTheme}
           onChange={handleQuickTheme}
           label="Theme"
@@ -608,6 +839,19 @@
     display: flex;
     gap: 6px;
   }
+  .badge {
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: bold;
+  }
+  .queue-bulk {
+    display: flex;
+    gap: 6px;
+  }
   .bulk-btn {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -687,5 +931,17 @@
   .open-btn:hover {
     color: var(--color-text-muted);
     border-color: var(--color-border-hover);
+  }
+
+  /* Style select dropdown option layouts inside popover globally */
+  :global(
+      .compact-popover .select-option,
+      .compact-popover .option,
+      .compact-popover [class*="option"]
+    ) {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100%;
   }
 </style>

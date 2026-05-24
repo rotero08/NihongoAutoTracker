@@ -42,15 +42,13 @@ function getActiveThemeName(cfg: any): string {
 }
 
 function getCustomColorsForSite(cfg: any): any {
-  const host = window.location.hostname;
-  if (host.includes('reader.ttsu.app') || host.includes('ttsu.app')) {
-    if (cfg.ttuThemeOverride === 'custom') return cfg.ttuCustomColors;
-  } else if (host.includes('app.yatsu.moe')) {
-    if (cfg.yatsuThemeOverride === 'custom') return cfg.yatsuCustomColors;
-  } else if (host.includes('manga.manabe.es')) {
-    if (cfg.manabeThemeOverride === 'custom') return cfg.manabeCustomColors;
+  const activeThemeName = getActiveThemeName(cfg);
+  if (activeThemeName.startsWith('custom-')) {
+    const id = activeThemeName.replace('custom-', '');
+    const theme = (cfg.userThemes || []).find((t: any) => t.id === id);
+    return theme ? theme.colors : null;
   }
-  return cfg.customColors;
+  return null;
 }
 
 /**
@@ -191,6 +189,15 @@ function detectReaderThemeColors(): any {
     let accent = isDark ? 'var(--color-accent, #f0b429)' : 'var(--color-accent, #b45309)';
     let accentHover = isDark ? 'var(--color-accent-hover, #ffd060)' : 'var(--color-accent-hover, #78350f)';
 
+    // Adaptive green color that adjusts light/dark contrast but remains strictly green
+    const greenHsl = {
+      h: 135, // True Green spectrum
+      s: isDark ? 65 : 75,
+      l: isDark ? 55 : 35
+    };
+    const successGreen = hslToRgb(greenHsl.h, greenHsl.s, greenHsl.l);
+    const success = `rgb(${successGreen.r}, ${successGreen.g}, ${successGreen.b})`;
+
     return {
       background,
       surface,
@@ -200,7 +207,8 @@ function detectReaderThemeColors(): any {
       text: textColor,
       textMuted,
       accent,
-      accentHover
+      accentHover,
+      success
     };
   } catch (e) {
     return null;
@@ -216,6 +224,15 @@ function updateActiveThemeStyles(themeName: string, cfg: any) {
     } else {
       clearCustomThemeFromDoc();
       injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'mono');
+    }
+  } else if (themeName.startsWith('custom-')) {
+    const colors = getCustomColorsForSite(cfg);
+    if (colors) {
+      applyCustomThemeToDoc(colors);
+      injectThemeStyles('custom', cfg.font ?? 'mono');
+    } else {
+      clearCustomThemeFromDoc();
+      injectThemeStyles('dark-amber', cfg.font ?? 'mono');
     }
   } else if (themeName === 'custom') {
     const colors = getCustomColorsForSite(cfg);
@@ -241,6 +258,7 @@ function applyCustomThemeToDoc(customColors: any) {
     "--color-text-dimmed": customColors.textMuted,
     "--color-accent": customColors.accent,
     "--color-accent-hover": customColors.accentHover || customColors.accent,
+    "--color-success": customColors.success || customColors.accent,
   };
   for (const [prop, val] of Object.entries(mapping)) {
     if (val) root.style.setProperty(prop, val, 'important');
@@ -259,7 +277,8 @@ function clearCustomThemeFromDoc() {
     "--color-text-muted",
     "--color-text-dimmed",
     "--color-accent",
-    "--color-accent-hover"
+    "--color-accent-hover",
+    "--color-success"
   ];
   for (const prop of props) {
     root.style.removeProperty(prop);
@@ -852,7 +871,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
     // 4. Non-TTU Overlay recovery check
     if (!TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
-      if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
+      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
         const overlay = document.getElementById('nt-overlay');
         if (!overlay) {
           addDebugLog('INFO', 'TextTracker', 'Overlay removed by host page DOM changes. Rebuilding overlay...');

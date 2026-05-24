@@ -1,6 +1,8 @@
+<!-- Settings/App.svelte -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { configStorage } from "@/lib/storage/config";
+  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
   import Sidebar from "@/components/settings/Sidebar.svelte";
   import QueueTab from "@/components/settings/tabs/QueueTab.svelte";
   import ApiKeyTab from "@/components/settings/tabs/ApiKeyTab.svelte";
@@ -77,6 +79,12 @@
     queueCount = count;
   }
 
+  async function updateQueueCount() {
+    const video = await videoQueueStorage.getValue();
+    const reading = await readingQueueStorage.getValue();
+    queueCount = (video?.length || 0) + (reading?.length || 0);
+  }
+
   function applyCustomTheme(colors: any) {
     if (!colors) return;
     const root = document.documentElement;
@@ -130,9 +138,20 @@
       const applyTheme = (c: any) => {
         const theme = c?.theme ?? "nihongo";
         const font = c?.font ?? "sans";
-        if (theme === "custom") {
-          applyThemeToDocument("dark-amber", font);
-          applyCustomTheme(c?.customColors);
+        if (theme.startsWith("custom_")) {
+          const themeId = theme.replace("custom_", "");
+          const customThemes = c?.customThemes || [];
+          // Robust custom theme matching supporting both raw and prefixed IDs
+          const targetTheme = customThemes.find(
+            (t: any) => t.id === themeId || t.id === theme,
+          );
+          if (targetTheme) {
+            applyThemeToDocument("dark-amber", font);
+            applyCustomTheme(targetTheme.colors);
+          } else {
+            clearCustomTheme();
+            applyThemeToDocument("dark-amber", font);
+          }
         } else {
           clearCustomTheme();
           applyThemeToDocument(theme, font);
@@ -140,6 +159,7 @@
       };
 
       applyTheme(cfg);
+      await updateQueueCount();
 
       /* Watch storage changes dynamically */
       browser.storage.onChanged.addListener(storageListener);
@@ -149,13 +169,30 @@
 
     /* Live update variables if changed in storage */
     const storageListener = (changes: any, area: string) => {
+      if (
+        area === "local" &&
+        (changes["videoQueue"] || changes["readingQueue"])
+      ) {
+        updateQueueCount();
+      }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
         const nextTheme = val?.theme ?? "nihongo";
         const nextFont = val?.font ?? "sans";
-        if (nextTheme === "custom") {
-          applyThemeToDocument("dark-amber", nextFont);
-          applyCustomTheme(val?.customColors);
+        if (nextTheme.startsWith("custom_")) {
+          const themeId = nextTheme.replace("custom_", "");
+          const customThemes = val?.customThemes || [];
+          // Robust custom theme matching supporting both raw and prefixed IDs
+          const targetTheme = customThemes.find(
+            (t: any) => t.id === themeId || t.id === nextTheme,
+          );
+          if (targetTheme) {
+            applyThemeToDocument("dark-amber", nextFont);
+            applyCustomTheme(targetTheme.colors);
+          } else {
+            clearCustomTheme();
+            applyThemeToDocument("dark-amber", nextFont);
+          }
         } else {
           clearCustomTheme();
           applyThemeToDocument(nextTheme, nextFont);
