@@ -134,7 +134,7 @@ export function getTheme(themeName?: string): UITheme {
     return THEMES[themeName || 'dark-amber'] || THEMES['dark-amber'];
 }
 
-export function applyThemeToDocument(themeName: string, fontName?: string) {
+export function applyThemeToDocument(themeName: string, fontName?: string, customColors?: Record<string, string>) {
     const theme = getTheme(themeName);
     const root = document.documentElement;
 
@@ -143,20 +143,32 @@ export function applyThemeToDocument(themeName: string, fontName?: string) {
     const selectedFont = FONTS[fontName as keyof typeof FONTS] || theme.typography.sans;
     const isLight = themeName === 'light';
 
+    const bg = customColors?.background || theme.colors.bg;
+    const surface = customColors?.surface || theme.colors.surface;
+    const surfaceAlt = customColors?.surfaceAlt || customColors?.surface || theme.colors.surfaceAlt;
+    const border = customColors?.border || theme.colors.border;
+    const borderHover = customColors?.borderHover || customColors?.border || theme.colors.borderHover;
+    const text = customColors?.text || theme.colors.text;
+    const muted = customColors?.textMuted || theme.colors.muted;
+    const accent = customColors?.accent || theme.colors.accent;
+    const accentHover = customColors?.accentHover || customColors?.accent || theme.colors.accentHover;
+    const success = customColors?.success || theme.colors.success;
+    const error = customColors?.error || theme.colors.error;
+
     const variables: Record<string, string> = {
         // Clear, descriptive variables
-        '--color-background': theme.colors.bg,
-        '--color-surface': theme.colors.surface,
-        '--color-surface-alt': theme.colors.surfaceAlt,
-        '--color-border': theme.colors.border,
-        '--color-border-hover': theme.colors.borderHover,
-        '--color-text': theme.colors.text,
-        '--color-text-muted': theme.colors.muted,
-        '--color-text-dimmed': theme.colors.muted,
-        '--color-accent': theme.colors.accent,
-        '--color-accent-hover': theme.colors.accentHover,
-        '--color-success': theme.colors.success,
-        '--color-error': theme.colors.error,
+        '--color-background': bg,
+        '--color-surface': surface,
+        '--color-surface-alt': surfaceAlt,
+        '--color-border': border,
+        '--color-border-hover': borderHover,
+        '--color-text': text,
+        '--color-text-muted': muted,
+        '--color-text-dimmed': muted,
+        '--color-accent': accent,
+        '--color-accent-hover': accentHover,
+        '--color-success': success,
+        '--color-error': error,
         '--font-mono': selectedFont,
         '--font-sans': selectedFont,
         '--rounded-box': `${theme.borderRadius}px`,

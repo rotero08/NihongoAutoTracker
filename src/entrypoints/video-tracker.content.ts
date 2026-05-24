@@ -277,12 +277,26 @@ export default defineContentScript({
   async main() {
     cachedConfig = await configStorage.getValue() || {};
 
-    // Apply the active theme as soon as the video tracker is loaded on YouTube
-    applyThemeToDocument(cachedConfig.theme ?? 'nihongo', cachedConfig.font ?? 'sans');
+    const applyCachedTheme = (c: any) => {
+      const theme = c.theme ?? 'nihongo';
+      const font = c.font ?? 'sans';
+      let customColors: any = null;
+      if (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom') {
+        const themeId = theme.replace('custom_', '').replace('custom-', '');
+        const targetTheme = (c.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
+        if (targetTheme) {
+          customColors = targetTheme.colors;
+        } else if (c.customColors) {
+          customColors = c.customColors;
+        }
+      }
+      applyThemeToDocument(theme, font, customColors);
+      const activeTheme = getTheme(theme);
+      injectModalStyles(activeTheme);
+    };
 
-    // Inject modal styles initially using the loaded theme
-    const initialTheme = getTheme(cachedConfig.theme ?? 'nihongo');
-    injectModalStyles(initialTheme);
+    applyCachedTheme(cachedConfig);
+
     let currentSessionId = crypto.randomUUID();
     const state = { hasTriggered: false, isManualLogging: false };
     let trackedVideo: HTMLVideoElement | null = null;
@@ -449,16 +463,10 @@ export default defineContentScript({
 
     browser.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes['config']) {
-        // Cast c to any to resolve the TrackerConfig typing constraint
         configStorage.getValue().then((c: any) => {
           if (c) {
             cachedConfig = c;
-
-            // Apply the global page-wide theme & font styles to document
-            applyThemeToDocument(c.theme ?? 'nihongo', c.font ?? 'sans');
-
-            const activeTheme = getTheme(c.theme ?? 'nihongo');
-            injectModalStyles(activeTheme);
+            applyCachedTheme(c);
 
             const badge = document.getElementById('nt-status-badge');
             if (badge) {

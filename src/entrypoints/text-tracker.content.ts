@@ -43,10 +43,12 @@ function getActiveThemeName(cfg: any): string {
 
 function getCustomColorsForSite(cfg: any): any {
   const activeThemeName = getActiveThemeName(cfg);
-  if (activeThemeName.startsWith('custom-')) {
-    const id = activeThemeName.replace('custom-', '');
-    const theme = (cfg.userThemes || []).find((t: any) => t.id === id);
-    return theme ? theme.colors : null;
+  if (!activeThemeName) return null;
+  if (activeThemeName.startsWith('custom-') || activeThemeName.startsWith('custom_') || activeThemeName === 'custom') {
+    const id = activeThemeName.replace('custom-', '').replace('custom_', '');
+    const themes = cfg.customThemes || cfg.userThemes || [];
+    const theme = themes.find((t: any) => t.id === id || t.id === activeThemeName);
+    return theme ? theme.colors : (cfg.customColors || null);
   }
   return null;
 }
@@ -220,27 +222,23 @@ function updateActiveThemeStyles(themeName: string, cfg: any) {
     const detectedColors = detectReaderThemeColors();
     if (detectedColors) {
       applyCustomThemeToDoc(detectedColors);
-      injectThemeStyles('custom', cfg.font ?? 'mono');
+      injectThemeStyles('custom', cfg.font ?? 'sans');
     } else {
       clearCustomThemeFromDoc();
-      injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'mono');
+      injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
     }
-  } else if (themeName.startsWith('custom-')) {
+  } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
     const colors = getCustomColorsForSite(cfg);
     if (colors) {
       applyCustomThemeToDoc(colors);
-      injectThemeStyles('custom', cfg.font ?? 'mono');
+      injectThemeStyles('custom', cfg.font ?? 'sans');
     } else {
       clearCustomThemeFromDoc();
-      injectThemeStyles('dark-amber', cfg.font ?? 'mono');
+      injectThemeStyles('dark-amber', cfg.font ?? 'sans');
     }
-  } else if (themeName === 'custom') {
-    const colors = getCustomColorsForSite(cfg);
-    applyCustomThemeToDoc(colors);
-    injectThemeStyles('custom', cfg.font ?? 'mono');
   } else {
     clearCustomThemeFromDoc();
-    injectThemeStyles(themeName, cfg.font ?? 'mono');
+    injectThemeStyles(themeName, cfg.font ?? 'sans');
   }
 }
 
@@ -865,8 +863,8 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
     // 3. Real-time background color theme change tracking.
     const activeTheme = getActiveThemeName(currentConfig);
-    if (activeTheme === 'match-reader') {
-      updateActiveThemeStyles('match-reader', currentConfig);
+    if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
+      updateActiveThemeStyles(activeTheme, currentConfig);
     }
 
     // 4. Non-TTU Overlay recovery check
@@ -1241,6 +1239,14 @@ browser.storage.onChanged.addListener((changes, area) => {
       }
 
       checkAndRunOverlay(newCfg);
+    }
+  }
+
+  if (area === 'local' && changes['ttuHistory']) {
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) {
+      wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
     }
   }
 

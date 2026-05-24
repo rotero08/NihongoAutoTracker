@@ -85,6 +85,30 @@
         ) || { borderRadius: 6, borderRadiusSmall: 4 },
     );
 
+    function lightenHexColor(hex: string, percent: number): string {
+        if (!hex || !hex.startsWith("#")) return hex;
+        try {
+            let h = hex.trim();
+            if (h.length === 4) {
+                h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+            }
+            let num = parseInt(h.slice(1), 16),
+                amt = Math.round(2.55 * percent),
+                R = (num >> 16) + amt,
+                G = ((num >> 8) & 0x00ff) + amt,
+                B = (num & 0x0000ff) + amt;
+            R = Math.max(0, Math.min(255, R));
+            G = Math.max(0, Math.min(255, G));
+            B = Math.max(0, Math.min(255, B));
+            return (
+                "#" +
+                (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
+            );
+        } catch (e) {
+            return hex;
+        }
+    }
+
     // Derived modification checker
     function isThemeModified(themeId: string): boolean {
         const theme = customThemes.find((t) => t.id === themeId);
@@ -244,6 +268,14 @@
             if (themeDraftNames[theme.id] === undefined) {
                 themeDraftNames[theme.id] = theme.name;
             }
+            // Dynamically calculate and update accentHover if accent changes
+            const draftColors = themeDraftColors[theme.id];
+            if (draftColors && draftColors.accent) {
+                draftColors.accentHover = lightenHexColor(
+                    draftColors.accent,
+                    12,
+                );
+            }
         });
     });
 
@@ -365,8 +397,7 @@
 
         // ALWAYS apply base stylesheet attributes BEFORE custom theme variables to prevent browser wiping values
         if (selectedTheme === themeId) {
-            applyThemeToDocument("dark-amber", selectedFont);
-            applyCustomTheme(draftColors);
+            applyThemeToDocument("dark-amber", selectedFont, draftColors);
         }
 
         // Collapse to minuscule header after saving
@@ -474,8 +505,6 @@
             loadedThemes = [...cfg.customThemes];
         }
 
-        // Automatic legacy custom theme creation blocks completely removed from load() to stop new themes from being created dynamically.
-
         customThemes = loadedThemes;
 
         customThemes.forEach((theme) => {
@@ -488,9 +517,14 @@
             const activeCustomTheme = customThemes.find(
                 (t) => t.id === selectedTheme,
             );
-            applyThemeToDocument("dark-amber", selectedFont);
             if (activeCustomTheme) {
-                applyCustomTheme(activeCustomTheme.colors);
+                applyThemeToDocument(
+                    "dark-amber",
+                    selectedFont,
+                    activeCustomTheme.colors,
+                );
+            } else {
+                applyThemeToDocument("dark-amber", selectedFont);
             }
         } else {
             clearCustomTheme();
@@ -540,9 +574,14 @@
                 cfg.customColors = { ...currentTheme.colors };
             }
             await configStorage.setValue(cfg);
-            applyThemeToDocument("dark-amber", selectedFont);
             if (currentTheme) {
-                applyCustomTheme(currentTheme.colors);
+                applyThemeToDocument(
+                    "dark-amber",
+                    selectedFont,
+                    currentTheme.colors,
+                );
+            } else {
+                applyThemeToDocument("dark-amber", selectedFont);
             }
             onStatus("Custom draft active. Save inside preview to apply.");
         } else {
@@ -563,12 +602,17 @@
         const cfg = (await configStorage.getValue()) as any;
         await configStorage.setValue({ ...cfg, font: fontName });
         if (isCustomThemeId(selectedTheme)) {
-            applyThemeToDocument("dark-amber", fontName);
             const activeCustomTheme = customThemes.find(
                 (t) => t.id === selectedTheme,
             );
             if (activeCustomTheme) {
-                applyCustomTheme(activeCustomTheme.colors);
+                applyThemeToDocument(
+                    "dark-amber",
+                    fontName,
+                    activeCustomTheme.colors,
+                );
+            } else {
+                applyThemeToDocument("dark-amber", fontName);
             }
         } else {
             applyThemeToDocument(selectedTheme, fontName);
