@@ -175,6 +175,11 @@ export function extractAdvancedCharCount(
             if (spans.length > 0) {
                 // Whispersync line-based tracking (Preserved)
                 spans.forEach(s => {
+                    // Exclude ruby annotations inside highlights to prevent counting furigana characters
+                    if (s.closest('rt, rp, svg, figcaption, noscript')) {
+                        return;
+                    }
+
                     const r = s.getBoundingClientRect();
                     let sExp = false;
                     if (isVerticalText) {
