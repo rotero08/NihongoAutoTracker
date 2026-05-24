@@ -1,10 +1,4 @@
-<!--
-  ── Popup App.svelte ─────────────────────────────────────────────────────────
-  Root component for the extension popup. Displays the header with branding
-  and API status, tab filters, queue list, and footer actions.
-
-  This replaces the 662-line imperative popup/main.ts with reactive Svelte.
--->
+<!-- Popup App.svelte -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
@@ -85,6 +79,20 @@
       "--color-accent-hover",
       colors.accentHover || colors.accent,
     );
+    root.style.setProperty("--color-success", colors.success || "#3ddc84");
+
+    // Re-synchronize style aliases with custom accent color
+    root.style.setProperty("--bg", "var(--color-background)");
+    root.style.setProperty("--surf", "var(--color-surface)");
+    root.style.setProperty("--surf2", "var(--color-surface-alt)");
+    root.style.setProperty("--bdr", "var(--color-border)");
+    root.style.setProperty("--bdr2", "var(--color-border-hover)");
+    root.style.setProperty("--text", "var(--color-text)");
+    root.style.setProperty("--muted", "var(--color-text-muted)");
+    root.style.setProperty("--dim", "var(--color-text-dimmed)");
+    root.style.setProperty("--amber", "var(--color-accent)");
+    root.style.setProperty("--ambrh", "var(--color-accent-hover)");
+    root.style.setProperty("--green", "var(--color-success)");
   }
 
   function clearCustomTheme() {
@@ -99,6 +107,19 @@
     root.style.removeProperty("--color-text-dimmed");
     root.style.removeProperty("--color-accent");
     root.style.removeProperty("--color-accent-hover");
+    root.style.removeProperty("--color-success");
+
+    root.style.removeProperty("--bg");
+    root.style.removeProperty("--surf");
+    root.style.removeProperty("--surf2");
+    root.style.removeProperty("--bdr");
+    root.style.removeProperty("--bdr2");
+    root.style.removeProperty("--text");
+    root.style.removeProperty("--muted");
+    root.style.removeProperty("--dim");
+    root.style.removeProperty("--amber");
+    root.style.removeProperty("--ambrh");
+    root.style.removeProperty("--green");
   }
 
   function decorateDropdownOptions() {
@@ -157,7 +178,7 @@
       const themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
       const fontVal = cfg?.font ?? "sans";
       if (isCustomThemeId(themeVal)) {
-        applyThemeToDocument("dark-amber", fontVal);
+        applyThemeToDocument("dark-amber", fontVal, cfg?.customColors);
         const activeThemeObj = (cfg?.customThemes ?? []).find(
           (t: any) => t.id === themeVal,
         );
@@ -195,7 +216,7 @@
         selectedFont = nextFont;
 
         if (isCustomThemeId(nextTheme)) {
-          applyThemeToDocument("dark-amber", nextFont);
+          applyThemeToDocument("dark-amber", nextFont, val?.customColors);
           const activeThemeObj = (val?.customThemes ?? []).find(
             (t: any) => t.id === nextTheme,
           );
@@ -315,7 +336,7 @@
       }
       await configStorage.setValue(cfg);
       // Base themes are set first, then our custom theme overrides them correctly
-      applyThemeToDocument("dark-amber", selectedFont);
+      applyThemeToDocument("dark-amber", selectedFont, activeThemeObj?.colors);
       if (activeThemeObj) {
         applyCustomTheme(activeThemeObj.colors);
       }
@@ -334,10 +355,10 @@
     const cfg = (await configStorage.getValue()) as any;
     await configStorage.setValue({ ...cfg, font: val });
     if (isCustomThemeId(selectedTheme)) {
-      applyThemeToDocument("dark-amber", val);
       const activeThemeObj = (cfg.customThemes ?? []).find(
         (t: any) => t.id === selectedTheme,
       );
+      applyThemeToDocument("dark-amber", val, activeThemeObj?.colors);
       if (activeThemeObj) {
         applyCustomTheme(activeThemeObj.colors);
       }
@@ -772,9 +793,9 @@
     border-radius: 8px;
   }
   .pill-ok {
-    color: var(--color-success);
-    border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
-    background: color-mix(in srgb, var(--color-success) 7%, transparent);
+    color: #3ddc84 !important;
+    border: 1px solid rgba(61, 220, 132, 0.25) !important;
+    background: rgba(61, 220, 132, 0.07) !important;
   }
   .pill-off {
     color: var(--color-error);
@@ -800,6 +821,12 @@
   .icon-btn:hover {
     color: var(--color-text);
     border-color: var(--color-border-hover);
+  }
+
+  /* Force system success green on all matched list checkmarks and popup items globally */
+  :global(.qi-link-status, .api-status.ok, .pill-ok) {
+    color: #3ddc84 !important;
+    border-color: rgba(61, 220, 132, 0.25) !important;
   }
 
   /* ── Separator ── */

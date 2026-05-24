@@ -8,6 +8,7 @@
         applyThemeToDocument,
         THEME_OPTIONS,
         FONT_OPTIONS,
+        THEMES,
     } from "@/lib/ui/themes";
 
     interface Props {
@@ -45,14 +46,28 @@
     let themeDraftColors = $state<Record<string, Record<string, string>>>({});
     let themeDraftNames = $state<Record<string, string>>({});
     let triedSavingEmptyName = $state<Record<string, boolean>>({});
-    let isCollapsed = $state<Record<string, boolean>>({});
+
+    // Context-based exclusive collapse state
+    let isCollapsed = $state<Record<string, boolean>>({
+        global: true,
+        ttu: true,
+        yatsu: true,
+        manabe: true,
+    });
 
     let ttuThemeOverride = $state("global");
     let yatsuThemeOverride = $state("global");
     let manabeThemeOverride = $state("global");
 
-    // Preview Visibility State
+    // Preview & Dropdown Visibility States
     let showPreviews = $state(false);
+    let templateDropdownOpen = $state(false);
+    let ttuTemplateDropdownOpen = $state(false);
+    let yatsuTemplateDropdownOpen = $state(false);
+    let manabeTemplateDropdownOpen = $state(false);
+
+    // Navigation lock state
+    let isProceeding = false;
 
     // Inline Confirmation Modal State
     let modalOpen = $state(false);
@@ -201,9 +216,17 @@
     function handleGlobalClick(e: MouseEvent) {
         const target = e.target as HTMLElement;
 
+        // Close templates dropdown picker on outside clicks
+        if (!target.closest(".custom-select-trigger")) {
+            templateDropdownOpen = false;
+            ttuTemplateDropdownOpen = false;
+            yatsuTemplateDropdownOpen = false;
+            manabeTemplateDropdownOpen = false;
+        }
+
         // 1. Intercept Sidebar tab switching if there are unsaved changes
         const navItem = target.closest(".nav-item");
-        if (navItem && hasUnsavedChanges) {
+        if (navItem && hasUnsavedChanges && !isProceeding) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -212,6 +235,7 @@
                 "You have unsaved custom theme modifications. Leaving this tab will discard all unsaved edits. Do you want to proceed?",
             ).then((confirmed) => {
                 if (confirmed) {
+                    isProceeding = true;
                     customThemes.forEach((t) => {
                         if (isThemeModified(t.id)) {
                             revertThemeDraft(t.id);
@@ -269,14 +293,6 @@
             if (themeDraftNames[theme.id] === undefined) {
                 themeDraftNames[theme.id] = theme.name;
             }
-            // Dynamically calculate and update accentHover if accent changes
-            const draftColors = themeDraftColors[theme.id];
-            if (draftColors && draftColors.accent) {
-                draftColors.accentHover = lightenHexColor(
-                    draftColors.accent,
-                    12,
-                );
-            }
         });
     });
 
@@ -313,6 +329,20 @@
             "--color-accent-hover",
             colors.accentHover || colors.accent,
         );
+        root.style.setProperty("--color-success", colors.success || "#3ddc84");
+
+        // Re-synchronize aliases
+        root.style.setProperty("--bg", "var(--color-background)");
+        root.style.setProperty("--surf", "var(--color-surface)");
+        root.style.setProperty("--surf2", "var(--color-surface-alt)");
+        root.style.setProperty("--bdr", "var(--color-border)");
+        root.style.setProperty("--bdr2", "var(--color-border-hover)");
+        root.style.setProperty("--text", "var(--color-text)");
+        root.style.setProperty("--muted", "var(--color-text-muted)");
+        root.style.setProperty("--dim", "var(--color-text-muted)");
+        root.style.setProperty("--amber", "var(--color-accent)");
+        root.style.setProperty("--ambrh", "var(--color-accent-hover)");
+        root.style.setProperty("--green", "var(--color-success)");
     }
 
     function clearCustomTheme() {
@@ -327,6 +357,19 @@
         root.style.removeProperty("--color-text-dimmed");
         root.style.removeProperty("--color-accent");
         root.style.removeProperty("--color-accent-hover");
+        root.style.removeProperty("--color-success");
+
+        root.style.removeProperty("--bg");
+        root.style.removeProperty("--surf");
+        root.style.removeProperty("--surf2");
+        root.style.removeProperty("--bdr");
+        root.style.removeProperty("--bdr2");
+        root.style.removeProperty("--text");
+        root.style.removeProperty("--muted");
+        root.style.removeProperty("--dim");
+        root.style.removeProperty("--amber");
+        root.style.removeProperty("--ambrh");
+        root.style.removeProperty("--green");
     }
 
     function createNewCustomTheme(): string {
@@ -343,7 +386,7 @@
         themeDraftColors[newId] = { ...newTheme.colors };
         themeDraftNames[newId] = "";
         triedSavingEmptyName[newId] = false;
-        isCollapsed[newId] = false; // Expanded initially for configuration
+        isCollapsed["global"] = false; // Expanded initially for configuration
 
         showPreviews = true;
         return newId;
@@ -402,7 +445,7 @@
         }
 
         // Collapse to minuscule header after saving
-        isCollapsed[themeId] = true;
+        isCollapsed["global"] = true;
         showPreviews = false;
 
         onStatus(`✓ Theme "${draftName}" Saved`);
@@ -511,7 +554,6 @@
         customThemes.forEach((theme) => {
             themeDraftColors[theme.id] = { ...theme.colors };
             themeDraftNames[theme.id] = theme.name;
-            isCollapsed[theme.id] = true; // Collapse by default on start
         });
 
         if (isCustomThemeId(selectedTheme)) {
@@ -563,7 +605,7 @@
         selectedTheme = themeName;
         // Preview strictly shown if the selected theme is a custom theme AND currently uncollapsed
         showPreviews = isCustomThemeId(themeName)
-            ? !isCollapsed[themeName]
+            ? !isCollapsed["global"]
             : false;
 
         if (isCustomThemeId(themeName)) {
@@ -660,7 +702,7 @@
 
         // Preview strictly shown if the selected override is a custom theme AND currently uncollapsed
         showPreviews = isCustomThemeId(themeName)
-            ? !isCollapsed[themeName]
+            ? !isCollapsed[reader]
             : false;
 
         const cfg = (await configStorage.getValue()) as any;
@@ -722,30 +764,56 @@
         onStatus("✓ Appearance Defaults Restored");
     }
 
-    function handleColorChange() {
+    function handleColorChange(themeId: string, key: string) {
         showPreviews = true;
+        // Automatically calculate and update accentHover as a starting template draft helper only when modifying the accent color
+        if (key === "accent") {
+            const draftColors = themeDraftColors[themeId];
+            if (draftColors && draftColors.accent) {
+                draftColors.accentHover = lightenHexColor(
+                    draftColors.accent,
+                    12,
+                );
+            }
+        }
     }
 
-    function handleCollapse(themeId: string) {
-        if (isThemeModified(themeId)) {
+    function handleCollapse(context: string) {
+        const currentActiveTheme =
+            context === "global"
+                ? selectedTheme
+                : context === "ttu"
+                  ? ttuThemeOverride
+                  : context === "yatsu"
+                    ? yatsuThemeOverride
+                    : manabeThemeOverride;
+
+        if (
+            isCustomThemeId(currentActiveTheme) &&
+            isThemeModified(currentActiveTheme)
+        ) {
             askConfirmation(
                 "Unsaved Changes",
                 "You have unsaved changes. Collapsing will discard your current edits. Do you want to proceed?",
             ).then((confirmed) => {
                 if (confirmed) {
-                    revertThemeDraft(themeId);
-                    isCollapsed[themeId] = true;
+                    revertThemeDraft(currentActiveTheme);
+                    isCollapsed[context] = true;
                     showPreviews = false;
                 }
             });
-        } else {
-            isCollapsed[themeId] = true;
-            showPreviews = false;
+            return;
         }
+        isCollapsed[context] = true;
+        showPreviews = false;
     }
 
-    function handleUncollapse(themeId: string) {
-        isCollapsed[themeId] = false;
+    function handleUncollapse(context: string) {
+        // Exclusive collapse: close all other editors when expanding a new one
+        Object.keys(isCollapsed).forEach((k) => {
+            isCollapsed[k] = true;
+        });
+        isCollapsed[context] = false;
         showPreviews = true;
     }
 
@@ -834,12 +902,12 @@
             {@const activeBgColor =
                 themeDraftColors[themeId]?.background || "#09090f"}
 
-            {#if isCollapsed[themeId]}
+            {#if isCollapsed["global"]}
                 <!-- Minuscule header option when custom builder is collapsed -->
                 <button
                     class="btn btn-ghost"
                     style="width: 100%; padding: 8px 12px; font-size: 11.5px; display: flex; align-items: center; justify-content: space-between; background: var(--color-surface-alt); border: 1px dashed var(--color-border); border-radius: 6px;"
-                    onclick={() => handleUncollapse(themeId)}
+                    onclick={() => handleUncollapse("global")}
                 >
                     <span style="display: flex; align-items: center; gap: 2px;">
                         <svg
@@ -877,13 +945,118 @@
                         style="font-weight: bold; font-size: 13px; color: var(--color-accent); display: flex; justify-content: space-between; align-items: center;"
                     >
                         <span>Edit Custom Theme</span>
+                        <!-- Clean, pure styled collapse button without full bar overlay -->
                         <button
-                            class="btn btn-ghost btn-sm"
-                            style="padding: 2px 6px; font-size: 10px;"
-                            onclick={() => handleCollapse(themeId)}
+                            class="btn btn-ghost"
+                            style="padding: 2px 6px; font-size: 11px; background: transparent; border: none; font-weight: bold; cursor: pointer; color: var(--color-accent); transition: opacity 0.15s;"
+                            onmouseenter={(e) =>
+                                (e.currentTarget.style.opacity = "0.8")}
+                            onmouseleave={(e) =>
+                                (e.currentTarget.style.opacity = "1")}
+                            onclick={() => handleCollapse("global")}
                         >
-                            Collapse ▴
+                            Collapse Editor ▴
                         </button>
+                    </div>
+
+                    <div
+                        style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
+                    >
+                        <p
+                            class="hint"
+                            style="margin: 0; font-size: 11.5px; flex: 1;"
+                        >
+                            Enter hex codes directly or adjust pickers. Live
+                            preview shows draft changes on the right.
+                        </p>
+                        <div
+                            style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+                        >
+                            <span
+                                style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
+                                >Template:</span
+                            >
+
+                            <!-- Custom Select Trigger following the NAT Theme perfectly -->
+                            <button
+                                type="button"
+                                class="custom-select-trigger"
+                                style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
+                                onclick={(e) => {
+                                    e.stopPropagation();
+                                    templateDropdownOpen =
+                                        !templateDropdownOpen;
+                                }}
+                            >
+                                <span>Load Preset...</span>
+                                <span
+                                    style="font-size: 8px; color: var(--color-text-muted);"
+                                    >▼</span
+                                >
+                            </button>
+
+                            {#if templateDropdownOpen}
+                                <div
+                                    style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                                >
+                                    {#each Object.entries(THEMES) as [key, value]}
+                                        {@const themeObj = value as any}
+                                        <button
+                                            type="button"
+                                            style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                            onmouseenter={(e) =>
+                                                (e.currentTarget.style.background =
+                                                    "rgba(255, 255, 255, 0.05)")}
+                                            onmouseleave={(e) =>
+                                                (e.currentTarget.style.background =
+                                                    "transparent")}
+                                            onclick={() => {
+                                                const presetTheme = THEMES[key];
+                                                themeDraftColors[themeId] = {
+                                                    background:
+                                                        presetTheme.colors.bg,
+                                                    surface:
+                                                        presetTheme.colors
+                                                            .surface,
+                                                    surfaceAlt:
+                                                        presetTheme.colors
+                                                            .surfaceAlt ||
+                                                        presetTheme.colors
+                                                            .surface,
+                                                    border: presetTheme.colors
+                                                        .border,
+                                                    borderHover:
+                                                        presetTheme.colors
+                                                            .borderHover ||
+                                                        presetTheme.colors
+                                                            .border,
+                                                    text: presetTheme.colors
+                                                        .text,
+                                                    textMuted:
+                                                        presetTheme.colors
+                                                            .muted,
+                                                    accent: presetTheme.colors
+                                                        .accent,
+                                                    accentHover:
+                                                        presetTheme.colors
+                                                            .accentHover ||
+                                                        presetTheme.colors
+                                                            .accent,
+                                                    success:
+                                                        presetTheme.colors
+                                                            .success ||
+                                                        "#3ddc84",
+                                                };
+                                                showPreviews = true;
+                                                templateDropdownOpen = false;
+                                            }}
+                                        >
+                                            {themeObj.name}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
                     </div>
 
                     <div
@@ -925,16 +1098,11 @@
                         {/if}
                     </div>
 
-                    <p class="hint" style="margin: 0; font-size: 11.5px;">
-                        Enter hex codes directly or adjust pickers. Live preview
-                        shows draft changes on the right.
-                    </p>
-
                     <!-- Highly comfortable intermediate 2-column grid layout -->
                     <div
                         style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;"
                     >
-                        {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface Panel" }, { key: "border", label: "Border Color" }, { key: "text", label: "Text Color" }, { key: "textMuted", label: "Muted Text" }, { key: "accent", label: "Accent Color" }, { key: "success", label: "Success Color" }] as colorItem}
+                        {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface Panel" }, { key: "surfaceAlt", label: "Surface Alt" }, { key: "border", label: "Border Color" }, { key: "borderHover", label: "Border Hover" }, { key: "text", label: "Text Color" }, { key: "textMuted", label: "Muted Text" }, { key: "accent", label: "Accent Color" }, { key: "accentHover", label: "Accent Hover" }, { key: "success", label: "Success Color" }] as colorItem}
                             <div
                                 style="display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(0,0,0,0.1); padding: 6px 10px; border-radius: 4px; border: 1px solid var(--color-border);"
                             >
@@ -961,7 +1129,11 @@
                                                 ]
                                             }
                                             style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: none;"
-                                            oninput={handleColorChange}
+                                            oninput={() =>
+                                                handleColorChange(
+                                                    themeId,
+                                                    colorItem.key,
+                                                )}
                                         />
                                     </div>
                                     <input
@@ -973,7 +1145,11 @@
                                                 colorItem.key
                                             ]
                                         }
-                                        oninput={handleColorChange}
+                                        oninput={() =>
+                                            handleColorChange(
+                                                themeId,
+                                                colorItem.key,
+                                            )}
                                     />
                                 </div>
                             </div>
@@ -983,18 +1159,10 @@
                     <!-- Theme actions (Save, Revert, Delete) -->
                     <div style="display: flex; gap: 6px; margin-top: 4px;">
                         <button
-                            class="btn"
-                            style="flex: 1; font-size: 11px; padding: 6px 10px; background: {activeAccentColor}; color: {activeBgColor}; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; transition: background-color 0.15s;"
+                            class="btn btn-amber"
+                            style="flex: 1; font-size: 11.5px; padding: 8px 12px;"
                             onclick={() => saveCustomThemeChanges(themeId)}
                             disabled={!isThemeModified(themeId)}
-                            onmouseenter={(e) => {
-                                e.currentTarget.style.background =
-                                    activeAccentHoverColor;
-                            }}
-                            onmouseleave={(e) => {
-                                e.currentTarget.style.background =
-                                    activeAccentColor;
-                            }}
                         >
                             Save Theme
                         </button>
@@ -1084,11 +1252,11 @@
                     {@const activeBgColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
-                    {#if isCollapsed[themeId]}
+                    {#if isCollapsed["ttu"]}
                         <button
                             class="btn btn-ghost"
                             style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse(themeId)}
+                            onclick={() => handleUncollapse("ttu")}
                         >
                             <span
                                 style="display: flex; align-items: center; gap: 2px;"
@@ -1121,7 +1289,7 @@
                         </button>
                     {:else}
                         <div
-                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: rgba(0,0,0,0.1); border-radius: 4px; border: 1px solid var(--color-border);"
+                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: var(--color-surface-alt); border-radius: 4px; border: 1px solid var(--color-border);"
                         >
                             <div
                                 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;"
@@ -1130,13 +1298,132 @@
                                     style="font-size: 10px; font-weight: bold; color: var(--color-accent);"
                                     >Edit TTU Custom Theme</span
                                 >
+                                <!-- Clean, pure styled collapse button without full bar overlay -->
                                 <button
                                     class="btn btn-ghost"
-                                    style="padding: 1px 4px; font-size: 9px;"
-                                    onclick={() => handleCollapse(themeId)}
+                                    style="padding: 2px 6px; font-size: 11px; background: transparent; border: none; font-weight: bold; cursor: pointer; color: var(--color-accent); transition: opacity 0.15s;"
+                                    onmouseenter={(e) =>
+                                        (e.currentTarget.style.opacity = "0.8")}
+                                    onmouseleave={(e) =>
+                                        (e.currentTarget.style.opacity = "1")}
+                                    onclick={() => handleCollapse("ttu")}
                                 >
-                                    Collapse ▴
+                                    Collapse Editor ▴
                                 </button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
+                            >
+                                <p
+                                    class="hint"
+                                    style="margin: 0; font-size: 11.5px; flex: 1;"
+                                >
+                                    Enter hex codes directly or adjust pickers.
+                                    Live preview shows draft changes on the
+                                    right.
+                                </p>
+                                <div
+                                    style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+                                >
+                                    <span
+                                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
+                                        >Template:</span
+                                    >
+
+                                    <!-- Custom Select Trigger following the NAT Theme perfectly -->
+                                    <button
+                                        type="button"
+                                        class="custom-select-trigger"
+                                        style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            ttuTemplateDropdownOpen =
+                                                !ttuTemplateDropdownOpen;
+                                        }}
+                                    >
+                                        <span>Load Preset...</span>
+                                        <span
+                                            style="font-size: 8px; color: var(--color-text-muted);"
+                                            >▼</span
+                                        >
+                                    </button>
+
+                                    {#if ttuTemplateDropdownOpen}
+                                        <div
+                                            style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                                        >
+                                            {#each Object.entries(THEMES) as [key, value]}
+                                                {@const themeObj = value as any}
+                                                <button
+                                                    type="button"
+                                                    style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                                    onmouseenter={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "rgba(255, 255, 255, 0.05)")}
+                                                    onmouseleave={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "transparent")}
+                                                    onclick={() => {
+                                                        const presetTheme =
+                                                            THEMES[key];
+                                                        themeDraftColors[
+                                                            themeId
+                                                        ] = {
+                                                            background:
+                                                                presetTheme
+                                                                    .colors.bg,
+                                                            surface:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            surfaceAlt:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surfaceAlt ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            border: presetTheme
+                                                                .colors.border,
+                                                            borderHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .borderHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .border,
+                                                            text: presetTheme
+                                                                .colors.text,
+                                                            textMuted:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .muted,
+                                                            accent: presetTheme
+                                                                .colors.accent,
+                                                            accentHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accentHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accent,
+                                                            success:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .success ||
+                                                                "#3ddc84",
+                                                        };
+                                                        showPreviews = true;
+                                                        ttuTemplateDropdownOpen = false;
+                                                    }}
+                                                >
+                                                    {themeObj.name}
+                                                </button>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
                             </div>
 
                             <div
@@ -1175,7 +1462,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "surfaceAlt", label: "Surface Alt" }, { key: "border", label: "Border" }, { key: "borderHover", label: "Border Hover" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "accentHover", label: "Accent Hover" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -1202,7 +1489,11 @@
                                                         ][colorItem.key]
                                                     }
                                                     style="position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;"
-                                                    oninput={handleColorChange}
+                                                    oninput={() =>
+                                                        handleColorChange(
+                                                            themeId,
+                                                            colorItem.key,
+                                                        )}
                                                 />
                                             </div>
                                             <input
@@ -1214,7 +1505,11 @@
                                                         colorItem.key
                                                     ]
                                                 }
-                                                oninput={handleColorChange}
+                                                oninput={() =>
+                                                    handleColorChange(
+                                                        themeId,
+                                                        colorItem.key,
+                                                    )}
                                             />
                                         </div>
                                     </div>
@@ -1226,19 +1521,11 @@
                                 style="display: flex; gap: 4px; margin-top: 6px;"
                             >
                                 <button
-                                    class="btn"
-                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px; background: {activeAccentColor}; color: {activeBgColor}; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; transition: background-color 0.15s;"
+                                    class="btn btn-amber"
+                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px;"
                                     onclick={() =>
                                         saveCustomThemeChanges(themeId)}
                                     disabled={!isThemeModified(themeId)}
-                                    onmouseenter={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentHoverColor;
-                                    }}
-                                    onmouseleave={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentColor;
-                                    }}
                                 >
                                     Save Theme
                                 </button>
@@ -1304,11 +1591,11 @@
                     {@const activeBgColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
-                    {#if isCollapsed[themeId]}
+                    {#if isCollapsed["yatsu"]}
                         <button
                             class="btn btn-ghost"
                             style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse(themeId)}
+                            onclick={() => handleUncollapse("yatsu")}
                         >
                             <span
                                 style="display: flex; align-items: center; gap: 2px;"
@@ -1341,7 +1628,7 @@
                         </button>
                     {:else}
                         <div
-                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: rgba(0,0,0,0.1); border-radius: 4px; border: 1px solid var(--color-border);"
+                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: var(--color-surface-alt); border-radius: 4px; border: 1px solid var(--color-border);"
                         >
                             <div
                                 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;"
@@ -1350,13 +1637,132 @@
                                     style="font-size: 10px; font-weight: bold; color: var(--color-accent);"
                                     >Edit Yatsu Custom Theme</span
                                 >
+                                <!-- Clean, pure styled collapse button without full bar overlay -->
                                 <button
                                     class="btn btn-ghost"
-                                    style="padding: 1px 4px; font-size: 9px;"
-                                    onclick={() => handleCollapse(themeId)}
+                                    style="padding: 2px 6px; font-size: 11px; background: transparent; border: none; font-weight: bold; cursor: pointer; color: var(--color-accent); transition: opacity 0.15s;"
+                                    onmouseenter={(e) =>
+                                        (e.currentTarget.style.opacity = "0.8")}
+                                    onmouseleave={(e) =>
+                                        (e.currentTarget.style.opacity = "1")}
+                                    onclick={() => handleCollapse("yatsu")}
                                 >
-                                    Collapse ▴
+                                    Collapse Editor ▴
                                 </button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
+                            >
+                                <p
+                                    class="hint"
+                                    style="margin: 0; font-size: 11.5px; flex: 1;"
+                                >
+                                    Enter hex codes directly or adjust pickers.
+                                    Live preview shows draft changes on the
+                                    right.
+                                </p>
+                                <div
+                                    style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+                                >
+                                    <span
+                                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
+                                        >Template:</span
+                                    >
+
+                                    <!-- Custom Select Trigger following the NAT Theme perfectly -->
+                                    <button
+                                        type="button"
+                                        class="custom-select-trigger"
+                                        style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            yatsuTemplateDropdownOpen =
+                                                !yatsuTemplateDropdownOpen;
+                                        }}
+                                    >
+                                        <span>Load Preset...</span>
+                                        <span
+                                            style="font-size: 8px; color: var(--color-text-muted);"
+                                            >▼</span
+                                        >
+                                    </button>
+
+                                    {#if yatsuTemplateDropdownOpen}
+                                        <div
+                                            style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                                        >
+                                            {#each Object.entries(THEMES) as [key, value]}
+                                                {@const themeObj = value as any}
+                                                <button
+                                                    type="button"
+                                                    style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                                    onmouseenter={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "rgba(255, 255, 255, 0.05)")}
+                                                    onmouseleave={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "transparent")}
+                                                    onclick={() => {
+                                                        const presetTheme =
+                                                            THEMES[key];
+                                                        themeDraftColors[
+                                                            themeId
+                                                        ] = {
+                                                            background:
+                                                                presetTheme
+                                                                    .colors.bg,
+                                                            surface:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            surfaceAlt:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surfaceAlt ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            border: presetTheme
+                                                                .colors.border,
+                                                            borderHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .borderHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .border,
+                                                            text: presetTheme
+                                                                .colors.text,
+                                                            textMuted:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .muted,
+                                                            accent: presetTheme
+                                                                .colors.accent,
+                                                            accentHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accentHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accent,
+                                                            success:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .success ||
+                                                                "#3ddc84",
+                                                        };
+                                                        showPreviews = true;
+                                                        yatsuTemplateDropdownOpen = false;
+                                                    }}
+                                                >
+                                                    {themeObj.name}
+                                                </button>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
                             </div>
 
                             <div
@@ -1395,7 +1801,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "surfaceAlt", label: "Surface Alt" }, { key: "border", label: "Border" }, { key: "borderHover", label: "Border Hover" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "accentHover", label: "Accent Hover" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -1422,7 +1828,11 @@
                                                         ][colorItem.key]
                                                     }
                                                     style="position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;"
-                                                    oninput={handleColorChange}
+                                                    oninput={() =>
+                                                        handleColorChange(
+                                                            themeId,
+                                                            colorItem.key,
+                                                        )}
                                                 />
                                             </div>
                                             <input
@@ -1434,7 +1844,11 @@
                                                         colorItem.key
                                                     ]
                                                 }
-                                                oninput={handleColorChange}
+                                                oninput={() =>
+                                                    handleColorChange(
+                                                        themeId,
+                                                        colorItem.key,
+                                                    )}
                                             />
                                         </div>
                                     </div>
@@ -1446,19 +1860,11 @@
                                 style="display: flex; gap: 4px; margin-top: 6px;"
                             >
                                 <button
-                                    class="btn"
-                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px; background: {activeAccentColor}; color: {activeBgColor}; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; transition: background-color 0.15s;"
+                                    class="btn btn-amber"
+                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px;"
                                     onclick={() =>
                                         saveCustomThemeChanges(themeId)}
                                     disabled={!isThemeModified(themeId)}
-                                    onmouseenter={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentHoverColor;
-                                    }}
-                                    onmouseleave={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentColor;
-                                    }}
                                 >
                                     Save Theme
                                 </button>
@@ -1522,11 +1928,11 @@
                     {@const activeBgColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
-                    {#if isCollapsed[themeId]}
+                    {#if isCollapsed["manabe"]}
                         <button
                             class="btn btn-ghost"
                             style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse(themeId)}
+                            onclick={() => handleUncollapse("manabe")}
                         >
                             <span
                                 style="display: flex; align-items: center; gap: 2px;"
@@ -1559,7 +1965,7 @@
                         </button>
                     {:else}
                         <div
-                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: rgba(0,0,0,0.1); border-radius: 4px; border: 1px solid var(--color-border);"
+                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: var(--color-surface-alt); border-radius: 4px; border: 1px solid var(--color-border);"
                         >
                             <div
                                 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;"
@@ -1568,13 +1974,132 @@
                                     style="font-size: 10px; font-weight: bold; color: var(--color-accent);"
                                     >Edit Manabe Custom Theme</span
                                 >
+                                <!-- Clean, pure styled collapse button without full bar overlay -->
                                 <button
                                     class="btn btn-ghost"
-                                    style="padding: 1px 4px; font-size: 9px;"
-                                    onclick={() => handleCollapse(themeId)}
+                                    style="padding: 2px 6px; font-size: 11px; background: transparent; border: none; font-weight: bold; cursor: pointer; color: var(--color-accent); transition: opacity 0.15s;"
+                                    onmouseenter={(e) =>
+                                        (e.currentTarget.style.opacity = "0.8")}
+                                    onmouseleave={(e) =>
+                                        (e.currentTarget.style.opacity = "1")}
+                                    onclick={() => handleCollapse("manabe")}
                                 >
-                                    Collapse ▴
+                                    Collapse Editor ▴
                                 </button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
+                            >
+                                <p
+                                    class="hint"
+                                    style="margin: 0; font-size: 11.5px; flex: 1;"
+                                >
+                                    Enter hex codes directly or adjust pickers.
+                                    Live preview shows draft changes on the
+                                    right.
+                                </p>
+                                <div
+                                    style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+                                >
+                                    <span
+                                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
+                                        >Template:</span
+                                    >
+
+                                    <!-- Custom Select Trigger following the NAT Theme perfectly -->
+                                    <button
+                                        type="button"
+                                        class="custom-select-trigger"
+                                        style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            manabeTemplateDropdownOpen =
+                                                !manabeTemplateDropdownOpen;
+                                        }}
+                                    >
+                                        <span>Load Preset...</span>
+                                        <span
+                                            style="font-size: 8px; color: var(--color-text-muted);"
+                                            >▼</span
+                                        >
+                                    </button>
+
+                                    {#if manabeTemplateDropdownOpen}
+                                        <div
+                                            style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                                        >
+                                            {#each Object.entries(THEMES) as [key, value]}
+                                                {@const themeObj = value as any}
+                                                <button
+                                                    type="button"
+                                                    style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                                    onmouseenter={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "rgba(255, 255, 255, 0.05)")}
+                                                    onmouseleave={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "transparent")}
+                                                    onclick={() => {
+                                                        const presetTheme =
+                                                            THEMES[key];
+                                                        themeDraftColors[
+                                                            themeId
+                                                        ] = {
+                                                            background:
+                                                                presetTheme
+                                                                    .colors.bg,
+                                                            surface:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            surfaceAlt:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surfaceAlt ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            border: presetTheme
+                                                                .colors.border,
+                                                            borderHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .borderHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .border,
+                                                            text: presetTheme
+                                                                .colors.text,
+                                                            textMuted:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .muted,
+                                                            accent: presetTheme
+                                                                .colors.accent,
+                                                            accentHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accentHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accent,
+                                                            success:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .success ||
+                                                                "#3ddc84",
+                                                        };
+                                                        showPreviews = true;
+                                                        manabeTemplateDropdownOpen = false;
+                                                    }}
+                                                >
+                                                    {themeObj.name}
+                                                </button>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
                             </div>
 
                             <div
@@ -1613,7 +2138,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "surfaceAlt", label: "Surface Alt" }, { key: "border", label: "Border" }, { key: "borderHover", label: "Border Hover" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "accentHover", label: "Accent Hover" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -1640,7 +2165,11 @@
                                                         ][colorItem.key]
                                                     }
                                                     style="position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;"
-                                                    oninput={handleColorChange}
+                                                    oninput={() =>
+                                                        handleColorChange(
+                                                            themeId,
+                                                            colorItem.key,
+                                                        )}
                                                 />
                                             </div>
                                             <input
@@ -1652,7 +2181,11 @@
                                                         colorItem.key
                                                     ]
                                                 }
-                                                oninput={handleColorChange}
+                                                oninput={() =>
+                                                    handleColorChange(
+                                                        themeId,
+                                                        colorItem.key,
+                                                    )}
                                             />
                                         </div>
                                     </div>
@@ -1664,19 +2197,11 @@
                                 style="display: flex; gap: 4px; margin-top: 6px;"
                             >
                                 <button
-                                    class="btn"
-                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px; background: {activeAccentColor}; color: {activeBgColor}; font-weight: bold; border-radius: 4px; border: none; cursor: pointer; transition: background-color 0.15s;"
+                                    class="btn btn-amber"
+                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px;"
                                     onclick={() =>
                                         saveCustomThemeChanges(themeId)}
                                     disabled={!isThemeModified(themeId)}
-                                    onmouseenter={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentHoverColor;
-                                    }}
-                                    onmouseleave={(e) => {
-                                        e.currentTarget.style.background =
-                                            activeAccentColor;
-                                    }}
                                 >
                                     Save Theme
                                 </button>
@@ -1764,7 +2289,7 @@
                                     >NihongoAutoTracker</span
                                 >
                                 <span
-                                    style="font-size: 7.5px; font-weight: bold; color: {currentDraft.accent}; border: 1px solid color-mix(in srgb, {currentDraft.accent} 25%, transparent); background: color-mix(in srgb, {currentDraft.accent} 7%, transparent); padding: 0.5px 3px; border-radius: 3px; text-transform: uppercase;"
+                                    style="font-size: 7.5px; font-weight: bold; color: #3ddc84; border: 1px solid color-mix(in srgb, #3ddc84 25%, transparent); background: color-mix(in srgb, #3ddc84 7%, transparent); padding: 0.5px 3px; border-radius: 3px; text-transform: uppercase;"
                                     >API KEY ✓</span
                                 >
                             </div>
@@ -1863,7 +2388,7 @@
                                     style="display: flex; gap: 4px; font-size: 9px; color: {currentDraft.textMuted};"
                                 >
                                     <span
-                                        style="color: var(--color-success); font-weight: bold;"
+                                        style="color: #3ddc84; font-weight: bold;"
                                         >✓</span
                                     >
                                     <span>×</span>
@@ -2093,7 +2618,7 @@
                                                 viewBox="0 0 24 24"
                                                 fill="none"
                                                 stroke="currentColor"
-                                                stroke-width="2"
+                                                stroke-width="2.5"
                                                 stroke-linecap="round"
                                                 stroke-linejoin="round"
                                                 ><rect
@@ -2162,8 +2687,9 @@
                     </div>
 
                     <!-- Mini Mock Reader Page + Floating status bar mockup styled with currentDraft -->
+                    <!-- Calculated theme dark background: 15% currentDraft.background mixed with deep black #020204 -->
                     <div
-                        style="background: #0f0f1d; border-radius: 6px; padding: 16px 12px; text-align: center; border: 1px solid var(--color-border); position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; width: 100%;"
+                        style="background: color-mix(in srgb, {currentDraft.background} 15%, #020204); border-radius: 6px; padding: 16px 12px; text-align: center; border: 1px solid var(--color-border); position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; width: 100%;"
                     >
                         <!-- Book lines background mockup -->
                         <div
@@ -2260,7 +2786,7 @@
                                 style="display: flex; justify-content: center; gap: 14px; font-size: 11px; color: {currentDraft.textMuted};"
                             >
                                 <span
-                                    style="cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
+                                    style="color: {currentDraft.textMuted}; cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
                                 >
                                     <svg
                                         width="12"
@@ -2288,23 +2814,15 @@
                                     >
                                 </span>
                                 <span
-                                    style="cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
+                                    style="color: {currentDraft.accent}; cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
                                 >
                                     <svg
                                         width="12"
                                         height="12"
                                         viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2.5"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
+                                        fill="currentColor"
                                         ><path
-                                            d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"
-                                        /><polyline
-                                            points="17 21 17 13 7 13 7 21"
-                                        /><polyline
-                                            points="7 3 7 8 15 8"
+                                            d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"
                                         /></svg
                                     >
                                 </span>
@@ -2315,18 +2833,9 @@
                                         width="12"
                                         height="12"
                                         viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2.5"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><line
-                                            x1="22"
-                                            y1="2"
-                                            x2="11"
-                                            y2="13"
-                                        /><polygon
-                                            points="22 2 15 22 11 13 2 9 22 2"
+                                        fill="currentColor"
+                                        ><path
+                                            d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
                                         /></svg
                                     >
                                 </span>
@@ -2353,7 +2862,7 @@
                                     </svg>
                                     <span
                                         style="color: {currentDraft.success}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; font-weight: bold;"
-                                        >無職転生 ~異世界行ったら本気だす~</span
+                                        >無職転生 ~異世界行ったら...</span
                                     >
                                 </div>
                                 <span
@@ -2412,10 +2921,10 @@
                                     style="cursor: pointer; user-select: none;"
                                 >
                                     <summary
-                                        style="font-size: 11px; font-weight: bold; color: {currentDraft.textMuted}; display: flex; align-items: center; gap: 4px; outline: none; list-style: none;"
+                                        style="font-size: 11px; font-weight: bold; color: {currentDraft.textMuted}; display: flex; align-items: center; gap: 4px; outline: none; list-style: none; white-space: nowrap !important;"
                                     >
                                         <span
-                                            style="font-size: 9px; color: {currentDraft.textMuted};"
+                                            style="font-size: 9px; color: {currentDraft.textMuted}; flex-shrink: 0;"
                                             >▼</span
                                         > Past Sessions History
                                     </summary>
@@ -2424,23 +2933,23 @@
                                     >
                                         <div
                                             style="display: flex; align-items: center; justify-content: space-between; background: {currentDraft.surfaceAlt ||
-                                                currentDraft.surface}; padding: 6px 8px; border-radius: 4px; font-size: 11px; color: {currentDraft.text};"
+                                                currentDraft.surface}; padding: 6px 8px; border-radius: 4px; font-size: 11px; color: {currentDraft.text}; white-space: nowrap !important;"
                                         >
                                             <span
                                                 style="color: {currentDraft.textMuted};"
                                                 >24 May</span
                                             >
                                             <span
-                                                style="font-weight: bold; color: {currentDraft.accent};"
+                                                style="font-weight: bold; color: {currentDraft.accent}; margin: 0 4px;"
                                                 >12m</span
                                             >
                                             <span
-                                                style="color: {currentDraft.textMuted}; font-family: var(--font-mono);"
+                                                style="color: {currentDraft.textMuted}; font-family: var(--font-mono); flex: 1; text-align: right; margin-right: 6px;"
                                                 >0 chars</span
                                             >
-                                            <button
-                                                style="background: none; border: none; color: #f0706a; font-weight: bold; font-size: 12px; cursor: default; padding: 0; line-height: 1;"
-                                                >×</button
+                                            <span
+                                                style="color: #f0706a; font-weight: bold; font-size: 12px; cursor: default; line-height: 1;"
+                                                >×</span
                                             >
                                         </div>
                                     </div>

@@ -85,12 +85,18 @@ export function injectTTUStyles() {
   const s = document.createElement('style');
   s.id = 'nt-ttu-styles';
   s.textContent = `
-  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 40; font-family: var(--nt-font, sans-serif) !important; align-items: center; justify-content: center; flex-shrink: 0; width: 2rem; height: 100%; }
+  #nt-ttu-chrono-wrapper,
+  #nt-ttu-chrono-wrapper *,
+  #nt-ttu-dropdown,
+  #nt-ttu-dropdown * {
+    font-family: var(--nt-font, sans-serif) !important;
+  }
+  #nt-ttu-chrono-wrapper { position: relative; display: flex; z-index: 40; align-items: center; justify-content: center; flex-shrink: 0; width: 2rem; height: 100%; }
   #nt-ttu-chrono-btn { background: transparent; border: none; cursor: pointer; display: flex; padding: 0; width: 100%; height: 100%; color: var(--nt-accent); transition: opacity 0.15s ease; align-items: center; justify-content: center; user-select: none; }
   #nt-ttu-chrono-btn:hover { opacity: 0.7; color: var(--nt-accentHover) !important; }
   #nt-ttu-chrono-btn:active { transform: scale(0.92); }
   #nt-ttu-chrono-btn svg { width: 1.7rem; height: 1.7rem; fill: currentColor; }
-  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: var(--nt-surface, #252525); border: 1px solid var(--nt-border, #3a3a3a); border-radius: var(--nt-rounded-box, 6px); width: 280px; color: var(--nt-text); box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; font-family: var(--nt-font, sans-serif) !important; }
+  #nt-ttu-dropdown { position: absolute; bottom: 100%; left: 0 !important; right: auto !important; margin-bottom: 8px; background: var(--nt-surface, #252525); border: 1px solid var(--nt-border, #3a3a3a); border-radius: var(--nt-rounded-box, 6px); width: 280px; color: var(--nt-text); box-shadow: 0 8px 24px rgba(0,0,0,0.8); display: none; flex-direction: column; overflow: hidden; writing-mode: horizontal-tb; text-align: left; direction: ltr; transform-origin: bottom left !important; cursor: default; }
   #nt-ttu-dropdown.open { display: flex; }
   .nt-ttu-dd-section { padding: 12px; text-align: center; }
   .nt-ttu-dd-title { font-size: 11px; color: var(--nt-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }

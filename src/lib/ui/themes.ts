@@ -175,6 +175,9 @@ export function applyThemeToDocument(themeName: string, fontName?: string, custo
         '--rounded-btn': `${theme.borderRadiusSmall}px`,
         '--nt-color-scheme': isLight ? 'light' : 'dark',
 
+        // Internal non-exposed variables (always permanent system green)
+        '--color-success-system': '#3ddc84',
+
         // Backward-compatibility aliases (so you don't have to rewrite 100 files!)
         '--bg': 'var(--color-background)',
         '--surf': 'var(--color-surface)',
