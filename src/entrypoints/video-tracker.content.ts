@@ -502,44 +502,165 @@ export default defineContentScript({
       }
     });
 
+    let pageObserver: MutationObserver | null = null;
+    let pageObserverTimeout: number | null = null;
+
     const runInjectionCycle = () => {
+      console.log('[NihongoAutoTracker Debug] runInjectionCycle triggered. Current URL:', window.location.href);
+
       const vid = document.querySelector<HTMLVideoElement>('video');
-      if (vid) attach(vid);
+      console.log('[NihongoAutoTracker Debug] Video element search result:', vid ? 'Found' : 'Not Found');
+      if (vid) {
+        try {
+          attach(vid);
+        } catch (err) {
+          console.error('[NihongoAutoTracker Debug] Error attaching video listeners:', err);
+        }
+      }
 
-      if (cachedConfig.enablePlaylistLogger !== false) {
-        const containers = [
-          document.querySelector('ytd-playlist-header-renderer .metadata-buttons-wrapper'),
-          document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed')
-        ].filter(Boolean);
+      console.log('[NihongoAutoTracker Debug] Config loaded state:', {
+        hasConfig: !!cachedConfig,
+        enablePlaylistLogger: cachedConfig?.enablePlaylistLogger
+      });
 
-        containers.forEach(container => {
-          if (container && !container.querySelector('.nt-playlist-logger')) {
-            const btn = document.createElement('button');
-            btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+      if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
+        const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+        // Scoped header selectors: forces matching only inside header elements, completely avoiding video row menus
+        const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+        const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
 
-            btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
+        const classicMatches = Array.from(document.querySelectorAll(classicSel));
+        const modernMatches = Array.from(document.querySelectorAll(modernHeaderSel));
+        const panelMatches = Array.from(document.querySelectorAll(panelSel));
 
-            Object.assign(btn.style, {
-              background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: '40px', height: '40px', borderRadius: '50%', transition: 'background-color 0.2s',
-              filter: 'none !important', boxShadow: 'none !important'
-            });
+        console.log('[NihongoAutoTracker Debug] Scoped DOM matches resolved:', {
+          classicCount: classicMatches.length,
+          modernCount: modernMatches.length,
+          panelCount: panelMatches.length
+        });
 
-            btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-            btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
-            btn.onclick = (e) => {
-              e.stopPropagation();
-              showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
-            };
+        const allMatches = [...classicMatches, ...modernMatches, ...panelMatches] as HTMLElement[];
 
-            container.insertBefore(btn, container.firstChild);
+        // Filter matched elements to find active visible targets
+        const containers = allMatches.filter(el => {
+          return el && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+        });
+
+        console.log('[NihongoAutoTracker Debug] Valid active VISIBLE containers found on page:', containers.length);
+
+        containers.forEach((container, idx) => {
+          // Resolve target container directly to place the badge within the horizontal flex list of buttons
+          const targetContainer = container;
+
+          if (!targetContainer) return;
+
+          const alreadyHasLogger = !!targetContainer.querySelector('.nt-playlist-logger');
+          console.log(`[NihongoAutoTracker Debug] Container [${idx}] info:`, {
+            tagName: container.tagName,
+            targetTagName: targetContainer.tagName,
+            alreadyHasLogger
+          });
+
+          if (!alreadyHasLogger) {
+            try {
+              const btn = document.createElement('button');
+              btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+
+              btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
+
+              // Adjusted styles to match YouTube's native action buttons (subtle background, correct dimensions)
+              Object.assign(btn.style, {
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: 'none',
+                cursor: 'pointer',
+                margin: '0 4px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '36px',
+                height: '36px',
+                borderRadius: '50%',
+                transition: 'background-color 0.2s',
+                filter: 'none !important',
+                boxShadow: 'none !important',
+                flexShrink: '0'
+              });
+
+              btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+              btn.onmouseleave = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+              btn.onclick = (e) => {
+                e.stopPropagation();
+                showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
+              };
+
+              // Safely insert button inside the horizontal action menu container
+              const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
+              if (overflowNode && overflowNode.parentElement === targetContainer) {
+                targetContainer.insertBefore(btn, overflowNode);
+              } else {
+                targetContainer.appendChild(btn);
+              }
+              console.log('[NihongoAutoTracker Debug] Button successfully injected into target container:', targetContainer);
+            } catch (err) {
+              console.error('[NihongoAutoTracker Debug] Failed to perform button DOM injection:', err);
+            }
           }
         });
       }
     };
 
-    // Listen directly to play capturing phase for immediate non-polling interception of dynamic media elements
+    // Lightweight observer focused strictly on primary page layout transitions
+    const startTargetedObserver = () => {
+      if (pageObserver) {
+        pageObserver.disconnect();
+        pageObserver = null;
+      }
+      if (pageObserverTimeout) {
+        clearTimeout(pageObserverTimeout);
+        pageObserverTimeout = null;
+      }
+
+      console.log('[NihongoAutoTracker Debug] Initializing targeted self-disconnecting page observer.');
+
+      // Check immediately if the element is already present
+      runInjectionCycle();
+
+      const hasLogger = document.querySelector('.nt-playlist-logger');
+      if (hasLogger) {
+        console.log('[NihongoAutoTracker Debug] Logger already injected immediately. Observation skipped.');
+        return;
+      }
+
+      const target = document.querySelector('ytd-page-manager') || document.body;
+
+      pageObserver = new MutationObserver((mutations, obs) => {
+        runInjectionCycle();
+
+        // Disconnect immediately once logger elements are verified to be in the DOM
+        if (document.querySelector('.nt-playlist-logger')) {
+          console.log('[NihongoAutoTracker Debug] Injected target found. Self-disconnecting observer.');
+          obs.disconnect();
+          pageObserver = null;
+          if (pageObserverTimeout) {
+            clearTimeout(pageObserverTimeout);
+            pageObserverTimeout = null;
+          }
+        }
+      });
+
+      pageObserver.observe(target, { childList: true, subtree: true });
+
+      // Safety timeout net: terminates monitoring after 8 seconds if no collections are loaded
+      pageObserverTimeout = window.setTimeout(() => {
+        if (pageObserver) {
+          console.log('[NihongoAutoTracker Debug] Target not found within 8s timeout. Disconnecting observer.');
+          pageObserver.disconnect();
+          pageObserver = null;
+        }
+      }, 8000);
+    };
+
+    // Capture play event globally for immediate element interception
     window.addEventListener('play', (e) => {
       const target = e.target as HTMLVideoElement;
       if (target && target.tagName === 'VIDEO') {
@@ -547,11 +668,11 @@ export default defineContentScript({
       }
     }, true);
 
-    // Initial check on DOM load
-    runInjectionCycle();
+    // Initial load execution
+    startTargetedObserver();
 
-    // YouTube SPA-specific navigation routing trigger
-    window.addEventListener('yt-navigate-finish', runInjectionCycle);
+    // Event hooks on routing transitions
+    window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {
       document.getElementById('nt-playlist-modal')?.remove();

@@ -26,11 +26,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
   const parent = isInline
     ? document.querySelector('ytd-playlist-panel-renderer')
-    : (document.querySelector('ytd-two-column-browse-results-renderer #primary') || document.body);
+    : (document.querySelector('ytd-browse') || document.querySelector('ytd-two-column-browse-results-renderer #primary') || document.body);
 
   const rendererSelector = isInline
     ? 'ytd-playlist-panel-video-renderer'
-    : 'ytd-playlist-video-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
+    : 'ytd-playlist-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
 
   const items = Array.from(parent?.querySelectorAll(rendererSelector) || []);
 
@@ -38,9 +38,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   let hideNonJp = config.playlistHideNonJapanese ?? true;
 
   const videos = items.map(el => {
-    const titleEl = el.querySelector('#video-title');
-    const titleText = titleEl?.textContent?.trim() || 'Unknown';
-    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a#video-title-link') || el.querySelector('a');
+    // Broadened selectors to safely extract titles and anchors from both classic rows and modern view models
+    const titleEl = el.querySelector('#video-title') || el.querySelector('#title') || el.querySelector('.yt-core-attributed-string');
+    const titleText = titleEl?.textContent?.trim() || el.querySelector('a')?.textContent?.trim() || 'Unknown';
+
+    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a#video-title-link') || el.querySelector('a[href*="watch?v="]') || el.querySelector('a');
     const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer') || el.querySelector('.badge-shape-wiz__text');
 
     let domTime = 1;
