@@ -142,21 +142,35 @@
 
       if (!isPreset && customThemes.some((t) => t.name && text === t.name)) {
         if (!opt.querySelector(".dropdown-delete-cross")) {
+          const textSpan = document.createElement("span");
+          textSpan.className = "dropdown-option-text";
+          textSpan.textContent = text;
+          textSpan.style.overflow = "hidden";
+          textSpan.style.textOverflow = "ellipsis";
+          textSpan.style.whiteSpace = "nowrap";
+          textSpan.style.flex = "1";
+          textSpan.style.textAlign = "left";
+
+          opt.innerHTML = "";
+          opt.appendChild(textSpan);
+
           (opt as HTMLElement).style.display = "flex";
           (opt as HTMLElement).style.justifyContent = "space-between";
           (opt as HTMLElement).style.alignItems = "center";
           (opt as HTMLElement).style.width = "100%";
           (opt as HTMLElement).style.position = "relative";
+          (opt as HTMLElement).style.gap = "8px";
 
           const cross = document.createElement("span");
           cross.className = "dropdown-delete-cross";
           cross.textContent = "✕";
           cross.style.color = "var(--color-text-muted)";
-          cross.style.fontSize = "12px";
+          cross.style.fontSize = "10px";
           cross.style.fontWeight = "bold";
           cross.style.cursor = "pointer";
-          cross.style.padding = "2px 8px";
+          cross.style.padding = "2px 4px";
           cross.style.marginLeft = "auto";
+          cross.style.marginRight = "-2px";
           cross.style.transition = "color 0.15s";
 
           cross.onmouseenter = () =>
@@ -178,14 +192,18 @@
       const themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
       const fontVal = cfg?.font ?? "sans";
       if (isCustomThemeId(themeVal)) {
-        applyThemeToDocument("dark-amber", fontVal, cfg?.customColors);
         const activeThemeObj = (cfg?.customThemes ?? []).find(
           (t: any) => t.id === themeVal,
         );
         if (activeThemeObj) {
+          applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors);
           applyCustomTheme(activeThemeObj.colors);
         } else if (cfg?.customColors) {
+          applyThemeToDocument("dark-amber", fontVal, cfg.customColors);
           applyCustomTheme(cfg.customColors);
+        } else {
+          clearCustomTheme();
+          applyThemeToDocument("dark-amber", fontVal);
         }
       } else {
         clearCustomTheme();
@@ -216,14 +234,18 @@
         selectedFont = nextFont;
 
         if (isCustomThemeId(nextTheme)) {
-          applyThemeToDocument("dark-amber", nextFont, val?.customColors);
           const activeThemeObj = (val?.customThemes ?? []).find(
             (t: any) => t.id === nextTheme,
           );
           if (activeThemeObj) {
+            applyThemeToDocument("dark-amber", nextFont, activeThemeObj.colors);
             applyCustomTheme(activeThemeObj.colors);
           } else if (val?.customColors) {
+            applyThemeToDocument("dark-amber", nextFont, val.customColors);
             applyCustomTheme(val.customColors);
+          } else {
+            clearCustomTheme();
+            applyThemeToDocument("dark-amber", nextFont);
           }
         } else {
           clearCustomTheme();
@@ -970,5 +992,40 @@
     align-items: center !important;
     justify-content: space-between !important;
     width: 100%;
+  }
+
+  /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */
+  :global(
+      .select-dropdown,
+      .dropdown-menu,
+      [class*="select-dropdown"],
+      [class*="dropdown-menu"],
+      [class*="select-options"],
+      [class*="options-container"]
+    ) {
+    max-height: 160px !important;
+    overflow-y: auto !important;
+  }
+
+  /* Modern sleek minimalist scrollbar styles across popup elements */
+  :global(::-webkit-scrollbar) {
+    width: 6px !important;
+    height: 6px !important;
+  }
+  :global(::-webkit-scrollbar-track) {
+    background: transparent !important;
+  }
+  :global(::-webkit-scrollbar-thumb) {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-radius: 10px !important;
+    transition: background 0.2s;
+  }
+  :global(::-webkit-scrollbar-thumb:hover) {
+    background: rgba(255, 255, 255, 0.25) !important;
+  }
+  /* Firefox Scrollbar support */
+  :global(*) {
+    scrollbar-width: thin !important;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;
   }
 </style>
