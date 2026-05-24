@@ -9,17 +9,28 @@
   import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import SettingsQueueItem from "./SettingsQueueItem.svelte";
+  import {
+    submitLog,
+    resolveVideoChannelMedia,
+  } from "@/lib/api/nihongotracker";
+  import { stripVideoTitle } from "@/lib/utils/text-parsing";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
     onQueueCountChange: (count: number) => void;
+    onConfirm: (
+      title: string,
+      msg: string,
+      warnKey?: string,
+    ) => Promise<boolean>;
   }
-  let { onStatus, onQueueCountChange }: Props = $props();
+  let { onStatus, onQueueCountChange, onConfirm }: Props = $props();
 
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
   let currentFilter = $state("all");
   let autoSendEOD = $state(false);
+  let isSendingAll = $state(false);
 
   const filteredReading = $derived(
     currentFilter === "all" || currentFilter === "reading" ? readingQueue : [],
@@ -51,11 +62,15 @@
   async function sendAll() {
     const cfg = (await configStorage.getValue()) as any;
     if (cfg.warnSendAll !== false) {
-      if (!confirm("Are you sure you want to send all pending logs?")) return;
+      const ok = await onConfirm(
+        "Send All",
+        "Are you sure you want to send all pending logs?",
+        "warnSendAll",
+      );
+      if (!ok) return;
     }
 
-    const { submitLog } = await import("@/lib/api/nihongotracker");
-    const { stripVideoTitle } = await import("@/lib/utils/text-parsing");
+    isSendingAll = true;
 
     function getItemPayloads(item: any, type: "reading" | "video") {
       const isRead = type === "reading";
@@ -130,51 +145,118 @@
     const rItems = [...readingQueue];
     const vItems = [...videoQueue];
 
-    let successCount = 0;
-    let failed = false;
+    const failedReadingIds = new Set<string>();
+    const failedVideoIds = new Set<string>();
+    let totalSent = 0;
+    let totalFailed = 0;
 
+    // Process reading logs
     for (const item of rItems) {
       try {
         const payloads = getItemPayloads(item, "reading");
+        let itemSucceeded = true;
         for (const p of payloads) {
-          const res = await submitLog(p);
-          if (!res?.success) failed = true;
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
         }
-        successCount++;
+        if (!itemSucceeded) {
+          failedReadingIds.add(item.id);
+        }
       } catch {
-        failed = true;
+        failedReadingIds.add(item.id);
+        totalFailed++;
       }
     }
 
+    // Process video logs
     for (const item of vItems) {
       try {
-        const payloads = getItemPayloads(item, "video");
-        for (const p of payloads) {
-          const res = await submitLog(p);
-          if (!res?.success) failed = true;
+        // Ensure channel media data is resolved
+        const channelId = item.channelId || item.mediaData?.channelId;
+        const channelTitle =
+          item.mediaData?.channelTitle ||
+          item.channelTitle ||
+          item.contentTitleNative;
+        if (channelId || channelTitle) {
+          try {
+            const media = await resolveVideoChannelMedia({
+              channelId,
+              channelTitle,
+            });
+            item.mediaData = {
+              ...(item.mediaData || {}),
+              channelId: media.channelId || channelId || "web-video",
+              channelTitle:
+                media.channelTitle || channelTitle || item.contentTitleNative,
+              ...(media.channelImage
+                ? { channelImage: media.channelImage }
+                : {}),
+              ...(media.channelDescription
+                ? { channelDescription: media.channelDescription }
+                : {}),
+            };
+          } catch (_e) {}
         }
-        successCount++;
+
+        const payloads = getItemPayloads(item, "video");
+        let itemSucceeded = true;
+        for (const p of payloads) {
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
+        }
+        if (!itemSucceeded) {
+          failedVideoIds.add(item.id);
+        }
       } catch {
-        failed = true;
+        failedVideoIds.add(item.id);
+        totalFailed++;
       }
     }
 
-    await videoQueueStorage.setValue([]);
-    await readingQueueStorage.setValue([]);
-    if (failed) {
-      onStatus("⚠ Some logs failed, but queue was cleared", true);
-    } else {
-      onStatus("✓ Sent all logs");
+    // Update queue to only retain the ones that failed
+    const nextReadingQueue = rItems.filter((item) =>
+      failedReadingIds.has(item.id),
+    );
+    const nextVideoQueue = vItems.filter((item) => failedVideoIds.has(item.id));
+
+    await readingQueueStorage.setValue(nextReadingQueue);
+    await videoQueueStorage.setValue(nextVideoQueue);
+
+    if (totalFailed > 0) {
+      if (totalSent > 0) {
+        onStatus(`⚠ Sent ${totalSent} logs, but ${totalFailed} failed`, true);
+      } else {
+        onStatus(`⚠ Failed to send logs`, true);
+      }
+    } else if (totalSent > 0) {
+      onStatus(`✓ Successfully sent all ${totalSent} logs`);
     }
+
+    isSendingAll = false;
     await load();
   }
 
   async function clearAll() {
-    if (!confirm("Are you sure you want to clear all pending logs?")) return;
+    const ok = await onConfirm(
+      "Clear All",
+      "Are you sure you want to clear all pending logs?",
+    );
+    if (!ok) return;
     if (currentFilter === "all" || currentFilter === "video")
       await videoQueueStorage.setValue([]);
     if (currentFilter === "all" || currentFilter === "reading")
       await readingQueueStorage.setValue([]);
+    onStatus("✓ Pending logs cleared successfully");
     await load();
   }
 
@@ -198,11 +280,17 @@
   <h2>Pending Logs</h2>
   {#if total > 0}
     <div class="tab-actions" id="queue-actions">
-      <button id="send-all-btn" class="btn btn-amber btn-sm" onclick={sendAll}
-        >Send All</button
+      <button
+        id="send-all-btn"
+        class="btn btn-amber btn-sm"
+        onclick={sendAll}
+        disabled={isSendingAll}>{isSendingAll ? "..." : "Send All"}</button
       >
-      <button id="clear-all-btn" class="btn btn-ghost btn-sm" onclick={clearAll}
-        >Clear All</button
+      <button
+        id="clear-all-btn"
+        class="btn btn-ghost btn-sm"
+        onclick={clearAll}
+        disabled={isSendingAll}>Clear All</button
       >
     </div>
   {/if}
@@ -255,11 +343,23 @@
     <div class="empty-state">Queue is empty</div>
   {:else}
     {#each filteredReading as item (item.id)}
-      <SettingsQueueItem {item} type="reading" {onStatus} onRefresh={load} />
+      <SettingsQueueItem
+        {item}
+        type="reading"
+        {onStatus}
+        {onConfirm}
+        onRefresh={load}
+      />
     {/each}
 
     {#each filteredVideo as item (item.id)}
-      <SettingsQueueItem {item} type="video" {onStatus} onRefresh={load} />
+      <SettingsQueueItem
+        {item}
+        type="video"
+        {onStatus}
+        {onConfirm}
+        onRefresh={load}
+      />
     {/each}
   {/if}
 </div>

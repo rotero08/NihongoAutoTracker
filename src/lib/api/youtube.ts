@@ -22,18 +22,43 @@ import { showToast } from '../utils/toast';
  */
 export function notify(title: string, message: string): void {
   try {
-    /* If we have tab access (background script context), inject into active tab */
+    const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
+
+    /* 1. Direct local render if running inside the settings page */
+    if (typeof document !== 'undefined' && window.location.href.includes('settings.html')) {
+      showToast(title, message, isError);
+      return;
+    }
+
+    /* 2. Direct local render if running inside a restricted tab context / extension page */
     if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
       browser.tabs
         .query({ active: true, currentWindow: true })
         .then((tabs) => {
-          const tabId = tabs[0]?.id;
-          if (tabId && browser.scripting && browser.scripting.executeScript) {
+          const tab = tabs[0];
+          const tabId = tab?.id;
+          const url = tab?.url || "";
+
+          const isRestricted =
+            url.startsWith('chrome://') ||
+            url.startsWith('about:') ||
+            url.startsWith('https://chromewebstore.google.com/') ||
+            url.startsWith('https://addons.mozilla.org/');
+
+          if (isRestricted) {
+            // Render locally within popup DOM when active tab is a system or local tab
+            if (typeof document !== 'undefined') {
+              showToast(title, message, isError);
+            }
+            return;
+          }
+
+          if (tabId && browser.scripting && browser.scripting.executeScript && !url.startsWith('chrome-extension://') && !url.startsWith('moz-extension://')) {
             browser.scripting
               .executeScript({
                 target: { tabId },
                 func: showToast,
-                args: [title, message],
+                args: [title, message, isError],
               })
               .catch(() => null);
           } else if (tabId) {
@@ -46,7 +71,7 @@ export function notify(title: string, message: string): void {
       return;
     }
 
-    /* Otherwise, relay through the background script */
+    /* 3. Otherwise, relay through the background script messaging system */
     if (browser.runtime?.sendMessage) {
       browser.runtime
         .sendMessage({ action: 'NOTIFY', title, message })

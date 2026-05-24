@@ -1,5 +1,4 @@
 import { defineConfig } from 'wxt';
-import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
 export default defineConfig({
@@ -59,12 +58,4 @@ export default defineConfig({
       },
     },
   },
-
-  /* ── Vite plugin configuration ─────────────────────────────── */
-  vite: () => ({
-    plugins: [
-      /* Tailwind CSS v4 — processes @import "tailwindcss" directives */
-      tailwindcss(),
-    ],
-  }),
 });

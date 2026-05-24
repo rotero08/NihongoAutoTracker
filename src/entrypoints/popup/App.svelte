@@ -12,7 +12,12 @@
   import QueueList from "@/components/popup/QueueList.svelte";
   import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
   import CustomSelect from "@/components/settings/CustomSelect.svelte";
-  import { showToast } from "@/lib/utils/toast"; // Route via dynamic shared helper
+  import { notify } from "@/lib/api/youtube"; // Route notifications to the unified smart helper
+  import {
+    submitLog,
+    resolveVideoChannelMedia,
+  } from "@/lib/api/nihongotracker";
+  import { stripVideoTitle } from "@/lib/utils/text-parsing";
   import {
     applyThemeToDocument,
     THEME_OPTIONS,
@@ -20,12 +25,13 @@
   } from "@/lib/ui/themes";
   import "@/styles/popup-shared.css";
 
-  /* ── Reactive state ──────────────────────────────────────────── */
+  /* ── Reactive state ── */
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
   let hasApiKey = $state(false);
   let currentFilter = $state("all");
-  let confirmModal: ConfirmModal;
+  let isSendingAll = $state(false);
+  let confirmModal = $state<any>(null);
 
   /* Appearance states */
   let selectedTheme = $state("dark-amber");
@@ -34,7 +40,7 @@
 
   const total = $derived(videoQueue.length + readingQueue.length);
 
-  /* ── Data loading ────────────────────────────────────────────── */
+  /* ── Data loading ── */
   async function loadData() {
     videoQueue = await videoQueueStorage.getValue();
     readingQueue = await readingQueueStorage.getValue();
@@ -128,11 +134,22 @@
   }
 
   function showStatus(msg: string, err = false) {
-    showToast(err ? "Error" : "Success", msg, err);
+    notify(err ? "Error" : "Success", msg);
   }
 
-  async function handleConfirm(title: string, msg: string): Promise<boolean> {
-    return confirmModal?.confirm(title, msg) ?? false;
+  async function handleConfirm(
+    title: string,
+    msg: string,
+    warnKey?: string,
+  ): Promise<boolean> {
+    if (confirmModal) {
+      try {
+        return await confirmModal.confirm(title, msg, warnKey);
+      } catch (e) {
+        console.error("ConfirmModal error, falling back to window.confirm:", e);
+      }
+    }
+    return window.confirm(msg);
   }
 
   async function handleSendAll() {
@@ -145,7 +162,178 @@
       );
       if (!ok) return;
     }
-    showStatus("Sending all...");
+    isSendingAll = true;
+
+    function getItemPayloads(item: any, type: "reading" | "video") {
+      const isRead = type === "reading";
+      const sessions = item.sessions ?? [];
+      const displayMins = isRead
+        ? Math.max(1, Math.round((item.time || 0) / 60))
+        : item.time || 0;
+      const sumSecs = sessions.reduce(
+        (a: number, b: any) => a + (b.secs || 0),
+        0,
+      );
+      const sumMins = Math.max(1, Math.round(sumSecs / 60));
+      const sumChars = isRead
+        ? sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+        : 0;
+
+      const hasOverride = isRead
+        ? Number(item.chars || 0) > sumChars || displayMins > sumMins
+        : displayMins > Math.round(sumSecs / 60);
+
+      const defaultDateStr =
+        sessions.length > 0
+          ? sessions[0].date
+          : item.date || new Date().toISOString();
+      const desc =
+        item.description || item.contentTitleNative || "Unknown Title";
+
+      if (sessions.length > 1 && !hasOverride) {
+        return sessions.map((sess: any) => {
+          const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
+          const payload: any = {
+            type,
+            description: type === "video" ? stripVideoTitle(desc) : desc,
+            time: sessMins,
+            date: new Date(sess.date).toISOString(),
+            chars: isRead ? sess.chars || 0 : 0,
+            episodes: 0,
+            pages: 0,
+            unknownDate: false,
+            mediaId: isRead
+              ? item.mediaId || "web-reading"
+              : item.mediaData?.channelId || item.channelId || "web-video",
+            mediaData: item.mediaData || {},
+          };
+          if (isRead) {
+            payload.volume = Math.max(1, Number(item.volume || 1));
+          }
+          return payload;
+        });
+      } else {
+        const payload: any = {
+          type,
+          description: type === "video" ? stripVideoTitle(desc) : desc,
+          time: displayMins,
+          date: new Date(defaultDateStr).toISOString(),
+          chars: isRead ? item.chars || 0 : 0,
+          episodes: 0,
+          pages: 0,
+          unknownDate: false,
+          mediaId: isRead
+            ? item.mediaId || "web-reading"
+            : item.mediaData?.channelId || item.channelId || "web-video",
+          mediaData: item.mediaData || {},
+        };
+        if (isRead) {
+          payload.volume = Math.max(1, Number(item.volume || 1));
+        }
+        return [payload];
+      }
+    }
+
+    const rItems = [...readingQueue];
+    const vItems = [...videoQueue];
+
+    const failedReadingIds = new Set<string>();
+    const failedVideoIds = new Set<string>();
+    let totalSent = 0;
+    let totalFailed = 0;
+
+    // Process reading logs
+    for (const item of rItems) {
+      try {
+        const payloads = getItemPayloads(item, "reading");
+        let itemSucceeded = true;
+        for (const p of payloads) {
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
+        }
+        if (!itemSucceeded) {
+          failedReadingIds.add(item.id);
+        }
+      } catch {
+        failedReadingIds.add(item.id);
+        totalFailed++;
+      }
+    }
+
+    // Process video logs
+    for (const item of vItems) {
+      try {
+        const channelId = item.channelId || item.mediaData?.channelId;
+        const channelTitle =
+          item.mediaData?.channelTitle ||
+          item.channelTitle ||
+          item.contentTitleNative;
+        if (channelId || channelTitle) {
+          try {
+            const media = await resolveVideoChannelMedia({
+              channelId,
+              channelTitle,
+            });
+            item.mediaData = {
+              ...(item.mediaData || {}),
+              channelId: media.channelId || channelId || "web-video",
+              channelTitle:
+                media.channelTitle || channelTitle || item.contentTitleNative,
+              ...(media.channelImage
+                ? { channelImage: media.channelImage }
+                : {}),
+              ...(media.channelDescription
+                ? { channelDescription: media.channelDescription }
+                : {}),
+            };
+          } catch (_e) {}
+        }
+
+        const payloads = getItemPayloads(item, "video");
+        let itemSucceeded = true;
+        for (const p of payloads) {
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
+        }
+        if (!itemSucceeded) {
+          failedVideoIds.add(item.id);
+        }
+      } catch {
+        failedVideoIds.add(item.id);
+        totalFailed++;
+      }
+    }
+
+    const nextReadingQueue = rItems.filter((item) =>
+      failedReadingIds.has(item.id),
+    );
+    const nextVideoQueue = vItems.filter((item) => failedVideoIds.has(item.id));
+
+    await readingQueueStorage.setValue(nextReadingQueue);
+    await videoQueueStorage.setValue(nextVideoQueue);
+
+    if (totalFailed > 0) {
+      if (totalSent > 0) {
+        showStatus(`Sent ${totalSent} logs, but ${totalFailed} failed`, true);
+      } else {
+        showStatus(`Failed to send logs`, true);
+      }
+    } else if (totalSent > 0) {
+      showStatus(`Successfully sent all ${totalSent} logs`);
+    }
+
+    isSendingAll = false;
+    await loadData();
   }
 
   async function handleClearAll() {
@@ -245,8 +433,16 @@
   </div>
   {#if total > 0}
     <div class="queue-bulk">
-      <button class="bulk-btn amber" onclick={handleSendAll}>Send All</button>
-      <button class="bulk-btn ghost" onclick={handleClearAll}>Clear</button>
+      <button
+        class="bulk-btn amber"
+        onclick={handleSendAll}
+        disabled={isSendingAll}>{isSendingAll ? "..." : "Send All"}</button
+      >
+      <button
+        class="bulk-btn ghost"
+        onclick={handleClearAll}
+        disabled={isSendingAll}>Clear</button
+      >
     </div>
   {/if}
 </div>
@@ -434,6 +630,11 @@
     background: none;
     color: var(--color-text-muted);
     border-color: var(--color-border-hover);
+  }
+  .bulk-btn:disabled {
+    opacity: 0.45 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
   }
   .queue-tabs {
     display: flex;

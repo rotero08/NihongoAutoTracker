@@ -22,6 +22,11 @@
   let allowOpen = $state(false);
   let skipOpen = $state(false);
 
+  /* Inline editing states for lists */
+  let editingList = $state<"allow" | "skip" | null>(null);
+  let editingIndex = $state<number | null>(null);
+  let editingValue = $state("");
+
   export async function load() {
     const cfg = (await configStorage.getValue()) as any;
     trackTime = cfg.trackTime ?? false;
@@ -33,7 +38,6 @@
 
   async function save() {
     const cfg = (await configStorage.getValue()) as any;
-    const tVal = overlayPos;
     await configStorage.setValue({
       ...cfg,
       trackTime,
@@ -85,6 +89,60 @@
       [key]: sites.filter((d) => d !== domain),
     });
     await load();
+  }
+
+  /* Inline edit triggers */
+  function startEdit(
+    list: "allow" | "skip",
+    index: number,
+    currentValue: string,
+  ) {
+    editingList = list;
+    editingIndex = index;
+    editingValue = currentValue;
+  }
+
+  async function saveEdit(list: "allow" | "skip", index: number) {
+    if (editingList !== list || editingIndex !== index) return;
+
+    const newVal = editingValue.trim().toLowerCase();
+    editingList = null;
+    editingIndex = null;
+
+    if (!newVal) return;
+
+    const cfg = (await configStorage.getValue()) as any;
+    const key = list === "allow" ? "allowSites" : "skipSites";
+    const sites: string[] = [
+      ...(cfg[key] ??
+        (list === "allow" ? [...BUILT_IN_ALLOW] : [...BUILT_IN_SKIP])),
+    ];
+
+    const oldVal = sites[index];
+    if (oldVal === newVal) return;
+
+    if (!sites.includes(newVal) || sites.indexOf(newVal) === index) {
+      sites[index] = newVal;
+      await configStorage.setValue({ ...cfg, [key]: sites });
+      await load();
+      onStatus(`✓ Site updated to ${newVal}`);
+    } else {
+      onStatus(`⚠ Duplicate site domain ignored`, true);
+      await load();
+    }
+  }
+
+  function handleEditKeyDown(
+    e: KeyboardEvent,
+    list: "allow" | "skip",
+    index: number,
+  ) {
+    if (e.key === "Enter") {
+      saveEdit(list, index);
+    } else if (e.key === "Escape") {
+      editingList = null;
+      editingIndex = null;
+    }
   }
 
   load();
@@ -158,7 +216,6 @@
   <button id="save-overlay-btn" class="btn btn-amber" onclick={save}
     >Save</button
   >
-  <!-- Removed reset trigger from top action row -->
 </div>
 
 <!-- Sites sub-section -->
@@ -206,9 +263,27 @@
   {#if allowOpen}
     <div class="sites-body open" id="allow-body">
       <div class="site-list" id="allow-list">
-        {#each allowSites as site}
+        {#each allowSites as site, i}
           <div class="site-item">
-            <span class="site-item-host">{site}</span>
+            {#if editingList === "allow" && editingIndex === i}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="site-item-edit-input"
+                bind:value={editingValue}
+                onblur={() => saveEdit("allow", i)}
+                onkeydown={(e) => handleEditKeyDown(e, "allow", i)}
+                style="flex: 1; font-family: var(--font-mono); font-size: 11px; padding: 1px 4px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--color-border); border-radius: 3px; color: var(--color-text); outline: none; margin-right: 8px;"
+                autofocus
+              />
+            {:else}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span
+                class="site-item-host"
+                onclick={() => startEdit("allow", i, site)}>{site}</span
+              >
+            {/if}
             <button
               class="site-remove"
               onclick={() => removeSite(site, "allow")}
@@ -266,9 +341,27 @@
   {#if skipOpen}
     <div class="sites-body open" id="skip-body">
       <div class="site-list" id="skip-list">
-        {#each skipSites as site}
+        {#each skipSites as site, i}
           <div class="site-item">
-            <span class="site-item-host">{site}</span>
+            {#if editingList === "skip" && editingIndex === i}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="site-item-edit-input"
+                bind:value={editingValue}
+                onblur={() => saveEdit("skip", i)}
+                onkeydown={(e) => handleEditKeyDown(e, "skip", i)}
+                style="flex: 1; font-family: var(--font-mono); font-size: 11px; padding: 1px 4px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--color-border); border-radius: 3px; color: var(--color-text); outline: none; margin-right: 8px;"
+                autofocus
+              />
+            {:else}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span
+                class="site-item-host"
+                onclick={() => startEdit("skip", i, site)}>{site}</span
+              >
+            {/if}
             <button
               class="site-remove"
               onclick={() => removeSite(site, "skip")}

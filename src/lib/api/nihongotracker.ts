@@ -26,16 +26,18 @@ const API_BASE = 'https://nihongotracker.app/api';
  * - Toast notifications on success/failure
  *
  * @param payload - The log data to submit (video or reading)
+ * @param silent - Whether to suppress individual toast notifications (useful for batch sends)
  * @returns Object with `success` boolean and optional `status`/`error`
  */
 export async function submitLog(
   payload: Record<string, unknown>,
+  silent = false,
 ): Promise<{ success: boolean; status?: number; error?: string }> {
   const config = await configStorage.getValue();
   const apiKey = config?.apiKey ?? '';
 
   if (!apiKey) {
-    notify('Failed! Missing API key', '');
+    if (!silent) notify('Failed! Missing API key', '');
     return { success: false, error: 'Missing API key' };
   }
 
@@ -63,17 +65,17 @@ export async function submitLog(
 
     if (response.ok) {
       await addDebugLog('INFO', 'API', 'Log sent successfully');
-      notify('Success', 'Log sent to NihongoTracker!');
+      if (!silent) notify('Success', 'Log sent to NihongoTracker!');
       return { success: true, status: response.status };
     } else {
       const errorText = await response.text();
       await addDebugLog('ERROR', 'API', `Log failed with code ${response.status}`, errorText);
-      notify(`Failed! ${response.status}`, errorText.slice(0, 100));
+      if (!silent) notify(`Failed! ${response.status}`, errorText.slice(0, 100));
       return { success: false, status: response.status, error: errorText };
     }
   } catch (err: any) {
     await addDebugLog('ERROR', 'API', 'Network error', err);
-    notify('Failed!', err.message);
+    if (!silent) notify('Failed!', err.message);
     return { success: false, error: err.message };
   }
 }

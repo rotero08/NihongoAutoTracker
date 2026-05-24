@@ -24,10 +24,15 @@
     item: any;
     type: "video" | "reading";
     onStatus: (msg: string, err?: boolean) => void;
+    onConfirm: (
+      title: string,
+      msg: string,
+      warnKey?: string,
+    ) => Promise<boolean>;
     onRefresh: () => void;
   }
 
-  let { item, type, onStatus, onRefresh }: Props = $props();
+  let { item, type, onStatus, onConfirm, onRefresh }: Props = $props();
 
   const isRead = $derived(type === "reading");
   let sending = $state(false);
@@ -184,6 +189,7 @@
     e.preventDefault();
     e.stopPropagation();
     await saveItem({ mediaId: "web-reading", mediaData: undefined });
+    onStatus("✓ AniList match unlinked");
   }
 
   /* Volume editing */
@@ -307,7 +313,12 @@
   }
 
   async function handleRemoveSession(sessionId: string) {
-    if (!confirm("Delete this session?")) return;
+    const ok = await onConfirm(
+      "Delete Session",
+      "Are you sure you want to delete this session?",
+    );
+    if (!ok) return;
+
     const entry = JSON.parse(JSON.stringify(item));
     entry.sessions = (entry.sessions ?? []).filter(
       (s: any) => s.id !== sessionId,
@@ -334,6 +345,7 @@
       time: finalTime,
       chars: finalChars,
     });
+    onStatus("✓ Session removed");
   }
 
   function getItemPayloads(current: any, type: "reading" | "video") {
@@ -452,10 +464,16 @@
   }
 
   async function handleRemove() {
-    if (!confirm("Delete this log?")) return;
+    const ok = await onConfirm(
+      "Delete Log",
+      "Are you sure you want to delete this log?",
+    );
+    if (!ok) return;
+
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+    onStatus("✓ Log removed");
     onRefresh();
   }
 </script>
@@ -639,13 +657,14 @@
   {#if sessions.length > 1}
     <div class="qi-sessions">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <summary
+      <button
+        type="button"
         class="session-summary"
         onclick={toggleSessionsOpen}
-        style="list-style: none;"
+        style="list-style: none; background: none; border: none; text-align: left; width: 100%; padding: 0; cursor: pointer; display: block;"
       >
         {isSessionsOpen ? "▾" : "▸"} Sessions ({sessions.length})
-      </summary>
+      </button>
 
       {#if isSessionsOpen}
         <div class="session-list">

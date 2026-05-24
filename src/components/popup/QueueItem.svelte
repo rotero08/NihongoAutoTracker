@@ -291,6 +291,7 @@
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+    onStatusMessage("✓ Log removed");
     onRefresh();
   }
 
@@ -322,6 +323,7 @@
       entry.time = Math.round(totalSecs / 60);
     }
     await qStorage.setValue(q as any);
+    onStatusMessage("✓ Session removed");
     onRefresh();
   }
 
