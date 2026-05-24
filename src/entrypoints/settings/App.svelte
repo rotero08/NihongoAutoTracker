@@ -26,29 +26,84 @@
 
   function handleTabChange(tab: string) {
     activeTab = tab;
+    localStorage.setItem("nt-active-settings-tab", tab);
   }
 
   function handleDebugToggle(enabled: boolean) {
     debugMode = enabled;
-    if (!enabled && activeTab === "debug") activeTab = "queue";
+    if (!enabled && activeTab === "debug") handleTabChange("queue");
   }
 
   function handleQueueCountChange(count: number) {
     queueCount = count;
   }
 
+  function applyCustomTheme(colors: any) {
+    if (!colors) return;
+    const root = document.documentElement;
+    root.style.setProperty("--color-background", colors.background);
+    root.style.setProperty("--color-surface", colors.surface);
+    root.style.setProperty(
+      "--color-surface-alt",
+      colors.surfaceAlt || colors.surface,
+    );
+    root.style.setProperty("--color-border", colors.border);
+    root.style.setProperty(
+      "--color-border-hover",
+      colors.borderHover || colors.border,
+    );
+    root.style.setProperty("--color-text", colors.text);
+    root.style.setProperty("--color-text-muted", colors.textMuted);
+    root.style.setProperty("--color-text-dimmed", colors.textMuted);
+    root.style.setProperty("--color-accent", colors.accent);
+    root.style.setProperty(
+      "--color-accent-hover",
+      colors.accentHover || colors.accent,
+    );
+  }
+
+  function clearCustomTheme() {
+    const root = document.documentElement;
+    root.style.removeProperty("--color-background");
+    root.style.removeProperty("--color-surface");
+    root.style.removeProperty("--color-surface-alt");
+    root.style.removeProperty("--color-border");
+    root.style.removeProperty("--color-border-hover");
+    root.style.removeProperty("--color-text");
+    root.style.removeProperty("--color-text-muted");
+    root.style.removeProperty("--color-text-dimmed");
+    root.style.removeProperty("--color-accent");
+    root.style.removeProperty("--color-accent-hover");
+  }
+
   onMount(async () => {
+    // Restore active tab from localStorage if available
+    const savedTab = localStorage.getItem("nt-active-settings-tab");
+    if (savedTab) {
+      activeTab = savedTab;
+    }
+
     const cfg = (await configStorage.getValue()) as any;
     debugMode = cfg.debugMode ?? false;
-    applyThemeToDocument(cfg.theme ?? "nihongo", cfg.font ?? "sans");
+
+    const applyTheme = (c: any) => {
+      const theme = c?.theme ?? "nihongo";
+      const font = c?.font ?? "sans";
+      if (theme === "custom") {
+        applyThemeToDocument("dark-amber", font);
+        applyCustomTheme(c?.customColors);
+      } else {
+        clearCustomTheme();
+        applyThemeToDocument(theme, font);
+      }
+    };
+
+    applyTheme(cfg);
 
     /* Live update variables if changed in storage */
     browser.storage.onChanged.addListener((changes, area) => {
       if (area === "local" && changes["config"]) {
-        const nextTheme =
-          (changes["config"].newValue as any)?.theme ?? "nihongo";
-        const nextFont = (changes["config"].newValue as any)?.font ?? "sans";
-        applyThemeToDocument(nextTheme, nextFont);
+        applyTheme(changes["config"].newValue);
       }
     });
   });

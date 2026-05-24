@@ -71,7 +71,15 @@
     };
     browser.storage.onChanged.addListener(storageListener);
 
-    const clickOutside = () => {
+    const clickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Close popover only if clicking outside of the popover and the toggle button
+      if (
+        target.closest(".compact-popover") ||
+        target.closest(".appearance-toggle")
+      ) {
+        return;
+      }
       showCompactMenu = false;
     };
     window.addEventListener("click", clickOutside);
@@ -83,8 +91,7 @@
   });
 
   /* ── Quick Switch actions ── */
-  function toggleCompactMenu(e: MouseEvent) {
-    e.stopPropagation();
+  function toggleCompactMenu() {
     showCompactMenu = !showCompactMenu;
   }
 
@@ -103,8 +110,20 @@
   }
 
   /* ── Settings Actions ─────────────────────────────────────────── */
-  function openSettings() {
-    browser.tabs.create({ url: browser.runtime.getURL("/settings.html") });
+  async function openSettings() {
+    const settingsUrl = browser.runtime.getURL("/settings.html");
+    const tabs = await browser.tabs.query({});
+    const existingTab = tabs.find(
+      (t) => t.url && t.url.startsWith(settingsUrl),
+    );
+    if (existingTab && existingTab.id !== undefined) {
+      await browser.tabs.update(existingTab.id, { active: true });
+      if (existingTab.windowId !== undefined) {
+        await browser.windows.update(existingTab.windowId, { focused: true });
+      }
+    } else {
+      await browser.tabs.create({ url: settingsUrl });
+    }
     window.close();
   }
 
@@ -163,7 +182,7 @@
 
   <div style="display: flex; gap: 6px; position: relative;">
     <button
-      class="icon-btn"
+      class="icon-btn appearance-toggle"
       title="Appearance Settings"
       onclick={toggleCompactMenu}
     >
@@ -187,15 +206,12 @@
     >
 
     {#if showCompactMenu}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
         class="compact-popover"
-        onclick={(e) => e.stopPropagation()}
-        style="position: absolute; top: calc(100% + 6px); right: 0; background: var(--surf); border: 1px solid var(--bdr2); border-radius: 4px; padding: 10px; width: 160px; z-index: 10000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;"
+        style="position: absolute; top: calc(100% + 6px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 10px; width: 160px; z-index: 10000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;"
       >
         <span
-          style="font-size: 9px; font-weight: bold; color: var(--text); text-transform: uppercase; display: block; border-bottom: 1px solid var(--bdr); padding-bottom: 4px;"
+          style="font-size: 9px; font-weight: bold; color: var(--color-text); text-transform: uppercase; display: block; border-bottom: 1px solid var(--color-border); padding-bottom: 4px;"
           >Appearance</span
         >
 
@@ -271,9 +287,9 @@
 <style>
   /* ── Root ── */
   :global(body) {
-    font-family: var(--mono);
-    background: var(--bg);
-    color: var(--text);
+    font-family: var(--font-mono);
+    background: var(--color-background);
+    color: var(--color-text);
     width: 380px;
     font-size: 13px;
     overflow: hidden;
@@ -315,7 +331,7 @@
   .brand-name {
     font-size: 11px;
     font-weight: bold;
-    color: var(--text);
+    color: var(--color-text);
     letter-spacing: 0.04em;
     margin-bottom: 2px;
   }
@@ -329,22 +345,22 @@
     border-radius: 8px;
   }
   .pill-ok {
-    color: var(--green);
-    border: 1px solid color-mix(in srgb, var(--green) 25%, transparent);
-    background: color-mix(in srgb, var(--green) 7%, transparent);
+    color: var(--color-success);
+    border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
+    background: color-mix(in srgb, var(--color-success) 7%, transparent);
   }
   .pill-off {
-    color: var(--red);
-    border: 1px solid color-mix(in srgb, var(--red) 25%, transparent);
-    background: color-mix(in srgb, var(--red) 7%, transparent);
+    color: var(--color-error);
+    border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
+    background: color-mix(in srgb, var(--color-error) 7%, transparent);
   }
   .icon-btn {
     width: 26px;
     height: 26px;
     background: none;
-    border: 1px solid var(--bdr);
+    border: 1px solid var(--color-border);
     border-radius: 4px;
-    color: var(--muted);
+    color: var(--color-text-muted);
     font-size: 13px;
     cursor: pointer;
     display: flex;
@@ -355,14 +371,14 @@
       border-color 0.15s;
   }
   .icon-btn:hover {
-    color: var(--text);
-    border-color: var(--bdr2);
+    color: var(--color-text);
+    border-color: var(--color-border-hover);
   }
 
   /* ── Separator ── */
   .sep {
     height: 1px;
-    background: var(--bdr);
+    background: var(--color-border);
   }
 
   /* ── Queue header & tabs (Contrast Mapped) ── */
@@ -380,13 +396,13 @@
   .queue-label {
     font-size: 10px;
     font-weight: bold;
-    color: var(--dim);
+    color: var(--color-text-dimmed);
     letter-spacing: 0.1em;
   }
   .badge {
-    background: color-mix(in srgb, var(--amber) 10%, transparent);
-    color: var(--amber);
-    border: 1px solid color-mix(in srgb, var(--amber) 22%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
     border-radius: 8px;
     padding: 1px 6px;
     font-size: 10px;
@@ -397,7 +413,7 @@
     gap: 6px;
   }
   .bulk-btn {
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     font-size: 10px;
     font-weight: bold;
     padding: 3px 8px;
@@ -410,41 +426,41 @@
     opacity: 0.7;
   }
   .bulk-btn.amber {
-    background: var(--amber);
-    color: var(--bg);
-    border-color: var(--amber);
+    background: var(--color-accent);
+    color: var(--color-background);
+    border-color: var(--color-accent);
   }
   .bulk-btn.ghost {
     background: none;
-    color: var(--muted);
-    border-color: var(--bdr2);
+    color: var(--color-text-muted);
+    border-color: var(--color-border-hover);
   }
   .queue-tabs {
     display: flex;
     gap: 8px;
     padding: 0 14px 8px;
-    border-bottom: 1px solid var(--bdr);
+    border-bottom: 1px solid var(--color-border);
   }
   .q-tab {
     background: transparent;
-    border: 1px solid var(--bdr);
-    color: var(--dim);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-dimmed);
     padding: 4px 12px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     transition: all 0.15s;
     font-weight: bold;
   }
   .q-tab:hover {
-    color: var(--text);
-    border-color: var(--bdr2);
+    color: var(--color-text);
+    border-color: var(--color-border-hover);
   }
   .q-tab.active {
-    background: color-mix(in srgb, var(--amber) 10%, transparent);
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 30%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 
   /* ── Footer ── */
@@ -454,11 +470,11 @@
   .open-btn {
     width: 100%;
     background: none;
-    color: var(--dim);
-    border: 1px solid var(--bdr);
+    color: var(--color-text-dimmed);
+    border: 1px solid var(--color-border);
     border-radius: 4px;
     padding: 7px;
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     font-size: 11px;
     font-weight: bold;
     letter-spacing: 0.04em;
@@ -468,7 +484,7 @@
       border-color 0.15s;
   }
   .open-btn:hover {
-    color: var(--muted);
-    border-color: var(--bdr2);
+    color: var(--color-text-muted);
+    border-color: var(--color-border-hover);
   }
 </style>

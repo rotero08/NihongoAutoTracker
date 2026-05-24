@@ -5,18 +5,25 @@
   ghost-date for datetime, and AniList search dropdown for reading items.
 -->
 <script lang="ts">
-  import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';
-  import { configStorage } from '@/lib/storage/config';
-  import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
-  import { searchAniList, type AniListSearchResult } from '@/lib/api/anilist';
-  import { stripVideoTitle, parseTitleForUI, escapeHtml } from '@/lib/utils/text-parsing';
-  import { toLocalDT } from '@/lib/utils/time';
-  import QueueItemSessions from './QueueItemSessions.svelte';
-  import SearchDropdown from './SearchDropdown.svelte';
+  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import { configStorage } from "@/lib/storage/config";
+  import {
+    resolveVideoChannelMedia,
+    submitLog,
+  } from "@/lib/api/nihongotracker";
+  import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
+  import {
+    stripVideoTitle,
+    parseTitleForUI,
+    escapeHtml,
+  } from "@/lib/utils/text-parsing";
+  import { toLocalDT } from "@/lib/utils/time";
+  import QueueItemSessions from "./QueueItemSessions.svelte";
+  import SearchDropdown from "./SearchDropdown.svelte";
 
   interface Props {
     item: any;
-    type: 'video' | 'reading';
+    type: "video" | "reading";
     onStatusMessage: (msg: string, err?: boolean) => void;
     onConfirm: (title: string, msg: string) => Promise<boolean>;
     onRefresh: () => void;
@@ -24,36 +31,48 @@
 
   let { item, type, onStatusMessage, onConfirm, onRefresh }: Props = $props();
 
-  const isRead = $derived(type === 'reading');
+  const isRead = $derived(type === "reading");
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
 
   /* ── Computed display values ──────────────────────────────────── */
-  const rawTitle = $derived(item.description || item.contentTitleNative || 'Unknown Title');
-  const displayTitle = $derived(type === 'video' ? stripVideoTitle(rawTitle) : rawTitle);
-  const displayMins = $derived(isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0));
+  const rawTitle = $derived(
+    item.description || item.contentTitleNative || "Unknown Title",
+  );
+  const displayTitle = $derived(
+    type === "video" ? stripVideoTitle(rawTitle) : rawTitle,
+  );
+  const displayMins = $derived(
+    isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
+  );
   const isLinked = $derived(
     isRead
-      ? !!(item.mediaId && item.mediaId !== 'web-reading')
-      : true /* All YouTube videos tracked show as matched */
+      ? !!(item.mediaId && item.mediaId !== "web-reading")
+      : true /* All YouTube videos tracked show as matched */,
   );
 
   let channelName = $derived(
     isRead
-      ? `${item.readerName || 'Reader'} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ''}`
-      : (item.channelTitle || item.contentTitleNative || 'YouTube')
+      ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
+      : item.channelTitle || item.contentTitleNative || "YouTube",
   );
   let urlDisplay = $derived(
-    isRead ? '' : `\u2022 ${item.contentTitleEnglish || item.channelId || ''}`
+    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || ""}`,
   );
 
   const sessions = $derived(item.sessions ?? []);
-  const defaultDateStr = $derived(sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString()));
+  const defaultDateStr = $derived(
+    sessions.length > 0
+      ? sessions[0].date
+      : item.date || new Date().toISOString(),
+  );
 
   /* ── Title editing + search ──────────────────────────────────── */
-  let titleValue = $state('');
-  $effect(() => { titleValue = displayTitle; });
+  let titleValue = $state("");
+  $effect(() => {
+    titleValue = displayTitle;
+  });
   let debounceTimer: any;
 
   function handleTitleInput(e: Event) {
@@ -61,12 +80,15 @@
     titleValue = val;
 
     if (isRead) {
-      if (item.mediaId && item.mediaId !== 'web-reading') {
-        item.mediaId = 'web-reading';
+      if (item.mediaId && item.mediaId !== "web-reading") {
+        item.mediaId = "web-reading";
         item.mediaData = undefined;
       }
       clearTimeout(debounceTimer);
-      if (val.trim().length < 2) { searchDropdown?.close(); return; }
+      if (val.trim().length < 2) {
+        searchDropdown?.close();
+        return;
+      }
       debounceTimer = setTimeout(() => searchDropdown?.search(val.trim()), 500);
     }
   }
@@ -92,7 +114,7 @@
     const q = await qStorage.getValue();
     const idx = q.findIndex((x: any) => x.id === item.id);
     if (idx > -1) {
-      q[idx] = { ...q[idx], mediaId: 'web-reading', mediaData: undefined };
+      q[idx] = { ...q[idx], mediaId: "web-reading", mediaData: undefined };
       await qStorage.setValue(q as any);
       onRefresh();
     }
@@ -111,18 +133,21 @@
 
   async function handleTitleChange(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    await persistField('description', val);
+    await persistField("description", val);
   }
 
   async function handleSearchSelect(result: AniListSearchResult) {
-    const native = result.title?.contentTitleNative || result.contentTitleNative || 'Unknown';
+    const native =
+      result.title?.contentTitleNative ||
+      result.contentTitleNative ||
+      "Unknown";
     titleValue = native;
 
     const { volume: parsedVolume } = parseTitleForUI(native);
     const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
 
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue() as any[];
+    const q = (await qStorage.getValue()) as any[];
     const idx = q.findIndex((x: any) => x.id === item.id);
     if (idx > -1) {
       q[idx] = {
@@ -132,8 +157,10 @@
         mediaData: {
           contentId: result.contentId,
           contentTitleNative: native,
-          contentTitleEnglish: result.title?.contentTitleEnglish || result.contentTitleEnglish,
-          contentTitleRomaji: result.title?.contentTitleRomaji || result.contentTitleRomaji,
+          contentTitleEnglish:
+            result.title?.contentTitleEnglish || result.contentTitleEnglish,
+          contentTitleRomaji:
+            result.title?.contentTitleRomaji || result.contentTitleRomaji,
           contentImage: result.coverImage || result.contentImage,
           coverImage: result.coverImage || result.contentImage,
           chapters: result.chapters,
@@ -149,28 +176,32 @@
   /* ── Input Handlers ──────────────────────────────────────────── */
   async function handleCharsChange(e: Event) {
     const val = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
-    await persistField('chars', val);
+    await persistField("chars", val);
   }
 
   async function handleTimeChange(e: Event) {
     const val = Math.max(1, Number((e.target as HTMLInputElement).value) || 1);
-    await persistField('time', isRead ? val * 60 : val);
+    await persistField("time", isRead ? val * 60 : val);
   }
 
   async function handleVolumeChange(e: Event) {
     const val = Math.max(1, Number((e.target as HTMLInputElement).value) || 1);
-    await persistField('volume', val);
+    await persistField("volume", val);
   }
 
   async function handleDateChange(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     try {
       const iso = new Date(val).toISOString();
-      await persistField('date', iso);
+      await persistField("date", iso);
     } catch {}
   }
 
-  async function handleSessionChange(sessionIdx: number, field: string, val: any) {
+  async function handleSessionChange(
+    sessionIdx: number,
+    field: string,
+    val: any,
+  ) {
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     const idx = q.findIndex((x: any) => x.id === item.id);
@@ -180,11 +211,11 @@
     if (!entry.sessions || !entry.sessions[sessionIdx]) return;
 
     const session = entry.sessions[sessionIdx];
-    if (field === 'chars') {
+    if (field === "chars") {
       session.chars = Math.max(0, Number(val) || 0);
-    } else if (field === 'mins') {
+    } else if (field === "mins") {
       session.secs = Math.max(1, Number(val) || 1) * 60;
-    } else if (field === 'date') {
+    } else if (field === "date") {
       try {
         session.date = new Date(val).toISOString();
       } catch {}
@@ -193,7 +224,10 @@
     const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
     if (isRead) {
       entry.time = sumSecs;
-      entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+      entry.chars = entry.sessions.reduce(
+        (a: number, b: any) => a + (b.chars || 0),
+        0,
+      );
     } else {
       entry.time = Math.round(sumSecs / 60);
     }
@@ -208,34 +242,51 @@
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     const current = q.find((x: any) => x.id === item.id);
-    if (!current) { sending = false; return; }
+    if (!current) {
+      sending = false;
+      return;
+    }
 
-    if (type === 'video') {
-      try { await ensureVideoMediaData(current); } catch (_e) {}
+    if (type === "video") {
+      try {
+        await ensureVideoMediaData(current);
+      } catch (_e) {}
     }
 
     const payloads = buildPayloads(current);
-    let success = true, lastError = '', lastErrorCode = 0;
+    let success = true,
+      lastError = "",
+      lastErrorCode = 0;
 
     for (const p of payloads) {
       const res = await submitLog(p);
-      if (res?.success) { /* ok */ }
-      else { success = false; lastError = res?.error || 'Unknown error'; lastErrorCode = res?.status || 0; }
+      if (res?.success) {
+        /* ok */
+      } else {
+        success = false;
+        lastError = res?.error || "Unknown error";
+        lastErrorCode = res?.status || 0;
+      }
     }
 
     if (success) {
       await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
-      onStatusMessage('✓ Sent');
+      onStatusMessage("✓ Sent");
       onRefresh();
     } else {
       sending = false;
-      const errText = lastErrorCode ? `⚠ Failed [${lastErrorCode}]: ${lastError}` : `⚠ Failed: ${lastError}`;
+      const errText = lastErrorCode
+        ? `⚠ Failed [${lastErrorCode}]: ${lastError}`
+        : `⚠ Failed: ${lastError}`;
       onStatusMessage(errText, true);
     }
   }
 
   async function handleDelete() {
-    const ok = await onConfirm('Delete Log', 'Are you sure you want to delete this pending log?');
+    const ok = await onConfirm(
+      "Delete Log",
+      "Are you sure you want to delete this pending log?",
+    );
     if (!ok) return;
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
@@ -244,18 +295,29 @@
   }
 
   async function handleRemoveSession(sessionId: string) {
-    const ok = await onConfirm('Delete Session', 'Are you sure you want to delete this session?');
+    const ok = await onConfirm(
+      "Delete Session",
+      "Are you sure you want to delete this session?",
+    );
     if (!ok) return;
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     const idx = q.findIndex((x: any) => x.id === item.id);
     if (idx === -1) return;
     const entry = q[idx] as any;
-    entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sessionId);
-    const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+    entry.sessions = (entry.sessions ?? []).filter(
+      (s: any) => s.id !== sessionId,
+    );
+    const totalSecs = entry.sessions.reduce(
+      (a: number, b: any) => a + b.secs,
+      0,
+    );
     if (isRead) {
       entry.time = totalSecs;
-      entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+      entry.chars = entry.sessions.reduce(
+        (a: number, b: any) => a + (b.chars || 0),
+        0,
+      );
     } else {
       entry.time = Math.round(totalSecs / 60);
     }
@@ -266,32 +328,62 @@
   /* ── Helpers ─────────────────────────────────────────────────── */
   async function ensureVideoMediaData(item: any) {
     const channelId = item.channelId || item.mediaData?.channelId;
-    const channelTitle = item.mediaData?.channelTitle || item.channelTitle || item.contentTitleNative;
-    if (item.mediaData?.channelImage && item.mediaData?.channelDescription) return;
+    const channelTitle =
+      item.mediaData?.channelTitle ||
+      item.channelTitle ||
+      item.contentTitleNative;
+    if (item.mediaData?.channelImage && item.mediaData?.channelDescription)
+      return;
     if (!channelId && !channelTitle) return;
     const media = await resolveVideoChannelMedia({ channelId, channelTitle });
     item.mediaData = {
       ...(item.mediaData || {}),
-      channelId: media.channelId || channelId || 'web-video',
-      channelTitle: media.channelTitle || channelTitle || item.contentTitleNative,
+      channelId: media.channelId || channelId || "web-video",
+      channelTitle:
+        media.channelTitle || channelTitle || item.contentTitleNative,
       ...(media.channelImage ? { channelImage: media.channelImage } : {}),
-      ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
+      ...(media.channelDescription
+        ? { channelDescription: media.channelDescription }
+        : {}),
     };
   }
 
   function buildPayloads(item: any) {
-    const desc = titleValue || (isRead ? item.mediaData?.contentTitleNative || item.contentTitleNative : item.contentTitleNative);
-    const apiTitle = type === 'video' ? stripVideoTitle(desc) : desc;
-    const base: any = { type, description: apiTitle, episodes: 0, pages: 0, unknownDate: false };
+    const desc =
+      titleValue ||
+      (isRead
+        ? item.mediaData?.contentTitleNative || item.contentTitleNative
+        : item.contentTitleNative);
+    const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
+    const base: any = {
+      type,
+      description: apiTitle,
+      episodes: 0,
+      pages: 0,
+      unknownDate: false,
+    };
     if (isRead) {
-      base.mediaId = item.mediaId || 'web-reading';
+      base.mediaId = item.mediaId || "web-reading";
       base.volume = Math.max(1, Number(item.volume || 1));
-      base.mediaData = item.mediaData || { contentId: "web-reading", contentTitleNative: item.contentTitleNative };
+      base.mediaData = item.mediaData || {
+        contentId: "web-reading",
+        contentTitleNative: item.contentTitleNative,
+      };
     } else {
-      base.mediaId = item.mediaData?.channelId || item.channelId || 'web-video';
-      base.mediaData = item.mediaData || { channelId: item.channelId || "web-video", channelTitle: item.contentTitleNative };
+      base.mediaId = item.mediaData?.channelId || item.channelId || "web-video";
+      base.mediaData = item.mediaData || {
+        channelId: item.channelId || "web-video",
+        channelTitle: item.contentTitleNative,
+      };
     }
-    return [{ ...base, time: displayMins, date: new Date(defaultDateStr).toISOString(), chars: item.chars || 0 }];
+    return [
+      {
+        ...base,
+        time: displayMins,
+        date: new Date(defaultDateStr).toISOString(),
+        chars: item.chars || 0,
+      },
+    ];
   }
 </script>
 
@@ -319,7 +411,10 @@
         aria-label="Item title"
       />
       {#if isRead}
-        <SearchDropdown bind:this={searchDropdown} onSelect={handleSearchSelect} />
+        <SearchDropdown
+          bind:this={searchDropdown}
+          onSelect={handleSearchSelect}
+        />
       {/if}
     </div>
     {#if isLinked}
@@ -329,14 +424,16 @@
           class="qi-link-status"
           title="Unlink AniList"
           onclick={handleUnlink}
-          onmouseenter={() => isUnlinkHovered = true}
-          onmouseleave={() => isUnlinkHovered = false}
-          style={isUnlinkHovered ? 'color: var(--red)' : 'color: var(--green)'}
+          onmouseenter={() => (isUnlinkHovered = true)}
+          onmouseleave={() => (isUnlinkHovered = false)}
+          style={isUnlinkHovered ? "color: var(--red)" : "color: var(--green)"}
         >
-          {isUnlinkHovered ? '✗' : '✓'}
+          {isUnlinkHovered ? "✗" : "✓"}
         </button>
       {:else}
-        <span class="qi-link-status" title="Matched" style="cursor:default">✓</span>
+        <span class="qi-link-status" title="Matched" style="cursor:default"
+          >✓</span
+        >
       {/if}
     {/if}
     <button class="qi-del" title="Remove" onclick={handleDelete}>×</button>
@@ -379,7 +476,9 @@
     {/if}
     <span class="qi-meta-sep">·</span>
     <div class="qi-mid">
-      <span class="qi-channel" title="{channelName} {urlDisplay}">{channelName} {urlDisplay}</span>
+      <span class="qi-channel" title="{channelName} {urlDisplay}"
+        >{channelName} {urlDisplay}</span
+      >
     </div>
     <div style="flex-basis: 100%; height: 0;"></div>
     <input
@@ -390,12 +489,17 @@
       onchange={handleDateChange}
       aria-label="Log date"
     />
-    <button class="qi-send" onclick={handleSend} disabled={sending} style="margin-left:auto;">Send</button>
+    <button
+      class="qi-send"
+      onclick={handleSend}
+      disabled={sending}
+      style="margin-left:auto;">Send</button
+    >
   </div>
 
   <!-- Sessions -->
   <QueueItemSessions
-    sessions={sessions}
+    {sessions}
     itemId={item.id}
     isReading={isRead}
     onRemoveSession={handleRemoveSession}

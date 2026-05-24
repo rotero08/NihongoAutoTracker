@@ -153,8 +153,8 @@ body {
 }
 .ghost-num::-webkit-outer-spin-button,
 .ghost-num::-webkit-inner-spin-button { -webkit-appearance: none; }
-.ghost-num:hover { background: rgba(240,180,41,.09); }
-.ghost-num:focus { background: rgba(240,180,41,.14); outline: none; }
+.ghost-num:hover { background: color-mix(in srgb, var(--color-accent) 9%, transparent); }
+.ghost-num:focus { background: color-mix(in srgb, var(--color-accent) 14%, transparent); outline: none; }
 
 .ghost-num.num-chars { width: 40px; color: var(--color-accent); }
 .ghost-num.num-vol { width: 24px; color: var(--color-accent); }
@@ -190,11 +190,16 @@ body {
 /* Send button */
 .qi-send {
   flex-shrink: 0; font-family: var(--font-mono); font-size: 10px; font-weight: bold;
-  padding: 3px 8px; background: rgba(240,180,41,.1); color: var(--color-accent);
-  border: 1px solid rgba(240,180,41,.22); border-radius: 3px; cursor: pointer;
+  padding: 3px 8px; 
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent); 
+  color: var(--color-accent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent); 
+  border-radius: 3px; cursor: pointer;
   transition: background .15s; white-space: nowrap;
 }
-.qi-send:hover:not(:disabled) { background: rgba(240,180,41,.22); }
+.qi-send:hover:not(:disabled) { 
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent); 
+}
 .qi-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Sessions ── */
@@ -204,7 +209,7 @@ body {
 .session-list { display: flex; flex-direction: column; gap: 3px; }
 .qi-session { display: flex; align-items: center; font-size: 10px; color: var(--color-text-dimmed); gap: 0; }
 .session-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--color-border-hover); flex-shrink: 0; margin-right: 6px; }
-.session-label { font-family: var(--font-mono); font-size: 9px; color: rgba(240,180,41,0.6); font-weight: bold; flex-shrink: 0; margin-right: 5px; }
+.session-label { font-family: var(--font-mono); font-size: 9px; color: color-mix(in srgb, var(--color-accent) 60%, transparent); font-weight: bold; flex-shrink: 0; margin-right: 5px; }
 .session-date { margin-left: auto; flex-shrink: 0; width: 155px; text-align: right; }
 
 /* ── Footer ── */

@@ -54,57 +54,118 @@
       if (!confirm("Are you sure you want to send all pending logs?")) return;
     }
 
-    // Rely on individual items to build and send payloads, or call each sendItem
-    // We can delegate to sending all reading & video logs directly
+    const { submitLog } = await import("@/lib/api/nihongotracker");
+    const { stripVideoTitle } = await import("@/lib/utils/text-parsing");
+
+    function getItemPayloads(item: any, type: "reading" | "video") {
+      const isRead = type === "reading";
+      const sessions = item.sessions ?? [];
+      const displayMins = isRead
+        ? Math.max(1, Math.round((item.time || 0) / 60))
+        : item.time || 0;
+      const sumSecs = sessions.reduce(
+        (a: number, b: any) => a + (b.secs || 0),
+        0,
+      );
+      const sumMins = Math.max(1, Math.round(sumSecs / 60));
+      const sumChars = isRead
+        ? sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+        : 0;
+
+      const hasOverride = isRead
+        ? Number(item.chars || 0) > sumChars || displayMins > sumMins
+        : displayMins > Math.round(sumSecs / 60);
+
+      const defaultDateStr =
+        sessions.length > 0
+          ? sessions[0].date
+          : item.date || new Date().toISOString();
+      const desc =
+        item.description || item.contentTitleNative || "Unknown Title";
+
+      if (sessions.length > 1 && !hasOverride) {
+        return sessions.map((sess: any) => {
+          const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
+          const payload: any = {
+            type,
+            description: type === "video" ? stripVideoTitle(desc) : desc,
+            time: sessMins,
+            date: new Date(sess.date).toISOString(),
+            chars: isRead ? sess.chars || 0 : 0,
+            episodes: 0,
+            pages: 0,
+            unknownDate: false,
+            mediaId: isRead
+              ? item.mediaId || "web-reading"
+              : item.mediaData?.channelId || item.channelId || "web-video",
+            mediaData: item.mediaData || {},
+          };
+          if (isRead) {
+            payload.volume = Math.max(1, Number(item.volume || 1));
+          }
+          return payload;
+        });
+      } else {
+        const payload: any = {
+          type,
+          description: type === "video" ? stripVideoTitle(desc) : desc,
+          time: displayMins,
+          date: new Date(defaultDateStr).toISOString(),
+          chars: isRead ? item.chars || 0 : 0,
+          episodes: 0,
+          pages: 0,
+          unknownDate: false,
+          mediaId: isRead
+            ? item.mediaId || "web-reading"
+            : item.mediaData?.channelId || item.channelId || "web-video",
+          mediaData: item.mediaData || {},
+        };
+        if (isRead) {
+          payload.volume = Math.max(1, Number(item.volume || 1));
+        }
+        return [payload];
+      }
+    }
+
     const rItems = [...readingQueue];
     const vItems = [...videoQueue];
 
-    // Simple bulk send
+    let successCount = 0;
+    let failed = false;
+
     for (const item of rItems) {
-      // Logic from legacy send
-      const isRead = true;
-      const desc = item.description || item.contentTitleNative;
-      const mins = Math.max(1, Math.round((item.time || 0) / 60));
-      const payload = {
-        type: "reading",
-        description: desc,
-        time: mins,
-        date: item.date || new Date().toISOString(),
-        chars: item.chars || 0,
-        episodes: 0,
-        pages: 0,
-        unknownDate: false,
-        mediaId: item.mediaId || "web-reading",
-        mediaData: item.mediaData || {},
-        volume: Math.max(1, Number(item.volume || 1)),
-      };
-      // Submit
-      const { submitLog } = await import("@/lib/api/nihongotracker");
-      await submitLog(payload);
+      try {
+        const payloads = getItemPayloads(item, "reading");
+        for (const p of payloads) {
+          const res = await submitLog(p);
+          if (!res?.success) failed = true;
+        }
+        successCount++;
+      } catch {
+        failed = true;
+      }
     }
 
     for (const item of vItems) {
-      const desc = item.description || item.contentTitleNative;
-      const mins = item.time || 0;
-      const payload = {
-        type: "video",
-        description: desc,
-        time: mins,
-        date: item.date || new Date().toISOString(),
-        chars: 0,
-        episodes: 0,
-        pages: 0,
-        unknownDate: false,
-        mediaId: item.channelId || item.mediaData?.channelId || "web-video",
-        mediaData: item.mediaData || {},
-      };
-      const { submitLog } = await import("@/lib/api/nihongotracker");
-      await submitLog(payload);
+      try {
+        const payloads = getItemPayloads(item, "video");
+        for (const p of payloads) {
+          const res = await submitLog(p);
+          if (!res?.success) failed = true;
+        }
+        successCount++;
+      } catch {
+        failed = true;
+      }
     }
 
     await videoQueueStorage.setValue([]);
     await readingQueueStorage.setValue([]);
-    onStatus("✓ Sent all logs");
+    if (failed) {
+      onStatus("⚠ Some logs failed, but queue was cleared", true);
+    } else {
+      onStatus("✓ Sent all logs");
+    }
     await load();
   }
 

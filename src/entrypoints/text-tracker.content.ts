@@ -26,6 +26,72 @@ let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
 
+function getActiveThemeName(cfg: any): string {
+  const host = window.location.hostname;
+  if (host.includes('reader.ttsu.app') || host.includes('ttsu.app')) {
+    const override = cfg.ttuThemeOverride ?? 'global';
+    if (override !== 'global') return override;
+  } else if (host.includes('app.yatsu.moe')) {
+    const override = cfg.yatsuThemeOverride ?? 'global';
+    if (override !== 'global') return override;
+  } else if (host.includes('manga.manabe.es')) {
+    const override = cfg.manabeThemeOverride ?? 'global';
+    if (override !== 'global') return override;
+  }
+  return cfg.theme ?? 'nihongo';
+}
+
+function getCustomColorsForSite(cfg: any): any {
+  const host = window.location.hostname;
+  if (host.includes('reader.ttsu.app') || host.includes('ttsu.app')) {
+    if (cfg.ttuThemeOverride === 'custom') return cfg.ttuCustomColors;
+  } else if (host.includes('app.yatsu.moe')) {
+    if (cfg.yatsuThemeOverride === 'custom') return cfg.yatsuCustomColors;
+  } else if (host.includes('manga.manabe.es')) {
+    if (cfg.manabeThemeOverride === 'custom') return cfg.manabeCustomColors;
+  }
+  return cfg.customColors;
+}
+
+function applyCustomThemeToDoc(customColors: any) {
+  if (!customColors) return;
+  const root = document.documentElement;
+  const mapping: Record<string, string> = {
+    "--color-background": customColors.background,
+    "--color-surface": customColors.surface,
+    "--color-surface-alt": customColors.surfaceAlt || customColors.surface,
+    "--color-border": customColors.border,
+    "--color-border-hover": customColors.borderHover || customColors.border,
+    "--color-text": customColors.text,
+    "--color-text-muted": customColors.textMuted,
+    "--color-text-dimmed": customColors.textMuted,
+    "--color-accent": customColors.accent,
+    "--color-accent-hover": customColors.accentHover || customColors.accent,
+  };
+  for (const [prop, val] of Object.entries(mapping)) {
+    if (val) root.style.setProperty(prop, val, 'important');
+  }
+}
+
+function clearCustomThemeFromDoc() {
+  const root = document.documentElement;
+  const props = [
+    "--color-background",
+    "--color-surface",
+    "--color-surface-alt",
+    "--color-border",
+    "--color-border-hover",
+    "--color-text",
+    "--color-text-muted",
+    "--color-text-dimmed",
+    "--color-accent",
+    "--color-accent-hover"
+  ];
+  for (const prop of props) {
+    root.style.removeProperty(prop);
+  }
+}
+
 function getReaderConfig(cfg: any) {
   const host = window.location.hostname;
   const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
@@ -916,7 +982,14 @@ browser.storage.onChanged.addListener((changes, area) => {
     const newCfg: any = changes['config'].newValue || {};
     currentConfig = newCfg;
 
-    injectThemeStyles(newCfg.theme ?? 'nihongo', newCfg.font ?? 'mono');
+    const themeName = getActiveThemeName(newCfg);
+    if (themeName === 'custom') {
+      const colors = getCustomColorsForSite(newCfg);
+      applyCustomThemeToDoc(colors);
+    } else {
+      clearCustomThemeFromDoc();
+    }
+    injectThemeStyles(themeName, newCfg.font ?? 'mono');
 
     if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       const oldReaderCfg = getReaderConfig(changes['config'].oldValue || {});
@@ -1038,7 +1111,14 @@ export default defineContentScript({
     const host = window.location.hostname;
     const cfg = currentConfig;
 
-    injectThemeStyles(cfg.theme ?? 'nihongo', cfg.font ?? 'mono');
+    const themeName = getActiveThemeName(cfg);
+    if (themeName === 'custom') {
+      const colors = getCustomColorsForSite(cfg);
+      applyCustomThemeToDoc(colors);
+    } else {
+      clearCustomThemeFromDoc();
+    }
+    injectThemeStyles(themeName, cfg.font ?? 'mono');
 
     if (TTU_HOSTS.some(h => host.includes(h))) {
       const readerCfg = getReaderConfig(cfg);

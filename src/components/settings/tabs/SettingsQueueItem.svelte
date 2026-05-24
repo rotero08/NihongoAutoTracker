@@ -6,32 +6,40 @@
   full persistence to browser storage.
 -->
 <script lang="ts">
-  import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';
-  import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
-  import { searchAniList, type AniListSearchResult } from '@/lib/api/anilist';
-  import { stripVideoTitle, parseTitleForUI, escapeHtml } from '@/lib/utils/text-parsing';
-  import { toLocalDT } from '@/lib/utils/time';
-  import SearchDropdown from '@/components/popup/SearchDropdown.svelte';
+  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import {
+    resolveVideoChannelMedia,
+    submitLog,
+  } from "@/lib/api/nihongotracker";
+  import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
+  import {
+    stripVideoTitle,
+    parseTitleForUI,
+    escapeHtml,
+  } from "@/lib/utils/text-parsing";
+  import { toLocalDT } from "@/lib/utils/time";
+  import SearchDropdown from "@/components/popup/SearchDropdown.svelte";
 
   interface Props {
     item: any;
-    type: 'video' | 'reading';
+    type: "video" | "reading";
     onStatus: (msg: string, err?: boolean) => void;
     onRefresh: () => void;
   }
 
   let { item, type, onStatus, onRefresh }: Props = $props();
 
-  const isRead = $derived(type === 'reading');
+  const isRead = $derived(type === "reading");
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
 
   /* ── State for Title & Inline Volume Input ────────────────────── */
-  let titleValue = $state('');
+  let titleValue = $state("");
   $effect(() => {
-    const rawTitle = item.description || item.contentTitleNative || 'Unknown Title';
-    titleValue = type === 'video' ? stripVideoTitle(rawTitle) : rawTitle;
+    const rawTitle =
+      item.description || item.contentTitleNative || "Unknown Title";
+    titleValue = type === "video" ? stripVideoTitle(rawTitle) : rawTitle;
   });
 
   let volumeVal = $derived(Math.max(1, Number(item.volume || 1)));
@@ -40,39 +48,44 @@
 
   /* ── Derived display values ──────────────────────────────────── */
   const displayMins = $derived(
-    isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : (item.time || 0)
+    isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
   );
 
   const sessions = $derived(item.sessions ?? []);
   const defaultDateStr = $derived(
-    sessions.length > 0 ? sessions[0].date : (item.date || new Date().toISOString())
+    sessions.length > 0
+      ? sessions[0].date
+      : item.date || new Date().toISOString(),
   );
 
   let isLinked = $derived(
     isRead
-      ? !!(item.mediaId && item.mediaId !== 'web-reading')
-      : true /* All YouTube videos tracked show as matched */
+      ? !!(item.mediaId && item.mediaId !== "web-reading")
+      : true /* All YouTube videos tracked show as matched */,
   );
 
   let channelName = $derived(
     isRead
-      ? `${item.readerName || 'Reader'} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ''}`
-      : (item.channelTitle || item.contentTitleNative || 'YouTube')
+      ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
+      : item.channelTitle || item.contentTitleNative || "YouTube",
   );
 
   let urlDisplay = $derived(
-    isRead ? '' : `\u2022 ${item.contentTitleEnglish || item.channelId || ''}`
+    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || ""}`,
   );
 
   /* Collapsible sessions open/closed state tracking */
   let isSessionsOpen = $state(true);
   $effect(() => {
-    isSessionsOpen = localStorage.getItem(`nt-sess-closed-${item.id}`) !== '1';
+    isSessionsOpen = localStorage.getItem(`nt-sess-closed-${item.id}`) !== "1";
   });
 
   function toggleSessionsOpen() {
     isSessionsOpen = !isSessionsOpen;
-    localStorage.setItem(`nt-sess-closed-${item.id}`, isSessionsOpen ? '0' : '1');
+    localStorage.setItem(
+      `nt-sess-closed-${item.id}`,
+      isSessionsOpen ? "0" : "1",
+    );
   }
 
   /* ── Persistence helper ──────────────────────────────────────── */
@@ -85,7 +98,10 @@
       // Deep clone to strip Svelte Proxy objects/getters
       const plainObj = JSON.parse(JSON.stringify(q[idx]));
       // Explicitly delete mediaData if we unlinked (set to undefined)
-      if ('mediaData' in updatedFields && updatedFields.mediaData === undefined) {
+      if (
+        "mediaData" in updatedFields &&
+        updatedFields.mediaData === undefined
+      ) {
         delete plainObj.mediaData;
       }
       q[idx] = plainObj;
@@ -103,8 +119,8 @@
     titleValue = val;
 
     if (isRead) {
-      if (item.mediaId && item.mediaId !== 'web-reading') {
-        saveItem({ mediaId: 'web-reading', mediaData: undefined });
+      if (item.mediaId && item.mediaId !== "web-reading") {
+        saveItem({ mediaId: "web-reading", mediaData: undefined });
       }
       clearTimeout(debounceTimer);
       if (val.trim().length < 2) {
@@ -135,7 +151,10 @@
   }
 
   async function handleSearchSelect(result: AniListSearchResult) {
-    const native = result.title?.contentTitleNative || result.contentTitleNative || 'Unknown';
+    const native =
+      result.title?.contentTitleNative ||
+      result.contentTitleNative ||
+      "Unknown";
     titleValue = native;
 
     const { volume: parsedVolume } = parseTitleForUI(native);
@@ -147,8 +166,10 @@
       mediaData: {
         contentId: result.contentId,
         contentTitleNative: native,
-        contentTitleEnglish: result.title?.contentTitleEnglish || result.contentTitleEnglish,
-        contentTitleRomaji: result.title?.contentTitleRomaji || result.contentTitleRomaji,
+        contentTitleEnglish:
+          result.title?.contentTitleEnglish || result.contentTitleEnglish,
+        contentTitleRomaji:
+          result.title?.contentTitleRomaji || result.contentTitleRomaji,
         contentImage: result.coverImage || result.contentImage,
         coverImage: result.coverImage || result.contentImage,
         chapters: result.chapters,
@@ -162,7 +183,7 @@
   async function handleUnlink(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    await saveItem({ mediaId: 'web-reading', mediaData: undefined });
+    await saveItem({ mediaId: "web-reading", mediaData: undefined });
   }
 
   /* Volume editing */
@@ -178,34 +199,60 @@
   }
 
   function handleVolumeKey(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       commitVolume();
-    } else if (e.key === 'Escape') {
+    } else if (e.key === "Escape") {
       isEditingVol = false;
     }
   }
 
   /* Characters spin navigation */
   async function handleCharsChange(e: Event) {
-    const val = Math.max(0, Number((e.target as HTMLInputElement).value) || 0);
+    const inputVal = Math.max(
+      0,
+      Number((e.target as HTMLInputElement).value) || 0,
+    );
+    const sumChars = sessions.reduce(
+      (a: number, b: any) => a + (b.chars || 0),
+      0,
+    );
+    const val = Math.max(sumChars, inputVal);
     await saveItem({ chars: val });
   }
 
   async function adjustChars(amt: number) {
     const current = Number(item.chars || 0);
-    const nextVal = Math.max(0, current + amt);
+    const sumChars = sessions.reduce(
+      (a: number, b: any) => a + (b.chars || 0),
+      0,
+    );
+    const nextVal = Math.max(sumChars, current + amt);
     await saveItem({ chars: nextVal });
   }
 
   /* Minutes spin navigation */
   async function handleMinsChange(e: Event) {
-    const val = Math.max(1, Number((e.target as HTMLInputElement).value) || 1);
+    const inputVal = Math.max(
+      1,
+      Number((e.target as HTMLInputElement).value) || 1,
+    );
+    const sumSecs = sessions.reduce(
+      (a: number, b: any) => a + (b.secs || 0),
+      0,
+    );
+    const sumMins = Math.max(1, Math.round(sumSecs / 60));
+    const val = Math.max(sumMins, inputVal);
     await saveItem({ time: isRead ? val * 60 : val });
   }
 
   async function adjustMins(amt: number) {
     const current = displayMins;
-    const nextVal = Math.max(1, current + amt);
+    const sumSecs = sessions.reduce(
+      (a: number, b: any) => a + (b.secs || 0),
+      0,
+    );
+    const sumMins = Math.max(1, Math.round(sumSecs / 60));
+    const nextVal = Math.max(sumMins, current + amt);
     await saveItem({ time: isRead ? nextVal * 60 : nextVal });
   }
 
@@ -219,16 +266,20 @@
   }
 
   /* Session editing */
-  async function handleSessionChange(sessionIdx: number, field: string, val: any) {
+  async function handleSessionChange(
+    sessionIdx: number,
+    field: string,
+    val: any,
+  ) {
     const entry = JSON.parse(JSON.stringify(item));
     if (!entry.sessions || !entry.sessions[sessionIdx]) return;
 
     const session = entry.sessions[sessionIdx];
-    if (field === 'chars') {
+    if (field === "chars") {
       session.chars = Math.max(0, Number(val) || 0);
-    } else if (field === 'mins') {
+    } else if (field === "mins") {
       session.secs = Math.max(1, Number(val) || 1) * 60;
-    } else if (field === 'date') {
+    } else if (field === "date") {
       try {
         session.date = new Date(val).toISOString();
       } catch {}
@@ -240,7 +291,10 @@
     let finalChars = entry.chars;
     if (isRead) {
       finalTime = sumSecs;
-      finalChars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+      finalChars = entry.sessions.reduce(
+        (a: number, b: any) => a + (b.chars || 0),
+        0,
+      );
     } else {
       finalTime = Math.round(sumSecs / 60);
     }
@@ -248,21 +302,29 @@
     await saveItem({
       sessions: entry.sessions,
       time: finalTime,
-      chars: finalChars
+      chars: finalChars,
     });
   }
 
   async function handleRemoveSession(sessionId: string) {
-    if (!confirm('Delete this session?')) return;
+    if (!confirm("Delete this session?")) return;
     const entry = JSON.parse(JSON.stringify(item));
-    entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sessionId);
+    entry.sessions = (entry.sessions ?? []).filter(
+      (s: any) => s.id !== sessionId,
+    );
 
-    const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+    const totalSecs = entry.sessions.reduce(
+      (a: number, b: any) => a + b.secs,
+      0,
+    );
     let finalTime = entry.time;
     let finalChars = entry.chars;
     if (isRead) {
       finalTime = totalSecs;
-      finalChars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+      finalChars = entry.sessions.reduce(
+        (a: number, b: any) => a + (b.chars || 0),
+        0,
+      );
     } else {
       finalTime = Math.round(totalSecs / 60);
     }
@@ -270,8 +332,73 @@
     await saveItem({
       sessions: entry.sessions,
       time: finalTime,
-      chars: finalChars
+      chars: finalChars,
     });
+  }
+
+  function getItemPayloads(current: any, type: "reading" | "video") {
+    const isRead = type === "reading";
+    const s = current.sessions ?? [];
+    const displayM = isRead
+      ? Math.max(1, Math.round((current.time || 0) / 60))
+      : current.time || 0;
+    const sumSecs = s.reduce((a: number, b: any) => a + (b.secs || 0), 0);
+    const sumMins = Math.max(1, Math.round(sumSecs / 60));
+    const sumChars = isRead
+      ? s.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+      : 0;
+
+    const hasOverride = isRead
+      ? Number(current.chars || 0) > sumChars || displayM > sumMins
+      : displayM > Math.round(sumSecs / 60);
+
+    const defaultDateStr =
+      s.length > 0 ? s[0].date : current.date || new Date().toISOString();
+    const desc =
+      current.description || current.contentTitleNative || "Unknown Title";
+
+    if (s.length > 1 && !hasOverride) {
+      return s.map((sess: any) => {
+        const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
+        const payload: any = {
+          type,
+          description: type === "video" ? stripVideoTitle(desc) : desc,
+          time: sessMins,
+          date: new Date(sess.date).toISOString(),
+          chars: isRead ? sess.chars || 0 : 0,
+          episodes: 0,
+          pages: 0,
+          unknownDate: false,
+          mediaId: isRead
+            ? current.mediaId || "web-reading"
+            : current.mediaData?.channelId || current.channelId || "web-video",
+          mediaData: current.mediaData || {},
+        };
+        if (isRead) {
+          payload.volume = Math.max(1, Number(current.volume || 1));
+        }
+        return payload;
+      });
+    } else {
+      const payload: any = {
+        type,
+        description: type === "video" ? stripVideoTitle(desc) : desc,
+        time: displayM,
+        date: new Date(defaultDateStr).toISOString(),
+        chars: isRead ? current.chars || 0 : 0,
+        episodes: 0,
+        pages: 0,
+        unknownDate: false,
+        mediaId: isRead
+          ? current.mediaId || "web-reading"
+          : current.mediaData?.channelId || current.channelId || "web-video",
+        mediaData: current.mediaData || {},
+      };
+      if (isRead) {
+        payload.volume = Math.max(1, Number(current.volume || 1));
+      }
+      return [payload];
+    }
   }
 
   /* ── Log Send / Delete Actions ──────────────────────────────── */
@@ -285,49 +412,47 @@
       return;
     }
 
-    if (type === 'video') {
+    if (type === "video") {
       try {
         const cId = current.channelId || current.mediaData?.channelId;
-        const cTitle = current.mediaData?.channelTitle || current.channelTitle || current.contentTitleNative;
+        const cTitle =
+          current.mediaData?.channelTitle ||
+          current.channelTitle ||
+          current.contentTitleNative;
         if (cId || cTitle) {
-          const media = await resolveVideoChannelMedia({ channelId: cId, channelTitle: cTitle });
+          const media = await resolveVideoChannelMedia({
+            channelId: cId,
+            channelTitle: cTitle,
+          });
           current.mediaData = { ...current.mediaData, ...media };
         }
       } catch {}
     }
 
-    const payload: any = {
-      type,
-      description: type === 'video' ? stripVideoTitle(titleValue) : titleValue,
-      time: displayMins,
-      date: new Date(defaultDateStr).toISOString(),
-      chars: isRead ? (current.chars || 0) : 0,
-      episodes: 0,
-      pages: 0,
-      unknownDate: false,
-      mediaId: isRead
-        ? (current.mediaId || 'web-reading')
-        : (current.mediaData?.channelId || current.channelId || 'web-video'),
-      mediaData: current.mediaData || {},
-    };
-    if (isRead) {
-      payload.volume = volumeVal;
-    }
-
-    const result = await submitLog(payload);
-    if (result?.success) {
-      onStatus('✓ Log sent');
+    try {
+      const payloads = getItemPayloads(current, type);
+      for (const payload of payloads) {
+        const result = await submitLog(payload);
+        if (!result?.success) {
+          const errText = result?.status
+            ? `⚠ Failed [${result.status}]: ${result.error}`
+            : `⚠ Failed: ${result?.error}`;
+          onStatus(errText, true);
+          sending = false;
+          return;
+        }
+      }
+      onStatus("✓ Log sent");
       await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
       onRefresh();
-    } else {
+    } catch (e: any) {
+      onStatus(`⚠ Error: ${e.message || e}`, true);
       sending = false;
-      const errText = result?.status ? `⚠ Failed [${result.status}]: ${result.error}` : `⚠ Failed: ${result?.error}`;
-      onStatus(errText, true);
     }
   }
 
   async function handleRemove() {
-    if (!confirm('Delete this log?')) return;
+    if (!confirm("Delete this log?")) return;
     const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
@@ -350,7 +475,7 @@
         class:searchable={isRead}
         type="text"
         value={titleValue}
-        placeholder={isRead ? 'Search AniList...' : 'Video Title'}
+        placeholder={isRead ? "Search AniList..." : "Video Title"}
         oninput={handleTitleInput}
         onchange={handleTitleChange}
         onblur={handleBlur}
@@ -364,23 +489,29 @@
             class="qi-link-status"
             title="Unlink AniList"
             onclick={handleUnlink}
-            onmouseenter={() => isUnlinkHovered = true}
-            onmouseleave={() => isUnlinkHovered = false}
-            style={isUnlinkHovered ? 'color: var(--red)' : 'color: var(--green)'}
+            onmouseenter={() => (isUnlinkHovered = true)}
+            onmouseleave={() => (isUnlinkHovered = false)}
+            style={isUnlinkHovered
+              ? "color: var(--red)"
+              : "color: var(--green)"}
           >
-            {isUnlinkHovered ? '✗' : '✓'}
+            {isUnlinkHovered ? "✗" : "✓"}
           </button>
         {:else}
           <span
             class="qi-link-status video-matched"
             title="Matched"
             style="cursor:default; color:var(--green); position:absolute; right:8px; top:50%; transform:translateY(-50%)"
-          >✓</span>
+            >✓</span
+          >
         {/if}
       {/if}
 
       {#if isRead}
-        <SearchDropdown bind:this={searchDropdown} onSelect={handleSearchSelect} />
+        <SearchDropdown
+          bind:this={searchDropdown}
+          onSelect={handleSearchSelect}
+        />
       {/if}
     </div>
 
@@ -399,7 +530,12 @@
             aria-label="Volume number"
           />
         {:else}
-          <button type="button" class="qi-vol-pill" title="Volume" onclick={startEditVolume}>
+          <button
+            type="button"
+            class="qi-vol-pill"
+            title="Volume"
+            onclick={startEditVolume}
+          >
             Vol {volumeVal}
           </button>
         {/if}
@@ -414,13 +550,29 @@
             onchange={handleCharsChange}
             aria-label="Character count"
           />
-          <span style="font-size:10px; color:var(--muted); padding-right:2px;">chars</span>
+          <span style="font-size:10px; color:var(--muted); padding-right:2px;"
+            >chars</span
+          >
           <div class="qi-spin-nav">
-            <button type="button" class="chars-up" onclick={() => adjustChars(100)} aria-label="Increment characters">
-              <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5"/></svg>
+            <button
+              type="button"
+              class="chars-up"
+              onclick={() => adjustChars(100)}
+              aria-label="Increment characters"
+            >
+              <svg viewBox="0 0 10 6" aria-hidden="true"
+                ><polyline points="1,5 5,1 9,5" /></svg
+              >
             </button>
-            <button type="button" class="chars-dn" onclick={() => adjustChars(-100)} aria-label="Decrement characters">
-              <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1"/></svg>
+            <button
+              type="button"
+              class="chars-dn"
+              onclick={() => adjustChars(-100)}
+              aria-label="Decrement characters"
+            >
+              <svg viewBox="0 0 10 6" aria-hidden="true"
+                ><polyline points="1,1 5,5 9,1" /></svg
+              >
             </button>
           </div>
         </div>
@@ -436,13 +588,29 @@
           onchange={handleMinsChange}
           aria-label="Minutes duration"
         />
-        <span style="font-size:10px; color:var(--muted); padding-right:2px;">min</span>
+        <span style="font-size:10px; color:var(--muted); padding-right:2px;"
+          >min</span
+        >
         <div class="qi-spin-nav">
-          <button type="button" class="mins-up" onclick={() => adjustMins(1)} aria-label="Increment minutes">
-            <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5"/></svg>
+          <button
+            type="button"
+            class="mins-up"
+            onclick={() => adjustMins(1)}
+            aria-label="Increment minutes"
+          >
+            <svg viewBox="0 0 10 6" aria-hidden="true"
+              ><polyline points="1,5 5,1 9,5" /></svg
+            >
           </button>
-          <button type="button" class="mins-dn" onclick={() => adjustMins(-1)} aria-label="Decrement minutes">
-            <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1"/></svg>
+          <button
+            type="button"
+            class="mins-dn"
+            onclick={() => adjustMins(-1)}
+            aria-label="Decrement minutes"
+          >
+            <svg viewBox="0 0 10 6" aria-hidden="true"
+              ><polyline points="1,1 5,5 9,1" /></svg
+            >
           </button>
         </div>
       </div>
@@ -451,8 +619,12 @@
 
   <!-- Mid row (channel/reader metadata name & date input) -->
   <div class="qi-row mid-row">
-    <span class="qi-meta" title={channelName + (urlDisplay ? ' ' + urlDisplay : '')}>
-      {channelName} {urlDisplay}
+    <span
+      class="qi-meta"
+      title={channelName + (urlDisplay ? " " + urlDisplay : "")}
+    >
+      {channelName}
+      {urlDisplay}
     </span>
     <input
       type="datetime-local"
@@ -467,8 +639,12 @@
   {#if sessions.length > 1}
     <div class="qi-sessions">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <summary class="session-summary" onclick={toggleSessionsOpen} style="list-style: none;">
-        {isSessionsOpen ? '▾' : '▸'} Sessions ({sessions.length})
+      <summary
+        class="session-summary"
+        onclick={toggleSessionsOpen}
+        style="list-style: none;"
+      >
+        {isSessionsOpen ? "▾" : "▸"} Sessions ({sessions.length})
       </summary>
 
       {#if isSessionsOpen}
@@ -482,7 +658,12 @@
                   class="qi-session-chars"
                   type="number"
                   value={session.chars || 0}
-                  onchange={(e) => handleSessionChange(i, 'chars', (e.target as HTMLInputElement).value)}
+                  onchange={(e) =>
+                    handleSessionChange(
+                      i,
+                      "chars",
+                      (e.target as HTMLInputElement).value,
+                    )}
                   aria-label={`Session ${i + 1} characters`}
                 />
                 <span style="font-size:10px; color:var(--muted);">chars</span>
@@ -493,7 +674,12 @@
                 type="number"
                 value={Math.max(1, Math.round(session.secs / 60))}
                 min="1"
-                onchange={(e) => handleSessionChange(i, 'mins', (e.target as HTMLInputElement).value)}
+                onchange={(e) =>
+                  handleSessionChange(
+                    i,
+                    "mins",
+                    (e.target as HTMLInputElement).value,
+                  )}
                 aria-label={`Session ${i + 1} minutes`}
               />
               <span style="font-size:10px; color:var(--muted);">min</span>
@@ -502,15 +688,20 @@
                 type="datetime-local"
                 class="qi-session-date-input"
                 value={toLocalDT(session.date)}
-                onchange={(e) => handleSessionChange(i, 'date', (e.target as HTMLInputElement).value)}
+                onchange={(e) =>
+                  handleSessionChange(
+                    i,
+                    "date",
+                    (e.target as HTMLInputElement).value,
+                  )}
                 aria-label={`Session ${i + 1} date`}
               />
 
               <button
                 class="qi-session-remove"
                 title="Remove session"
-                onclick={() => handleRemoveSession(session.id)}
-              >×</button>
+                onclick={() => handleRemoveSession(session.id)}>×</button
+              >
             </div>
           {/each}
         </div>
@@ -520,8 +711,14 @@
 
   <!-- Bottom row (Send / Remove buttons) -->
   <div class="qi-row bot-row">
-    <button class="btn btn-amber btn-sm" onclick={handleSend} disabled={sending}>Send</button>
-    <button class="btn btn-ghost btn-sm" onclick={handleRemove} disabled={sending}>Remove</button>
+    <button class="btn btn-amber btn-sm" onclick={handleSend} disabled={sending}
+      >Send</button
+    >
+    <button
+      class="btn btn-ghost btn-sm"
+      onclick={handleRemove}
+      disabled={sending}>Remove</button
+    >
   </div>
 </div>
 
@@ -542,6 +739,6 @@
   }
   .qi-session-remove:hover {
     color: var(--red) !important;
-    background: rgba(240,112,106,.08) !important;
+    background: rgba(240, 112, 106, 0.08) !important;
   }
 </style>
