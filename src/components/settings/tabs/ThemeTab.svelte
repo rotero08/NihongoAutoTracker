@@ -70,6 +70,7 @@
 
     const readerThemeOptions = [
         { value: "global", label: "Use Global Theme" },
+        { value: "match-reader", label: "Match Reader Theme" },
         ...THEMES_WITH_CUSTOM,
     ];
 
@@ -1048,7 +1049,7 @@
                                     >
                                         <span
                                             >• <span
-                                                style="color: color-mix(in srgb, {globalColorsDraft.accent} 60%, transparent); font-weight: bold;"
+                                                style="color: color-mix(in srgb, {globalColorsDraft} 60%, transparent); font-weight: bold;"
                                                 >S3</span
                                             >
                                             <strong
@@ -1431,6 +1432,7 @@
                                 style="font-size: 9px; color: var(--color-accent); font-family: var(--font-mono); font-weight: normal;"
                                 >● UNSAVED</span
                             >
+                            );
                         {/if}
                     </div>
 

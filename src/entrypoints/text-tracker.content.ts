@@ -53,6 +53,180 @@ function getCustomColorsForSite(cfg: any): any {
   return cfg.customColors;
 }
 
+/**
+ * Parses any color format (hex or rgb/rgba) to numerical RGB components.
+ */
+function parseColorToRgb(colorStr: string): { r: number, g: number, b: number } {
+  const defaultVal = { r: 7, g: 7, b: 14 }; // Default dark background
+  if (!colorStr) return defaultVal;
+
+  const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgbMatch) {
+    return {
+      r: parseInt(rgbMatch[1], 10),
+      g: parseInt(rgbMatch[2], 10),
+      b: parseInt(rgbMatch[3], 10)
+    };
+  }
+
+  if (colorStr.startsWith('#')) {
+    let hex = colorStr.slice(1);
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+    if (hex.length === 6) {
+      return {
+        r: parseInt(hex.slice(0, 2), 16),
+        g: parseInt(hex.slice(2, 4), 16),
+        b: parseInt(hex.slice(4, 6), 16)
+      };
+    }
+  }
+
+  return defaultVal;
+}
+
+/**
+ * Converts RGB components to Hue, Saturation, Lightness.
+ */
+function rgbToHsl(r: number, g: number, b: number) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0, l = (max + min) / 2;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+/**
+ * Converts Hue, Saturation, Lightness components back to RGB.
+ */
+function hslToRgb(h: number, s: number, l: number) {
+  h /= 360; s /= 100; l /= 100;
+  let r = l, g = l, b = l;
+  if (s !== 0) {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+}
+
+/**
+ * Shifts the lightness of an RGB color by a safe offset.
+ */
+function adjustLightness(rgb: { r: number, g: number, b: number }, offset: number): string {
+  const r = Math.max(0, Math.min(255, rgb.r + offset));
+  const g = Math.max(0, Math.min(255, rgb.g + offset));
+  const b = Math.max(0, Math.min(255, rgb.b + offset));
+  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+}
+
+/**
+ * Dynamically extracts computed styles from the reader viewport to adaptive contrast matching.
+ */
+function detectReaderThemeColors(): any {
+  try {
+    const bodyStyle = window.getComputedStyle(document.body);
+    let bgColor = bodyStyle.backgroundColor;
+
+    // Find active reader content element for robust text color tracking (bypassing unstyled body color fallbacks)
+    let textColor = bodyStyle.color;
+    const contentEl = document.querySelector('.book-content, .book-content-container, .reader-container, .text-container, p, span, h1, div[class*="content"]');
+    if (contentEl) {
+      textColor = window.getComputedStyle(contentEl).color;
+    }
+
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
+      const container = document.querySelector(
+        '.book-content-container, .book-content, [data-ref="container"], .reader-container, #ttu-page-footer, #root, #app'
+      );
+      if (container) {
+        const containerStyle = window.getComputedStyle(container);
+        bgColor = containerStyle.backgroundColor;
+      }
+    }
+
+    const parsedBg = parseColorToRgb(bgColor || '#07070e');
+    const parsedText = parseColorToRgb(textColor || '#dde4f0');
+
+    // Extract HSL from background to calculate safe hue/contrast shifts
+    const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
+    const isDark = hslBg.l < 50;
+
+    // Shift Hue of the background color by 12 degrees to get a beautifully rich, contrasting panel color!
+    const shiftedBgHsl = {
+      h: (hslBg.h + 12) % 360,
+      s: Math.max(10, Math.min(90, isDark ? hslBg.s + 5 : hslBg.s - 5)),
+      l: isDark ? Math.min(95, hslBg.l + 4) : Math.max(5, hslBg.l - 4)
+    };
+    const shiftedBg = hslToRgb(shiftedBgHsl.h, shiftedBgHsl.s, shiftedBgHsl.l);
+
+    let background = `rgb(${shiftedBg.r}, ${shiftedBg.g}, ${shiftedBg.b})`;
+    let surface = isDark ? adjustLightness(shiftedBg, 6) : adjustLightness(shiftedBg, -6);
+    let surfaceAlt = isDark ? adjustLightness(shiftedBg, 12) : adjustLightness(shiftedBg, -12);
+    let border = isDark ? adjustLightness(shiftedBg, 22) : adjustLightness(shiftedBg, -22);
+    let borderHover = isDark ? adjustLightness(shiftedBg, 32) : adjustLightness(shiftedBg, -32);
+    let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
+
+    let accent = isDark ? 'var(--color-accent, #f0b429)' : 'var(--color-accent, #b45309)';
+    let accentHover = isDark ? 'var(--color-accent-hover, #ffd060)' : 'var(--color-accent-hover, #78350f)';
+
+    return {
+      background,
+      surface,
+      surfaceAlt,
+      border,
+      borderHover,
+      text: textColor,
+      textMuted,
+      accent,
+      accentHover
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function updateActiveThemeStyles(themeName: string, cfg: any) {
+  if (themeName === 'match-reader') {
+    const detectedColors = detectReaderThemeColors();
+    if (detectedColors) {
+      applyCustomThemeToDoc(detectedColors);
+      injectThemeStyles('custom', cfg.font ?? 'mono');
+    } else {
+      clearCustomThemeFromDoc();
+      injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'mono');
+    }
+  } else if (themeName === 'custom') {
+    const colors = getCustomColorsForSite(cfg);
+    applyCustomThemeToDoc(colors);
+    injectThemeStyles('custom', cfg.font ?? 'mono');
+  } else {
+    clearCustomThemeFromDoc();
+    injectThemeStyles(themeName, cfg.font ?? 'mono');
+  }
+}
+
 function applyCustomThemeToDoc(customColors: any) {
   if (!customColors) return;
   const root = document.documentElement;
@@ -670,7 +844,13 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       }
     }
 
-    // 3. Non-TTU Overlay recovery check
+    // 3. Real-time background color theme change tracking.
+    const activeTheme = getActiveThemeName(currentConfig);
+    if (activeTheme === 'match-reader') {
+      updateActiveThemeStyles('match-reader', currentConfig);
+    }
+
+    // 4. Non-TTU Overlay recovery check
     if (!TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
         const overlay = document.getElementById('nt-overlay');
@@ -681,7 +861,8 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       }
     }
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  // We added attributes observer to track class and style changes on body, making sure theme updates inside the reader get captured instantly.
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
 }
 
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
@@ -704,7 +885,7 @@ window.addEventListener('message', (event) => {
     if (window.self !== window.top) return;
     const title = String(event.data.title || '');
     const msg = event.data.message || '';
-    showToast(title, msg, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
+    showToast(title, msg, event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
   }
 });
 
@@ -983,13 +1164,7 @@ browser.storage.onChanged.addListener((changes, area) => {
     currentConfig = newCfg;
 
     const themeName = getActiveThemeName(newCfg);
-    if (themeName === 'custom') {
-      const colors = getCustomColorsForSite(newCfg);
-      applyCustomThemeToDoc(colors);
-    } else {
-      clearCustomThemeFromDoc();
-    }
-    injectThemeStyles(themeName, newCfg.font ?? 'mono');
+    updateActiveThemeStyles(themeName, newCfg);
 
     if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       const oldReaderCfg = getReaderConfig(changes['config'].oldValue || {});
@@ -1112,13 +1287,7 @@ export default defineContentScript({
     const cfg = currentConfig;
 
     const themeName = getActiveThemeName(cfg);
-    if (themeName === 'custom') {
-      const colors = getCustomColorsForSite(cfg);
-      applyCustomThemeToDoc(colors);
-    } else {
-      clearCustomThemeFromDoc();
-    }
-    injectThemeStyles(themeName, cfg.font ?? 'mono');
+    updateActiveThemeStyles(themeName, cfg);
 
     if (TTU_HOSTS.some(h => host.includes(h))) {
       const readerCfg = getReaderConfig(cfg);

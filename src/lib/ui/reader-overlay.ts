@@ -31,20 +31,21 @@ export function injectThemeStyles(themeName: string, fontName: string) {
   }
 
   const fontValue = fontName === 'sans' ? "system-ui, -apple-system, sans-serif" : (fontName === 'serif' ? "Georgia, serif" : "'Courier New', monospace");
+  const isCustom = themeName === 'custom';
 
   style.textContent = `
     :root {
-      --nt-bg: ${theme.colors.bg};
-      --nt-surface: ${theme.colors.surface};
-      --nt-surfaceAlt: ${theme.colors.surfaceAlt};
-      --nt-border: ${theme.colors.border};
-      --nt-borderHover: ${theme.colors.borderHover};
-      --nt-text: ${theme.colors.text};
-      --nt-muted: ${theme.colors.muted};
-      --nt-accent: ${theme.colors.accent};
-      --nt-accentHover: ${theme.colors.accentHover};
-      --nt-success: ${theme.colors.success};
-      --nt-error: ${theme.colors.error};
+      --nt-bg: ${isCustom ? 'var(--color-background)' : theme.colors.bg};
+      --nt-surface: ${isCustom ? 'var(--color-surface)' : theme.colors.surface};
+      --nt-surfaceAlt: ${isCustom ? 'var(--color-surface-alt)' : theme.colors.surfaceAlt};
+      --nt-border: ${isCustom ? 'var(--color-border)' : theme.colors.border};
+      --nt-borderHover: ${isCustom ? 'var(--color-border-hover)' : theme.colors.borderHover};
+      --nt-text: ${isCustom ? 'var(--color-text)' : theme.colors.text};
+      --nt-muted: ${isCustom ? 'var(--color-text-muted)' : theme.colors.muted};
+      --nt-accent: ${isCustom ? 'var(--color-accent)' : theme.colors.accent};
+      --nt-accentHover: ${isCustom ? 'var(--color-accent-hover)' : theme.colors.accentHover};
+      --nt-success: ${isCustom ? 'var(--color-success)' : theme.colors.success};
+      --nt-error: ${isCustom ? 'var(--color-error)' : theme.colors.error};
       --nt-font: ${fontValue};
       --nt-font-mono: ${theme.typography.mono};
       --nt-rounded-box: ${theme.borderRadius}px;
@@ -114,7 +115,7 @@ export function injectTTUStyles() {
   .nt-ttu-unlink-btn:hover { opacity: 1; }
   .nt-ttu-vol-pill { background: transparent; border: none; color: var(--nt-accent); font-family: var(--nt-font-mono, monospace); font-size: 11px; padding: 0 6px; cursor: pointer; opacity: .95; }
   .nt-ttu-vol-pill:hover { opacity: 1; }
-  .nt-ttu-vol-pill:active { transform: scale(0.98); }
+  .nt-ttu-vol-pill:active { transform: scale(0.92); }
   .nt-ttu-link-compact-inner svg { width: 12px; height: 12px; stroke: currentColor; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .nt-ttu-link-edit { display: flex; flex-direction: column; gap: 6px; position: relative; }
   .nt-ttu-link-edit-row { display: flex; align-items: center; gap: 6px; width: 100%; }
