@@ -1106,6 +1106,10 @@
         isCollapsed[context] = true;
     }
 
+    function handleCollapseForced(context: string) {
+        isCollapsed[context] = true;
+    }
+
     function handleUncollapse(context: string) {
         // Exclusive collapse: close all other editors when expanding a new one
         Object.keys(isCollapsed).forEach((k) => {
@@ -1951,6 +1955,417 @@
                                                                     "#3ddc84",
                                                             };
                                                             ttuTemplateDropdownOpen = false;
+                                                        }}
+                                                    >
+                                                        ★ {customPreset.name}
+                                                    </button>
+                                                {/each}
+                                            {/if}
+                                        </div>
+                                    {/if}
+                                </div>
+                            </div>
+
+                            <div
+                                style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px;"
+                            >
+                                <span
+                                    style="font-size: 9.5px; font-weight: bold; color: var(--color-text-muted);"
+                                    >Theme Name</span
+                                >
+                                <input
+                                    type="text"
+                                    class="input"
+                                    maxlength="16"
+                                    style="width: 100%; padding: 4px 6px; font-size: 11px; border: 1px solid {triedSavingEmptyName[
+                                        themeId
+                                    ] &&
+                                    (!themeDraftNames[themeId] ||
+                                        !themeDraftNames[themeId].trim())
+                                        ? 'var(--color-error, #ff4444)'
+                                        : 'var(--color-border)'}"
+                                    bind:value={themeDraftNames[themeId]}
+                                    placeholder="Theme Name"
+                                    oninput={() => {
+                                        triedSavingEmptyName[themeId] = false;
+                                    }}
+                                />
+                                {#if triedSavingEmptyName[themeId] && (!themeDraftNames[themeId] || !themeDraftNames[themeId].trim())}
+                                    <span
+                                        style="color: var(--color-error, #ff4444); font-size: 10px; font-weight: bold;"
+                                        >Name is required.</span
+                                    >
+                                {/if}
+                            </div>
+
+                            <!-- Beautiful cohesive 2-column grid matching Global theme layout perfectly -->
+                            <div
+                                style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
+                            >
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "surfaceAlt", label: "Surface Alt" }, { key: "border", label: "Border" }, { key: "borderHover", label: "Border Hover" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "accentHover", label: "Accent Hover" }, { key: "success", label: "Success" }] as colorItem}
+                                    <div
+                                        style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
+                                    >
+                                        <span
+                                            style="font-size: 10.5px; font-weight: bold; color: var(--color-text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 80px;"
+                                            >{colorItem.label}</span
+                                        >
+                                        <div
+                                            style="display: flex; align-items: center; gap: 4px;"
+                                        >
+                                            <div
+                                                style="width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--color-border); background: {themeDraftColors[
+                                                    themeId
+                                                ]?.[colorItem.key] ||
+                                                    DEFAULT_CUSTOM_COLORS[
+                                                        colorItem.key
+                                                    ]}; position: relative; flex-shrink: 0;"
+                                            >
+                                                <input
+                                                    type="color"
+                                                    bind:value={
+                                                        themeDraftColors[
+                                                            themeId
+                                                        ][colorItem.key]
+                                                    }
+                                                    style="position: absolute; top:0; left:0; width:100%; height:100%; opacity:0; cursor:pointer;"
+                                                    oninput={() =>
+                                                        handleColorChange(
+                                                            themeId,
+                                                            colorItem.key,
+                                                        )}
+                                                />
+                                            </div>
+                                            <input
+                                                type="text"
+                                                class="input"
+                                                style="width: 70px; padding: 2px 4px; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; text-align: center;"
+                                                bind:value={
+                                                    themeDraftColors[themeId][
+                                                        colorItem.key
+                                                    ]
+                                                }
+                                                oninput={() =>
+                                                    handleColorChange(
+                                                        themeId,
+                                                        colorItem.key,
+                                                    )}
+                                            />
+                                        </div>
+                                    </div>
+                                {/each}
+                            </div>
+
+                            <!-- Theme actions (Save, Revert, Delete) -->
+                            <div
+                                style="display: flex; gap: 4px; margin-top: 6px;"
+                            >
+                                <button
+                                    class="btn btn-amber"
+                                    style="flex: 1; font-size: 9.5px; padding: 4px 8px;"
+                                    onclick={() =>
+                                        saveCustomThemeChanges(themeId)}
+                                    disabled={!themeDraftNames[themeId]?.trim()}
+                                >
+                                    Save Theme
+                                </button>
+                                <button
+                                    class="btn btn-ghost"
+                                    style="font-size: 9.5px; padding: 4px 8px;"
+                                    onclick={() =>
+                                        confirmRevertThemeDraft(themeId)}
+                                    disabled={!isThemeModified(themeId)}
+                                >
+                                    Revert
+                                </button>
+                                <button
+                                    class="btn btn-ghost"
+                                    style="font-size: 9.5px; padding: 4px 8px; color: var(--color-error); border-color: rgba(239, 68, 68, 0.2);"
+                                    onclick={() => confirmDeleteTheme(themeId)}
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    {/if}
+                {/if}
+            </div>
+
+            <!-- Yatsu Reader Override -->
+            <div
+                style="display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border);"
+            >
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; gap: 16px;"
+                >
+                    <div style="display: flex; flex-direction: column;">
+                        <span
+                            style="font-weight: 600; font-size: 12.5px; color: var(--color-text);"
+                            >Yatsu Reader</span
+                        >
+                        <span class="hint" style="margin: 0; font-size: 11px;"
+                            >app.yatsu.moe</span
+                        >
+                    </div>
+                    <div style="width: 200px;">
+                        <CustomSelect
+                            options={readerThemeOptionsDerived}
+                            value={yatsuThemeOverrideToShow}
+                            onChange={(v) => saveReaderOverride("yatsu", v)}
+                            label="Override Theme"
+                            compact={false}
+                        />
+                    </div>
+                </div>
+                {#if isCustomThemeId(yatsuThemeOverride)}
+                    {@const themeId = yatsuThemeOverride}
+
+                    <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
+                    {@const activeAccentColor =
+                        themeDraftColors[themeId]?.accent ||
+                        "var(--color-accent)"}
+                    {@const activeAccentHoverColor =
+                        themeDraftColors[themeId]?.accentHover ||
+                        themeDraftColors[themeId]?.accent ||
+                        "var(--color-accent-hover)"}
+                    {@const activeBgColor =
+                        themeDraftColors[themeId]?.background || "#09090f"}
+
+                    {#if isCollapsed["yatsu"]}
+                        <button
+                            class="btn btn-ghost"
+                            style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
+                            onclick={() => handleUncollapse("yatsu")}
+                        >
+                            <span
+                                style="display: flex; align-items: center; gap: 2px;"
+                            >
+                                <svg
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="var(--color-accent)"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    style="display: inline-block; margin-right: 6px;"
+                                >
+                                    <path
+                                        d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+                                    />
+                                </svg>
+                                <span
+                                    style="font-weight: 600; color: var(--color-text);"
+                                    >Edit Custom Theme</span
+                                >
+                            </span>
+                            <span style="color: var(--color-accent);"
+                                >Expand Editor ▾</span
+                            >
+                        </button>
+                    {:else}
+                        <div
+                            style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px; background: var(--color-surface-alt); border-radius: 4px; border: 1px solid var(--color-border);"
+                        >
+                            <div
+                                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;"
+                            >
+                                <span
+                                    style="font-size: 10px; font-weight: bold; color: var(--color-accent);"
+                                    >Edit Custom Theme</span
+                                >
+                                <!-- Clean, pure styled collapse button without full bar overlay -->
+                                <button
+                                    class="btn btn-ghost"
+                                    style="padding: 2px 6px; font-size: 11px; background: transparent; border: none; font-weight: bold; cursor: pointer; color: var(--color-accent); transition: opacity 0.15s;"
+                                    onmouseenter={(e) =>
+                                        (e.currentTarget.style.opacity = "0.8")}
+                                    onmouseleave={(e) =>
+                                        (e.currentTarget.style.opacity = "1")}
+                                    onclick={() => handleCollapse("yatsu")}
+                                >
+                                    Collapse Editor ▴
+                                </button>
+                            </div>
+
+                            <div
+                                style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
+                            >
+                                <p
+                                    class="hint"
+                                    style="margin: 0; font-size: 11.5px; flex: 1;"
+                                >
+                                    Enter hex codes directly or adjust pickers.
+                                    Live preview shows draft changes on the
+                                    right.
+                                </p>
+                                <div
+                                    style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+                                >
+                                    <span
+                                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
+                                        >Template:</span
+                                    >
+
+                                    <!-- Custom Select Trigger following the NAT Theme perfectly -->
+                                    <button
+                                        type="button"
+                                        class="custom-select-trigger"
+                                        style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
+                                        onclick={(e) => {
+                                            e.stopPropagation();
+                                            yatsuTemplateDropdownOpen =
+                                                !yatsuTemplateDropdownOpen;
+                                        }}
+                                    >
+                                        <span>Load Preset...</span>
+                                        <span
+                                            style="font-size: 8px; color: var(--color-text-muted);"
+                                            >▼</span
+                                        >
+                                    </button>
+
+                                    {#if yatsuTemplateDropdownOpen}
+                                        <div
+                                            style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                                        >
+                                            {#each Object.entries(THEMES) as [key, value]}
+                                                {@const themeObj = value as any}
+                                                <button
+                                                    type="button"
+                                                    style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                                    onmouseenter={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "rgba(255, 255, 255, 0.05)")}
+                                                    onmouseleave={(e) =>
+                                                        (e.currentTarget.style.background =
+                                                            "transparent")}
+                                                    onclick={() => {
+                                                        const presetTheme =
+                                                            THEMES[key];
+                                                        themeDraftColors[
+                                                            themeId
+                                                        ] = {
+                                                            background:
+                                                                presetTheme
+                                                                    .colors.bg,
+                                                            surface:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            surfaceAlt:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surfaceAlt ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .surface,
+                                                            border: presetTheme
+                                                                .colors.border,
+                                                            borderHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .borderHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .border,
+                                                            text: presetTheme
+                                                                .colors.text,
+                                                            textMuted:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .muted,
+                                                            accent: presetTheme
+                                                                .colors.accent,
+                                                            accentHover:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accentHover ||
+                                                                presetTheme
+                                                                    .colors
+                                                                    .accent,
+                                                            success:
+                                                                presetTheme
+                                                                    .colors
+                                                                    .success ||
+                                                                "#3ddc84",
+                                                        };
+                                                        yatsuTemplateDropdownOpen = false;
+                                                    }}
+                                                >
+                                                    {themeObj.name}
+                                                </button>
+                                            {/each}
+
+                                            <!-- Custom Theme Presets (Excluding current and empty/unsaved themes) -->
+                                            {#if customThemes.filter((t) => t.id !== themeId && t.name.trim() !== "").length > 0}
+                                                <div
+                                                    style="border-top: 1px solid var(--color-border); margin: 4px 0;"
+                                                ></div>
+                                                {#each customThemes.filter((t) => t.id !== themeId && t.name.trim() !== "") as customPreset}
+                                                    <button
+                                                        type="button"
+                                                        style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
+                                                        onmouseenter={(e) =>
+                                                            (e.currentTarget.style.background =
+                                                                "rgba(255, 255, 255, 0.05)")}
+                                                        onmouseleave={(e) =>
+                                                            (e.currentTarget.style.background =
+                                                                "transparent")}
+                                                        onclick={() => {
+                                                            themeDraftColors[
+                                                                themeId
+                                                            ] = {
+                                                                background:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .background,
+                                                                surface:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .surface,
+                                                                surfaceAlt:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .surfaceAlt ||
+                                                                    customPreset
+                                                                        .colors
+                                                                        .surface,
+                                                                border: customPreset
+                                                                    .colors
+                                                                    .border,
+                                                                borderHover:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .borderHover ||
+                                                                    customPreset
+                                                                        .colors
+                                                                        .border,
+                                                                text: customPreset
+                                                                    .colors
+                                                                    .text,
+                                                                textMuted:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .textMuted,
+                                                                accent: customPreset
+                                                                    .colors
+                                                                    .accent,
+                                                                accentHover:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .accentHover ||
+                                                                    customPreset
+                                                                        .colors
+                                                                        .accent,
+                                                                success:
+                                                                    customPreset
+                                                                        .colors
+                                                                        .success ||
+                                                                    "#3ddc84",
+                                                            };
+                                                            yatsuTemplateDropdownOpen = false;
                                                         }}
                                                     >
                                                         ★ {customPreset.name}
