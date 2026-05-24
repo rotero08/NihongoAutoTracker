@@ -12,6 +12,7 @@ import { showToast } from '@/lib/utils/toast';
 import { injectThemeStyles, buildOverlay } from '@/lib/ui/reader-overlay';
 import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { fmt } from '@/lib/utils/time';
 import '@/assets/overlay.css';
 
 let currentConfig: any = {};
@@ -400,6 +401,7 @@ function setupProgressObserver() {
 
 async function checkAndRunOverlay(cfg: any) {
   if (window.self !== window.top) return;
+  if (isWebsiteOverlaySkipped(cfg)) return; // Strictly block execution on skipped sites like YouTube
 
   if (isAnalyzingPage) return;
   const existing = document.getElementById('nt-overlay');
@@ -657,24 +659,252 @@ function startTimeTracker() {
   };
 }
 
+function applyOverlayPosition(overlay: HTMLElement, pos: string) {
+  overlay.style.setProperty('top', '', 'important');
+  overlay.style.setProperty('bottom', '', 'important');
+  overlay.style.setProperty('left', '', 'important');
+  overlay.style.setProperty('right', '', 'important');
+
+  if (pos === 'top-left') {
+    overlay.style.setProperty('top', '16px', 'important');
+    overlay.style.setProperty('left', '16px', 'important');
+  } else if (pos === 'top-right') {
+    overlay.style.setProperty('top', '16px', 'important');
+    overlay.style.setProperty('right', '16px', 'important');
+  } else if (pos === 'bottom-left') {
+    overlay.style.setProperty('bottom', '16px', 'important');
+    overlay.style.setProperty('left', '16px', 'important');
+  } else if (pos === 'bottom-right') {
+    overlay.style.setProperty('bottom', '16px', 'important');
+    overlay.style.setProperty('right', '16px', 'important');
+  }
+}
+
+/**
+ * Injects CSS rules targeting control buttons with high specificity
+ * to completely eliminate default and theme-enforced border boxes.
+ */
+function injectOverlayCustomOverrides() {
+  if (document.getElementById('nt-overlay-custom-overrides')) return;
+  const style = document.createElement('style');
+  style.id = 'nt-overlay-custom-overrides';
+  style.textContent = `
+    #nt-overlay {
+      /* ── TRANSPARENCY SETTINGS ──────────────────────────────────────────
+         Adjust "opacity" below to change base transparency when not hovered.
+         0.0 = completely invisible, 1.0 = completely solid.
+      */
+      opacity: 0.35 !important;
+      transition: opacity 0.15s ease-in-out !important;
+    }
+    #nt-overlay:hover {
+      opacity: 1 !important;
+    }
+
+    #nt-overlay .nt-ctrl,
+    #nt-overlay .nt-close {
+      border: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+      padding: 0 1px !important;
+      margin: 0 !important;
+      border-radius: 0 !important;
+      cursor: pointer !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      height: 100% !important;
+      line-height: 1 !important;
+      vertical-align: middle !important;
+    }
+    #nt-overlay button {
+      border: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+/**
+ * Sets size and vertical scaling classes directly on the pause button.
+ * Resolves disproportionately small native width profiles on ⏸ double bar glyph.
+ */
+function updatePauseIconState(pauseBtn: HTMLButtonElement, isPaused: boolean) {
+  pauseBtn.textContent = isPaused ? '▶' : '⏸';
+  if (isPaused) {
+    pauseBtn.style.setProperty('font-size', '10px', 'important');
+    pauseBtn.style.setProperty('transform', 'none', 'important');
+  } else {
+    pauseBtn.style.setProperty('font-size', '13px', 'important');
+    // Offset baseline displacement common to vertical line double-bar unicode glyphtypes
+    pauseBtn.style.setProperty('transform', 'translateY(-1px)', 'important');
+  }
+}
+
+/**
+ * Enforces key horizontal layout metrics directly as inline rules.
+ * This prevents theme style changes from breaking alignment or wrapping elements.
+ */
+function enforceOverlayLayout(overlay: HTMLElement) {
+  overlay.style.setProperty('display', 'flex', 'important');
+  overlay.style.setProperty('flex-direction', 'row', 'important');
+  overlay.style.setProperty('align-items', 'center', 'important');
+  overlay.style.setProperty('justify-content', 'space-between', 'important');
+  overlay.style.setProperty('gap', '4px', 'important');
+  overlay.style.setProperty('padding', '0 6px', 'important');
+  overlay.style.setProperty('box-sizing', 'border-box', 'important');
+  overlay.style.setProperty('white-space', 'nowrap', 'important');
+  overlay.style.setProperty('height', '22px', 'important');
+  overlay.style.setProperty('width', 'auto', 'important');
+  overlay.style.setProperty('min-width', 'unset', 'important');
+  overlay.style.setProperty('min-height', 'unset', 'important');
+  overlay.style.setProperty('line-height', '1', 'important');
+
+  const handle = overlay.querySelector('.nt-handle') as HTMLElement;
+  if (handle) {
+    handle.style.setProperty('display', 'inline-flex', 'important');
+    handle.style.setProperty('align-items', 'center', 'important');
+    handle.style.setProperty('justify-content', 'center', 'important');
+    handle.style.setProperty('cursor', 'grab', 'important');
+    handle.style.setProperty('user-select', 'none', 'important');
+    handle.style.setProperty('margin-right', '1px', 'important');
+    handle.style.setProperty('font-size', '10px', 'important');
+    handle.style.setProperty('height', '100%', 'important');
+    handle.style.setProperty('line-height', '1', 'important');
+  }
+
+  const timeEl = overlay.querySelector('.nt-time') as HTMLElement;
+  if (timeEl) {
+    timeEl.style.setProperty('display', 'inline-flex', 'important');
+    timeEl.style.setProperty('align-items', 'center', 'important');
+    timeEl.style.setProperty('justify-content', 'center', 'important');
+    timeEl.style.setProperty('font-variant-numeric', 'tabular-nums', 'important');
+    timeEl.style.setProperty('margin-right', '2px', 'important');
+    timeEl.style.setProperty('font-size', '12px', 'important');
+    timeEl.style.setProperty('height', '100%', 'important');
+    timeEl.style.setProperty('line-height', '1', 'important');
+  }
+
+  // Force strict centered alignment inside all overlay buttons
+  const buttons = overlay.querySelectorAll('button');
+  buttons.forEach(btn => {
+    btn.style.setProperty('display', 'inline-flex', 'important');
+    btn.style.setProperty('align-items', 'center', 'important');
+    btn.style.setProperty('justify-content', 'center', 'important');
+    btn.style.setProperty('height', '100%', 'important');
+    btn.style.setProperty('line-height', '1', 'important');
+    btn.style.setProperty('vertical-align', 'middle', 'important');
+  });
+}
+
 function runOverlaySetup(cfg: any) {
   addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
     url: window.location.href,
     pos: cfg.overlayPosition
   });
 
-  buildOverlay(
-    cfg,
-    { dismissed: websiteOverlayDismissed },
-    (isPaused) => { (window as any).__nt_tracker_session_active_ms__.pause(isPaused); },
-    () => { (window as any).__nt_tracker_session_active_ms__.setMs(0); },
-    (ms) => { (window as any).__nt_tracker_session_active_ms__.setMs(ms); },
-    () => (window as any).__nt_tracker_session_active_ms__.getTotal(),
-    () => { websiteOverlayDismissed = true; }
-  );
+  if (websiteOverlayDismissed) {
+    const existing = document.getElementById('nt-overlay');
+    if (existing) existing.style.display = 'none';
+    return;
+  }
 
-  const overlay = document.getElementById('nt-overlay');
-  if (!overlay) return;
+  let overlay = document.getElementById('nt-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'nt-overlay';
+    const handle = document.createElement('div');
+    handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.innerHTML = '⠿';
+    const timeEl = document.createElement('span');
+    timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
+    const pauseBtn = document.createElement('button');
+    pauseBtn.className = 'nt-ctrl'; pauseBtn.title = 'Pause / Resume';
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'nt-close'; closeBtn.textContent = '×'; closeBtn.title = 'Hide overlay (until reload)';
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); websiteOverlayDismissed = true; overlay!.style.display = 'none'; });
+
+    // Initial state setup for play/pause toggle sizes
+    updatePauseIconState(pauseBtn, false);
+    resetBtn.style.setProperty('font-size', '11px', 'important');
+    closeBtn.style.setProperty('font-size', '12px', 'important');
+
+    overlay.append(handle, timeEl, pauseBtn, resetBtn, closeBtn);
+    document.body.appendChild(overlay);
+
+    let dragging = false, ox = 0, oy = 0;
+    handle.addEventListener('mousedown', e => {
+      dragging = true;
+      const r = overlay!.getBoundingClientRect();
+      ox = e.clientX - r.left; oy = e.clientY - r.top;
+      overlay!.style.setProperty('right', '', 'important');
+      overlay!.style.setProperty('bottom', '', 'important');
+      overlay!.style.setProperty('left', r.left + 'px', 'important');
+      overlay!.style.setProperty('top', r.top + 'px', 'important');
+      handle.style.cursor = 'grabbing'; e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } });
+    document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
+
+    pauseBtn.addEventListener('click', () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) {
+        const nowPaused = !nt.isPaused();
+        nt.pause(nowPaused);
+        updatePauseIconState(pauseBtn, nowPaused);
+        pauseBtn.classList.toggle('active', nowPaused);
+      }
+    });
+    resetBtn.addEventListener('click', () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) nt.setMs(0);
+    });
+    timeEl.addEventListener('click', () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (!nt) return;
+      const input = document.createElement('input');
+      input.type = 'text'; input.className = 'nt-edit';
+      input.value = fmt(nt.getTotal()); input.placeholder = 'M:SS';
+      const commit = () => {
+        const parts = input.value.split(':').map(Number);
+        let ms = -1;
+        if (!parts.some(isNaN)) {
+          if (parts.length === 1) ms = parts[0] * 60 * 1000;
+          else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
+          else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
+        }
+        if (ms >= 0) nt.setMs(ms);
+        input.replaceWith(timeEl);
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+      timeEl.replaceWith(input); input.focus(); input.select();
+    });
+
+    setInterval(() => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) {
+        timeEl.textContent = fmt(nt.getTotal());
+      }
+    }, 1000);
+  }
+
+  const pos = cfg.overlayPosition ?? 'top-right';
+  applyOverlayPosition(overlay, pos);
+  injectOverlayCustomOverrides();
+  enforceOverlayLayout(overlay);
+
+  if (cfg.overlayPosition === 'hidden') {
+    overlay.style.setProperty('display', 'none', 'important');
+  } else {
+    overlay.style.setProperty('display', 'flex', 'important');
+  }
 
   if (overlay.parentElement === document.body) {
     document.documentElement.appendChild(overlay);
@@ -723,9 +953,22 @@ browser.storage.onChanged.addListener((changes, area) => {
       const existingOverlay = document.getElementById('nt-overlay');
       if (existingOverlay) {
         if (newCfg.overlayPosition !== 'hidden') {
-          existingOverlay.style.display = 'block';
+          existingOverlay.style.setProperty('display', 'flex', 'important');
+          applyOverlayPosition(existingOverlay, newCfg.overlayPosition);
+          injectOverlayCustomOverrides();
+          enforceOverlayLayout(existingOverlay);
+
+          // Force precise control element state-sizes on theme switch
+          const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
+          if (pauseBtn) {
+            updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
+          }
+          const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
+          if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
+          const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
+          if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
         } else {
-          existingOverlay.style.display = 'none';
+          existingOverlay.style.setProperty('display', 'none', 'important');
         }
         return;
       }

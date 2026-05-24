@@ -18,10 +18,17 @@ export default defineConfig({
     firefoxProfile: path.resolve(__dirname, '.wxt/firefox-profile'),
     keepProfileChanges: true,
 
+    // @ts-expect-error - WXT's WebExtConfig type definitions omit additionalExtensions, but the runner supports it at runtime.
+    additionalExtensions: [
+      path.resolve(__dirname, '.wxt/addons/uBlock0_1.62.0.firefox.xpi'),
+    ],
+
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',
+      'https://www.youtube.com/watch?v=JPcsLaGA7fI&list=PLI76y3FWv18CrvaxtcS5QcAb7qaUQHtmB',
       'https://reader.ttsu.app',
       'https://app.yatsu.moe',
+      'https://www.yomiuri.co.jp/editorial/20260506-GYT1T00155/',
     ],
   },
 
