@@ -47,7 +47,10 @@ export interface TrackerConfig {
   /** Badge display: true = "session / total", false = "session only" */
   showTotalInBadge?: boolean;
 
-  theme?: 'nihongo' | 'dark' | 'light' | 'amethyst';
+  /** Selected UI Theme identifier */
+  theme?: string;
+  /** Selected Font Family identifier */
+  font?: string;
 
   /* ── Overlay ───────────────────────────── */
   /** Include reading time in context-menu logs */
@@ -214,4 +217,33 @@ export interface TTUHistorySession {
   date: string;
   timeMs: number;
   chars: number;
+}
+
+/* ── Theme Definitions ────────────────────────────────────────────────────── */
+
+export interface UIThemeColors {
+  bg: string;
+  surface: string;
+  surfaceAlt: string;
+  border: string;
+  borderHover: string;
+  text: string;
+  muted: string;
+  accent: string;
+  accentHover: string;
+  success: string;
+  error: string;
+}
+
+export interface UIThemeTypography {
+  mono: string;
+  sans: string;
+}
+
+export interface UITheme {
+  name: string;
+  colors: UIThemeColors;
+  typography: UIThemeTypography;
+  borderRadius: number;
+  borderRadiusSmall: number;
 }

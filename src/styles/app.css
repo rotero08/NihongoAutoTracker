@@ -1,75 +1,39 @@
-/**
- * ── Tailwind CSS v4 + DaisyUI Theme Configuration ────────────────────────────
- *
- * This is the root stylesheet for all Svelte-based UI (popup + settings).
- * Tailwind v4 processes @import directives and @theme blocks at build time.
- *
- * Design tokens are mapped from the existing CSS custom properties to ensure
- * pixel-perfect visual parity with the original UI.
- */
-
-@import "tailwindcss";
-@import "daisyui" theme(--color-bg);
-
-/* ── Custom Theme ─────────────────────────────────────────────────────────── */
-
-@theme {
-  /* Background layers */
-  --color-bg: #09090f;
-  --color-surf: #0f0f1a;
-  --color-surf2: #13131f;
-
-  /* Border colors */
-  --color-bdr: #1c2333;
-  --color-bdr2: #242d42;
-
-  /* Text colors */
-  --color-text-primary: #dde4f0;
-  --color-muted: #5a6a85;
-  --color-dim: #3a4a60;
-
-  /* Accent colors */
-  --color-amber: #f0b429;
-  --color-amber-hover: #ffd060;
-  --color-green: #3ddc84;
-  --color-red: #f0706a;
-
-  /* Typography */
-  --font-mono: 'Courier New', 'Lucida Console', monospace;
-  --font-sans: system-ui, -apple-system, sans-serif;
-}
-
-/* ── DaisyUI Theme Override ───────────────────────────────────────────────── */
-/* Map our design tokens to DaisyUI's semantic color system */
-
-[data-theme="nihongo"],
+/* app.css */
 :root {
-  --p: 45 87% 55%;       /* amber as primary */
-  --pf: 45 92% 60%;      /* amber hover */
-  --pc: 240 38% 5%;      /* primary content (dark text on amber) */
-  --s: 145 62% 54%;      /* green as secondary */
-  --sf: 145 62% 60%;
-  --sc: 240 38% 5%;
-  --a: 5 78% 65%;        /* red as accent */
-  --af: 5 78% 70%;
-  --ac: 240 38% 5%;
-  --n: 223 28% 15%;      /* neutral */
-  --nf: 223 28% 20%;
-  --nc: 220 32% 91%;     /* neutral content = text */
-  --b1: 240 38% 5%;      /* base-100 = bg */
-  --b2: 240 38% 8%;      /* base-200 = surf */
-  --b3: 240 38% 10%;     /* base-300 = surf2 */
-  --bc: 220 32% 91%;     /* base content = text */
-  --er: 5 78% 65%;       /* error = red */
-  --su: 145 62% 54%;     /* success = green */
-  --wa: 45 87% 55%;      /* warning = amber */
-  --in: 210 50% 55%;     /* info */
-  --rounded-btn: 0.25rem;
-  --rounded-box: 0.375rem;
-  --btn-text-case: none;
-}
+  /* Clear, descriptive variables (Source of Truth) */
+  --color-background: #07070e;
+  --color-surface: #0d0d1c;
+  --color-surface-alt: #10101f;
+  --color-border: #1a2235;
+  --color-border-hover: #222d42;
+  --color-text: #dde4f0;
+  --color-text-muted: #7a8ca5;
+  --color-text-dimmed: #7a8ca5;
+  --color-accent: #f0b429;
+  --color-accent-hover: #ffd060;
+  --color-success: #3ddc84;
+  --color-error: #f0706a;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --rounded-box: 6px;
+  --rounded-btn: 4px;
 
-/* ── Base Resets ──────────────────────────────────────────────────────────── */
+  /* Backward-Compatibility Aliases (Pointing to clear variables) */
+  --bg: var(--color-background);
+  --surf: var(--color-surface);
+  --surf2: var(--color-surface-alt);
+  --bdr: var(--color-border);
+  --bdr2: var(--color-border-hover);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --dim: var(--color-text-dimmed);
+  --amber: var(--color-accent);
+  --ambrh: var(--color-accent-hover);
+  --green: var(--color-success);
+  --red: var(--color-error);
+  --mono: var(--font-mono);
+  --sans: var(--font-sans);
+}
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -77,8 +41,6 @@
   padding: 0;
 }
 
-/* ── Scrollbar Styling ────────────────────────────────────────────────────── */
-
 ::-webkit-scrollbar { width: 3px; }
-::-webkit-scrollbar-thumb { background: var(--color-bdr2); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--color-border-hover); border-radius: 2px; }
 ::-webkit-scrollbar-track { background: transparent; }

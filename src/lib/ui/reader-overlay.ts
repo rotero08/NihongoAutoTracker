@@ -32,35 +32,17 @@ export function injectThemeStyles(themeName: string, fontName: string) {
 
   const fontValue = fontName === 'sans' ? "system-ui, -apple-system, sans-serif" : (fontName === 'serif' ? "Georgia, serif" : "'Courier New', monospace");
 
-  let surfaceColor = theme.colors.surface;
-  let surfaceAltColor = theme.colors.surfaceAlt;
-  let borderColor = theme.colors.border;
-  let textPrimaryColor = theme.colors.text;
-  let mutedColor = theme.colors.muted;
-  let accentColor = theme.colors.accent;
-  let accentHoverColor = theme.colors.accentHover;
-
-  if (themeName === 'nihongo') {
-    surfaceColor = '#252525';
-    surfaceAltColor = '#1c1c1c';
-    borderColor = '#3a3a3a';
-    textPrimaryColor = '#ececec';
-    mutedColor = '#aaa';
-    accentColor = '#f0b429';
-    accentHoverColor = '#ffcc33';
-  }
-
   style.textContent = `
     :root {
       --nt-bg: ${theme.colors.bg};
-      --nt-surface: ${surfaceColor};
-      --nt-surfaceAlt: ${surfaceAltColor};
-      --nt-border: ${borderColor};
+      --nt-surface: ${theme.colors.surface};
+      --nt-surfaceAlt: ${theme.colors.surfaceAlt};
+      --nt-border: ${theme.colors.border};
       --nt-borderHover: ${theme.colors.borderHover};
-      --nt-text: ${textPrimaryColor};
-      --nt-muted: ${mutedColor};
-      --nt-accent: ${accentColor};
-      --nt-accentHover: ${accentHoverColor};
+      --nt-text: ${theme.colors.text};
+      --nt-muted: ${theme.colors.muted};
+      --nt-accent: ${theme.colors.accent};
+      --nt-accentHover: ${theme.colors.accentHover};
       --nt-success: ${theme.colors.success};
       --nt-error: ${theme.colors.error};
       --nt-font: ${fontValue};
@@ -69,9 +51,9 @@ export function injectThemeStyles(themeName: string, fontName: string) {
       --nt-rounded-btn: ${theme.borderRadiusSmall}px;
     }
     #nt-overlay {
-      background: var(--nt-surface, #0f0f1a) !important;
-      border: 1px solid var(--nt-border, #1c2333) !important;
-      color: var(--nt-text, #dde4f0) !important;
+      background: var(--nt-surface) !important;
+      border: 1px solid var(--nt-border) !important;
+      color: var(--nt-text) !important;
       border-radius: ${theme.borderRadius}px !important;
       box-shadow: 0 4px 20px rgba(0,0,0,.5) !important;
       font-family: var(--nt-font) !important;
@@ -80,8 +62,8 @@ export function injectThemeStyles(themeName: string, fontName: string) {
     #nt-overlay .nt-time { color: var(--nt-accent) !important; font-family: var(--nt-font) !important; }
     #nt-overlay .nt-ctrl {
       color: var(--nt-muted) !important;
-      background: var(--nt-surfaceAlt, #13131f) !important;
-      border: 1px solid var(--nt-border, #1c2333) !important;
+      background: var(--nt-surfaceAlt) !important;
+      border: 1px solid var(--nt-border) !important;
       border-radius: ${theme.borderRadiusSmall}px !important;
       font-family: var(--nt-font) !important;
     }
@@ -89,7 +71,7 @@ export function injectThemeStyles(themeName: string, fontName: string) {
     #nt-overlay .nt-close { color: var(--nt-muted) !important; }
     #nt-overlay .nt-close:hover { color: var(--nt-error) !important; }
     #nt-overlay .nt-edit {
-      background: var(--nt-surfaceAlt, #13131f) !important;
+      background: var(--nt-surfaceAlt) !important;
       color: var(--nt-text) !important;
       border: 1px solid var(--nt-border) !important;
       font-family: var(--nt-font) !important;

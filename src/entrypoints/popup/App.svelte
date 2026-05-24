@@ -13,7 +13,11 @@
   import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
   import CustomSelect from "@/components/settings/CustomSelect.svelte";
   import { showToast } from "@/lib/utils/toast"; // Route via dynamic shared helper
-  import { applyThemeToDocument } from "@/lib/ui/themes";
+  import {
+    applyThemeToDocument,
+    THEME_OPTIONS,
+    FONT_OPTIONS,
+  } from "@/lib/ui/themes";
   import "@/styles/popup-shared.css";
 
   /* ── Reactive state ──────────────────────────────────────────── */
@@ -24,22 +28,9 @@
   let confirmModal: ConfirmModal;
 
   /* Appearance states */
-  let selectedTheme = $state("nihongo");
-  let selectedFont = $state("sans"); // Sans is default
+  let selectedTheme = $state("dark-amber");
+  let selectedFont = $state("sans");
   let showCompactMenu = $state(false);
-
-  const themeOptions = [
-    { value: "nihongo", label: "Dark Amber (Default)" },
-    { value: "dark", label: "Deep Ocean Dark" },
-    { value: "light", label: "Nordic Light" },
-    { value: "amethyst", label: "Amethyst Purple" },
-  ];
-
-  const fontOptions = [
-    { value: "sans", label: "System Sans (Default)" },
-    { value: "mono", label: "System Monospace" },
-    { value: "serif", label: "Georgia Serif" },
-  ];
 
   const total = $derived(videoQueue.length + readingQueue.length);
 
@@ -49,7 +40,7 @@
     readingQueue = await readingQueueStorage.getValue();
     const cfg = (await configStorage.getValue()) as any;
     hasApiKey = !!cfg?.apiKey;
-    selectedTheme = cfg?.theme ?? "nihongo";
+    selectedTheme = cfg?.theme ?? "dark-amber";
     selectedFont = cfg?.font ?? "sans";
   }
 
@@ -58,11 +49,10 @@
 
     async function init() {
       const cfg = (await configStorage.getValue()) as any;
-      applyThemeToDocument(cfg?.theme ?? "nihongo", cfg?.font ?? "sans");
+      applyThemeToDocument(cfg?.theme ?? "dark-amber", cfg?.font ?? "sans");
     }
     init();
 
-    /* Live updates from storage changes */
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
@@ -74,7 +64,7 @@
       }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
-        const nextTheme = val?.theme ?? "nihongo";
+        const nextTheme = val?.theme ?? "dark-amber";
         const nextFont = val?.font ?? "sans";
         applyThemeToDocument(nextTheme, nextFont);
       }
@@ -210,7 +200,7 @@
         >
 
         <CustomSelect
-          options={themeOptions}
+          options={THEME_OPTIONS}
           value={selectedTheme}
           onChange={handleQuickTheme}
           label="Theme"
@@ -218,7 +208,7 @@
         />
 
         <CustomSelect
-          options={fontOptions}
+          options={FONT_OPTIONS}
           value={selectedFont}
           onChange={handleQuickFont}
           label="Font"
