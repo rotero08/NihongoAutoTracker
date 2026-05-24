@@ -4,6 +4,8 @@
  * All rights reserved.
  */
 
+import { addDebugLog } from '@/lib/storage/debug';
+
 const ttuCharCountCache = new WeakMap<Element, number>();
 let ttuCachedNodes: Element[] = [];
 let ttuCachedAccumulated: number[] = [];
@@ -53,7 +55,7 @@ export function extractAdvancedCharCount(
             const match = id.match(/ttu-id(\d+)/);
             const sectionIndex = match ? parseInt(match[1], 10) : null;
 
-            console.log(`[TextTracker Diagnostic] extractAdvancedCharCount (Zero-Text Baseline Page):`, {
+            addDebugLog('INFO', 'TextTracker', 'extractAdvancedCharCount (Zero-Text Baseline Page)', {
                 isPaginated,
                 isVerticalText,
                 writingMode,
@@ -225,7 +227,7 @@ export function extractAdvancedCharCount(
         const match = id.match(/ttu-id(\d+)/);
         const sectionIndex = match ? parseInt(match[1], 10) : null;
 
-        console.log(`[TextTracker Diagnostic] extractAdvancedCharCount:`, {
+        addDebugLog('INFO', 'TextTracker', 'extractAdvancedCharCount', {
             isPaginated,
             isVerticalText,
             writingMode,

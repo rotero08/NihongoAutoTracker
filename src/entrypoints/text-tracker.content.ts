@@ -19,20 +19,11 @@ let websiteOverlayDismissed = false;
 let isAnalyzingPage = false;
 let cachedIsJapanese: boolean | null = null;
 
-// Global cache to identify active section indexes based on text rendering
-let sectionTextsCached: string[] = [];
-let sectionAccCharCounts: number[] = [];
-let hasStaticOffsets = false;
-
 // Trackers to optimize mutation and chrono lookups
 let lastObservedContainerId = '';
 let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
-let isChronoInitializing = false; // Prevents double initialization on reader load
-
-function normalizeText(str: string): string {
-  return str.replace(/[\s\p{P}]/gu, '').slice(0, 80);
-}
+let isChronoInitializing = false;
 
 function getReaderConfig(cfg: any) {
   const host = window.location.hostname;
@@ -309,144 +300,6 @@ function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   return null;
 }
 
-interface BooksDbBook {
-  id: number;
-  htmlContent?: string;
-}
-
-function getBookIdFromUrl(): number | null {
-  try {
-    const pathParts = window.location.pathname.split('/');
-    const bIdx = pathParts.findIndex(part => part === 'b' || part === 'book');
-    if (bIdx !== -1 && pathParts[bIdx + 1]) {
-      const idStr = pathParts[bIdx + 1];
-      const parsed = parseInt(idStr, 10);
-      if (!isNaN(parsed)) return parsed;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get('id');
-    if (id) {
-      const parsed = parseInt(id, 10);
-      if (!isNaN(parsed)) return parsed;
-    }
-  } catch (e) { }
-  return null;
-}
-
-function fetchBookFromDatabase(bookId: number): Promise<BooksDbBook | null> {
-  return new Promise(async (resolve) => {
-    try {
-      console.log(`[TextTracker Diagnostic] Starting database discovery for bookId: ${bookId}...`);
-
-      let dbNames: string[] = ['books-db', 'localforage'];
-      if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
-        const dbs = await indexedDB.databases();
-        dbNames = dbs.map(d => d.name || '').filter(Boolean);
-        console.log(`[TextTracker Diagnostic] Discovered databases on this origin:`, dbNames);
-      }
-
-      for (const name of dbNames) {
-        console.log(`[TextTracker Diagnostic] Testing database: '${name}'...`);
-        const book = await new Promise<BooksDbBook | null>((res) => {
-          const req = indexedDB.open(name);
-          req.onerror = () => {
-            console.error(`    [Database Error] Failed to open database '${name}'`);
-            res(null);
-          };
-          req.onsuccess = () => {
-            const db = req.result;
-            const stores = Array.from(db.objectStoreNames);
-            console.log(`  [Database] Opened '${name}' (v${db.version}). Stores:`, stores);
-
-            // Added "data" to target store matches for v6 Svelte Reader layout compatibility
-            const targetStore = stores.find(s => s === 'books' || s === 'keyvaluepairs' || s === 'files' || s === 'data');
-            if (!targetStore) {
-              console.log(`    [Database] Target store not found in '${name}'`);
-              db.close();
-              res(null);
-              return;
-            }
-
-            try {
-              const transaction = db.transaction([targetStore], 'readonly');
-              const store = transaction.objectStore(targetStore);
-
-              const getNumeric = store.get(bookId);
-              getNumeric.onsuccess = () => {
-                if (getNumeric.result) {
-                  console.log(`    [Success] Found book in '${name}' > '${targetStore}' using numeric ID ${bookId}`);
-                  db.close();
-                  res(getNumeric.result);
-                } else {
-                  console.log(`    [Database] Numeric key ${bookId} not found in '${targetStore}'. Trying string key...`);
-                  const getReqString = store.get(String(bookId));
-                  getReqString.onsuccess = () => {
-                    if (getReqString.result) {
-                      console.log(`    [Success] Found book in '${name}' > '${targetStore}' using string ID "${bookId}"`);
-                      db.close();
-                      res(getReqString.result);
-                    } else {
-                      console.log(`    [Database] String key "${bookId}" also not found in '${targetStore}'.`);
-                      db.close();
-                      res(null);
-                    }
-                  };
-                  getReqString.onerror = () => { db.close(); res(null); };
-                }
-              };
-              getNumeric.onerror = () => { db.close(); res(null); };
-            } catch (err) {
-              console.error(`    [Error] Failed transaction in database '${name}' store '${targetStore}':`, err);
-              db.close();
-              res(null);
-            }
-          };
-        });
-
-        if (book) {
-          resolve(book);
-          return;
-        }
-      }
-    } catch (e) {
-      console.error(`[TextTracker Diagnostic] Database discovery failed:`, e);
-    }
-    resolve(null);
-  });
-}
-
-function calculateSectionAccCharCounts(htmlContent: string): number[] {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(htmlContent, 'text/html');
-  const sections = Array.from(doc.body.children);
-
-  let exploredCharCount = 0;
-  return sections.map((section) => {
-    const paragraphs = Array.from(section.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
-      if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-      return true;
-    });
-
-    const sectionCharCount = paragraphs.reduce((acc, el) => {
-      let text = '';
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      let n;
-      while ((n = walker.nextNode())) {
-        if (!n.parentElement?.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
-          text += n.nodeValue || '';
-        }
-      }
-      const matches = text.match(/[\p{L}\p{N}]/gu);
-      const count = matches ? matches.length : 0;
-      return acc + count;
-    }, 0);
-
-    exploredCharCount += sectionCharCount;
-    return exploredCharCount;
-  });
-}
-
 function getTtuNativeProgressFromDom(): { current: number; total: number } | null {
   try {
     const copyDivs = Array.from(document.querySelectorAll('div[title="Click to copy Progress"]'));
@@ -545,13 +398,8 @@ function setupProgressObserver() {
   progressObserver.observe(target, { childList: true, characterData: true, subtree: true });
 }
 
-async function checkAndRunOverlay(cfg: any, triggerSource = 'unknown') {
+async function checkAndRunOverlay(cfg: any) {
   if (window.self !== window.top) return;
-
-  console.log(`[TextTracker Diagnostic] checkAndRunOverlay() triggered by: '${triggerSource}'`, {
-    isAnalyzingPage,
-    hasExistingOverlay: !!document.getElementById('nt-overlay')
-  });
 
   if (isAnalyzingPage) return;
   const existing = document.getElementById('nt-overlay');
@@ -564,7 +412,7 @@ async function checkAndRunOverlay(cfg: any, triggerSource = 'unknown') {
       runOverlaySetup(cfg);
     }
   } catch (e) {
-    console.error(`[TextTracker Diagnostic] Error during overlay builder execution:`, e);
+    addDebugLog('ERROR', 'TextTracker', 'Error during overlay builder execution', { error: e });
   } finally {
     isAnalyzingPage = false;
   }
@@ -578,23 +426,6 @@ async function setupTTUChronometer() {
   try {
     const pt = findTTUInsertPoint();
     if (!pt) return;
-
-    const bookId = getBookIdFromUrl();
-
-    if (bookId !== null) {
-      const bookData = await fetchBookFromDatabase(bookId);
-      if (bookData && bookData.htmlContent) {
-        sectionAccCharCounts = calculateSectionAccCharCounts(bookData.htmlContent);
-        hasStaticOffsets = sectionAccCharCounts.length > 0;
-
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(bookData.htmlContent, 'text/html');
-        sectionTextsCached = Array.from(doc.body.children).map(section => {
-          return normalizeText(section.textContent || '');
-        });
-        console.log(`[TextTracker Diagnostic] Static offsets loaded. Sections: ${sectionAccCharCounts.length}`);
-      }
-    }
 
     setupTTUChronometerUI(pt, currentConfig, ttuState, stateRefs, {
       getTTUTitle,
@@ -628,9 +459,40 @@ async function setupTTUChronometer() {
       if (ttuState.running && !document.hidden) {
         const now = Date.now();
         ttuState.timeMs += (now - stateRefs.globalLastTick);
+
+        const charData = extractAdvancedCharCount();
+        if (charData !== null) {
+          const { current } = charData;
+
+          if (stateRefs.globalSessionStartChar === -1) {
+            stateRefs.globalSessionStartChar = current;
+            addDebugLog('INFO', 'TextTracker', 'Set session starting baseline', { baseline: current });
+          }
+
+          let diff = current - stateRefs.globalSessionStartChar;
+          if (diff < 0) diff = 0;
+
+          let calculatedChars = diff + stateRefs.globalManualCharOffset;
+
+          const nativeTtuProgress = getTtuNativeProgressFromDom();
+
+          ttuState.chars = calculatedChars;
+
+          addDebugLog('INFO', 'TextTracker', 'Chronometer Tick Progress', {
+            calculatedCurrentInActiveSection: current,
+            startingSessionBaseline: stateRefs.globalSessionStartChar,
+            diffReadThisSession: diff,
+            manualOffsetCalculated: stateRefs.globalManualCharOffset,
+            finalCalculatedChars: ttuState.chars,
+            activeSection: stateRefs.lastSectionIndex,
+            nativeTtuProgressCurrent: nativeTtuProgress ? nativeTtuProgress.current : 'not found',
+            nativeTtuProgressTotal: nativeTtuProgress ? nativeTtuProgress.total : 'not found'
+          });
+        }
         stateRefs.globalLastTick = now;
 
-        recalculateChars();
+        const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+        if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
 
         if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
       } else if (ttuState.running && document.hidden) {
@@ -684,75 +546,69 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     }
 
     // 2. High-Performance Container Transition detector.
-    const container = document.querySelector('.book-content-container') || document.querySelector('.book-content');
-    const currentContainerId = container ? container.id : '';
+    const charData = extractAdvancedCharCount();
+    if (charData !== null) {
+      const { total, sectionIndex, isPaginated } = charData;
+      const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-    if (currentContainerId && currentContainerId !== lastObservedContainerId) {
-      lastObservedContainerId = currentContainerId;
+      if (stateRefs.lastSectionIndex !== activeSection) {
+        addDebugLog('INFO', 'TextTracker', 'Section transition detected', {
+          from: stateRefs.lastSectionIndex,
+          to: activeSection
+        });
 
-      const charData = extractAdvancedCharCount();
-      if (charData !== null) {
-        const { total, sectionIndex, isPaginated } = charData;
-        const activeSection = sectionIndex !== null ? sectionIndex : -1;
+        if (isPaginated && activeSection !== -1) {
+          stateRefs.globalSessionStartChar = 0;
+          addDebugLog('INFO', 'TextTracker', 'Paginated transition. Initialized baseline to 0.');
+        } else {
+          stateRefs.globalSessionStartChar = -1;
+        }
 
-        if (stateRefs.lastSectionIndex !== activeSection) {
-          console.log(`[TextTracker Diagnostic] Container transition: ${stateRefs.lastSectionIndex} -> ${activeSection}`);
-
-          if (isPaginated && activeSection !== -1) {
-            stateRefs.globalSessionStartChar = 0;
-          } else {
-            stateRefs.globalSessionStartChar = -1;
+        if (activeSection === -1) {
+          stateRefs.lastSectionIndex = -1;
+          stateRefs.globalManualCharOffset = 0;
+          stateRefs.visitedSections.clear();
+          addDebugLog('INFO', 'TextTracker', 'Reset dynamic tracking baseline to 0. Cleared visitedSections cache.');
+        } else {
+          if (stateRefs.lastSectionIndex === -1) {
+            stateRefs.lastSectionIndex = activeSection;
+            stateRefs.lastSectionTotal = total;
+            stateRefs.visitedSections.set(activeSection, 0);
           }
 
-          if (activeSection === -1) {
-            stateRefs.lastSectionIndex = -1;
-            stateRefs.globalManualCharOffset = 0;
-            stateRefs.visitedSections.clear();
-          } else {
-            if (hasStaticOffsets) {
-              stateRefs.globalManualCharOffset = sectionAccCharCounts[activeSection - 1] || 0;
-              stateRefs.lastSectionIndex = activeSection;
+          if (stateRefs.lastSectionIndex !== activeSection) {
+            if (activeSection > stateRefs.lastSectionIndex) {
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+              } else {
+                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+              }
             } else {
-              if (stateRefs.lastSectionIndex === -1) {
-                stateRefs.lastSectionIndex = activeSection;
-                stateRefs.lastSectionTotal = total;
-                stateRefs.visitedSections.set(activeSection, 0);
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+              } else {
+                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
               }
-
-              if (stateRefs.lastSectionIndex !== activeSection) {
-                if (activeSection > stateRefs.lastSectionIndex) {
-                  if (stateRefs.visitedSections.has(activeSection)) {
-                    stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                  } else {
-                    stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                    stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                  }
-                } else {
-                  if (stateRefs.visitedSections.has(activeSection)) {
-                    stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                  } else {
-                    stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                    stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                  }
-                }
-              }
-
-              stateRefs.lastSectionIndex = activeSection;
-              stateRefs.lastSectionTotal = total;
             }
           }
 
-          recalculateChars();
+          stateRefs.lastSectionIndex = activeSection;
+          stateRefs.lastSectionTotal = total;
         }
+
+        recalculateChars();
       }
     }
 
-    // 3. Non-TTU Overlay recovery check (Corrected frame check helper)
+    // 3. Non-TTU Overlay recovery check
     if (!TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
         const overlay = document.getElementById('nt-overlay');
         if (!overlay) {
-          checkAndRunOverlay(currentConfig, 'MutationObserver (Missing Overlay detection)');
+          addDebugLog('INFO', 'TextTracker', 'Overlay removed by host page DOM changes. Rebuilding overlay...');
+          checkAndRunOverlay(currentConfig);
         }
       }
     }
@@ -802,12 +658,6 @@ function startTimeTracker() {
 }
 
 function runOverlaySetup(cfg: any) {
-  console.log(`[TextTracker Diagnostic] runOverlaySetup() executing.`, {
-    hasBodyOverlay: !!document.body.querySelector('#nt-overlay'),
-    hasHtmlOverlay: !!document.documentElement.querySelector('#nt-overlay'),
-    callerStack: new Error().stack
-  });
-
   addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
     url: window.location.href,
     pos: cfg.overlayPosition
@@ -824,32 +674,10 @@ function runOverlaySetup(cfg: any) {
   );
 
   const overlay = document.getElementById('nt-overlay');
-  if (!overlay) {
-    console.error(`[TextTracker Diagnostic] ERROR: buildOverlay did not create #nt-overlay in DOM!`);
-    return;
-  }
+  if (!overlay) return;
 
   if (overlay.parentElement === document.body) {
-    console.log(`[TextTracker Diagnostic] Relocating overlay to documentElement for framework protection.`);
     document.documentElement.appendChild(overlay);
-  }
-
-  const removalObserver = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (Array.from(mutation.removedNodes).includes(overlay)) {
-        console.warn(`[TextTracker Diagnostic] ALERT: #nt-overlay was deleted from the DOM!`, {
-          deletedFromNode: mutation.target,
-          currentParent: overlay.parentElement,
-          analyzingLock: isAnalyzingPage,
-          stack: new Error().stack
-        });
-        removalObserver.disconnect();
-      }
-    }
-  });
-
-  if (overlay.parentElement) {
-    removalObserver.observe(overlay.parentElement, { childList: true });
   }
 }
 
@@ -902,7 +730,7 @@ browser.storage.onChanged.addListener((changes, area) => {
         return;
       }
 
-      checkAndRunOverlay(newCfg, 'browser.storage.onChanged (Config modified)');
+      checkAndRunOverlay(newCfg);
     }
   }
 
@@ -973,8 +801,6 @@ export default defineContentScript({
       const readerCfg = getReaderConfig(cfg);
       if (!readerCfg.enabled) return;
       startTimeTracker();
-      // setupTTUChronometer() execution has been removed from here.
-      // It is now handled cleanly by the MutationObserver exactly once when the DOM is ready.
       return;
     }
 
@@ -983,6 +809,6 @@ export default defineContentScript({
     if (cfg.overlayPosition === 'hidden') return;
 
     if (window.self !== window.top) return;
-    checkAndRunOverlay(cfg, 'defineContentScript.main()');
+    checkAndRunOverlay(cfg);
   },
 });
