@@ -46,6 +46,15 @@ function isLikelyJapaneseCached(): boolean {
 }
 function invalidateJpCache() { _jpCacheUrl = ''; _jpCacheResult = false; }
 
+/** Detect if an ad is currently playing on the video player */
+function isAdPlaying(): boolean {
+  const host = window.location.hostname;
+  if (host.includes('youtube.com')) {
+    return !!document.querySelector('.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+  }
+  return false;
+}
+
 function reachedQueueThreshold(cfg: any, liveSecs: number, vid: HTMLVideoElement): boolean {
   const tType = cfg.queueThresholdType ?? 'time';
   const tValue = cfg.queueThresholdValue ?? 1;
@@ -169,7 +178,7 @@ function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFall
 }
 
 function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: { hasTriggered: boolean; isManualLogging: boolean }, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
-  const shouldHide = shouldHideBadge(cfg, isLikelyJapaneseCached(), isMusic());
+  const shouldHide = shouldHideBadge(cfg, isLikelyJapaneseCached(), isMusic()) || isAdPlaying();
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
   if (shouldHide) { el?.remove(); return; }
 
@@ -280,11 +289,11 @@ export default defineContentScript({
     let currentUrl = '', channelId: string | null = null, cachedChannelName = '';
     let playClockStart = -1;
 
-    function flushPlayClock() {
+    function flushPlayClock(discard = false) {
       if (playClockStart < 0) return;
       const elapsed = (performance.now() - playClockStart) / 1000;
       playClockStart = -1;
-      if (elapsed > 0 && elapsed < 7200) watchedSecs += elapsed;
+      if (!discard && elapsed > 0 && elapsed < 7200) watchedSecs += elapsed;
     }
 
     const getLiveWatched = () => watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
@@ -294,7 +303,7 @@ export default defineContentScript({
       flushPlayClock();
       watchedSecs = 0; completedSessionSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0;
       currentSessionId = crypto.randomUUID(); state.hasTriggered = false; state.isManualLogging = false;
-      playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && trackedVideo.readyState > 2) ? performance.now() : -1;
+      playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && trackedVideo.readyState > 2 && !isAdPlaying()) ? performance.now() : -1;
       const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
       if (badgeLabel) badgeLabel.textContent = "0:00";
     };
@@ -350,14 +359,31 @@ export default defineContentScript({
         if (existing) completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
       })();
 
-      if (!vid.paused && !vid.ended && vid.readyState > 2) playClockStart = performance.now();
-      vid.addEventListener('playing', () => playClockStart = performance.now());
-      vid.addEventListener('play', () => { playClockStart = performance.now(); if (vid.currentTime < 5) state.hasTriggered = false; });
+      if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) playClockStart = performance.now();
+      vid.addEventListener('playing', () => {
+        if (isAdPlaying()) return;
+        playClockStart = performance.now();
+      });
+      vid.addEventListener('play', () => {
+        if (isAdPlaying()) return;
+        playClockStart = performance.now();
+        if (vid.currentTime < 5) state.hasTriggered = false;
+      });
       const stopClock = () => { flushPlayClock(); };
       vid.addEventListener('pause', stopClock); vid.addEventListener('waiting', stopClock); vid.addEventListener('seeking', stopClock);
-      vid.addEventListener('seeked', () => { if (vid.currentTime < 5) state.hasTriggered = false; if (!vid.paused && !vid.ended) playClockStart = performance.now(); });
+      vid.addEventListener('seeked', () => { if (vid.currentTime < 5) state.hasTriggered = false; if (!vid.paused && !vid.ended && !isAdPlaying()) playClockStart = performance.now(); });
 
       vid.addEventListener('timeupdate', async () => {
+        if (isAdPlaying()) {
+          flushPlayClock(true);
+          document.getElementById('nt-status-badge')?.remove();
+          return;
+        }
+
+        if (playClockStart < 0 && !vid.paused && !vid.ended && vid.readyState > 2) {
+          playClockStart = performance.now();
+        }
+
         const cfg = cachedConfig;
         if (!state.hasTriggered) ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
         if (state.hasTriggered || vid.duration <= 0 || state.isManualLogging) return;
@@ -399,6 +425,7 @@ export default defineContentScript({
       });
 
       vid.addEventListener('ended', async () => {
+        if (isAdPlaying()) return;
         flushPlayClock();
         if (state.hasTriggered) return;
         const cfg = cachedConfig;
@@ -435,7 +462,7 @@ export default defineContentScript({
 
             const badge = document.getElementById('nt-status-badge');
             if (badge) {
-              const shouldHide = shouldHideBadge(c, isLikelyJapaneseCached(), isMusic());
+              const shouldHide = shouldHideBadge(c, isLikelyJapaneseCached(), isMusic()) || isAdPlaying();
               if (shouldHide) {
                 badge.remove();
               } else {
@@ -451,7 +478,7 @@ export default defineContentScript({
         const clean = cleanUrl(window.location.href);
         if (!queue.some((q: any) => q.contentTitleEnglish === clean)) {
           completedSessionSecs = 0; watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
-          if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2) playClockStart = performance.now();
+          if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2 && !isAdPlaying()) playClockStart = performance.now();
           const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
           if (badgeLabel) badgeLabel.textContent = "0:00";
         }
