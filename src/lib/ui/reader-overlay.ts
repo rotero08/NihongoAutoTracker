@@ -108,10 +108,10 @@ export function injectTTUStyles() {
   .nt-ttu-btn-icon.primary:hover:not(:disabled) { background: rgba(240,180,41,0.15); color: var(--nt-accentHover); }
   .nt-ttu-btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
   .nt-ttu-linker { margin-top: 12px; border-top: 1px solid var(--nt-border); padding-top: 12px; }
-  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--nt-success); padding: 4px 6px; border-radius: 4px; transition: background .15s; background: rgba(61,220,132,0.05); }
+  .nt-ttu-link-compact { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--nt-success) !important; padding: 4px 6px; border-radius: 4px; transition: background .15s; background: color-mix(in srgb, var(--nt-success) 5%, transparent) !important; border: 1px solid color-mix(in srgb, var(--nt-success) 20%, transparent) !important; }
   .nt-ttu-link-compact-inner { display: flex; align-items: center; gap: 6px; cursor: pointer; flex: 1; }
   .nt-ttu-link-compact-inner:hover { opacity: 0.8; }
-  .nt-ttu-unlink-btn { background: none; border: none; color: var(--nt-error); cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
+  .nt-ttu-unlink-btn { background: none; border: none; color: var(--nt-error) !important; cursor: pointer; padding: 2px; display: flex; align-items: center; opacity: 0.6; transition: opacity .15s; }
   .nt-ttu-unlink-btn:hover { opacity: 1; }
   .nt-ttu-vol-pill { background: transparent; border: none; color: var(--nt-accent); font-family: var(--nt-font-mono, monospace); font-size: 11px; padding: 0 6px; cursor: pointer; opacity: .95; }
   .nt-ttu-vol-pill:hover { opacity: 1; }
@@ -139,7 +139,7 @@ export function injectTTUStyles() {
   .nt-ttu-history summary:hover { background: var(--nt-surfaceAlt, #13131f); color: var(--nt-text); }
   .nt-ttu-history-list { max-height: 140px; overflow-y: auto; padding: 0 12px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
   .nt-ttu-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--nt-text); background: var(--nt-surfaceAlt, #13131f); padding: 6px 8px; border-radius: 4px; }
-  .nt-ttu-history-del { background: none; border: none; color: var(--nt-error); cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; opacity: .75; }
+  .nt-ttu-history-del { background: none; border: none; color: var(--nt-error) !important; cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; opacity: .75; }
   .nt-ttu-history-del:hover { opacity: 1; }
   `;
   document.head.appendChild(s);

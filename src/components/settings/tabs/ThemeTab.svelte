@@ -25,6 +25,7 @@
         textMuted: "#7a8ca5",
         accent: "#f0b429",
         accentHover: "#ffd060",
+        success: "#3ddc84",
     };
 
     interface CustomTheme {
@@ -933,7 +934,7 @@
                     <div
                         style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;"
                     >
-                        {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface Panel" }, { key: "border", label: "Border Color" }, { key: "text", label: "Text Color" }, { key: "textMuted", label: "Muted Text" }, { key: "accent", label: "Accent Color" }] as colorItem}
+                        {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface Panel" }, { key: "border", label: "Border Color" }, { key: "text", label: "Text Color" }, { key: "textMuted", label: "Muted Text" }, { key: "accent", label: "Accent Color" }, { key: "success", label: "Success Color" }] as colorItem}
                             <div
                                 style="display: flex; align-items: center; justify-content: space-between; gap: 8px; background: rgba(0,0,0,0.1); padding: 6px 10px; border-radius: 4px; border: 1px solid var(--color-border);"
                             >
@@ -1174,7 +1175,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -1394,7 +1395,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -1612,7 +1613,7 @@
                             <div
                                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px;"
                             >
-                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }] as colorItem}
+                                {#each [{ key: "background", label: "Background" }, { key: "surface", label: "Surface" }, { key: "border", label: "Border" }, { key: "text", label: "Text" }, { key: "textMuted", label: "Muted" }, { key: "accent", label: "Accent" }, { key: "success", label: "Success" }] as colorItem}
                                     <div
                                         style="display: flex; align-items: center; justify-content: space-between; gap: 6px; background: rgba(0,0,0,0.15); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--color-border);"
                                     >
@@ -2185,11 +2186,11 @@
                                 >⠿</span
                             >
                             <span
-                                style="color: {currentDraft.text}; font-size: 10px; font-weight: bold; font-variant-numeric: tabular-nums;"
+                                style="color: {currentDraft.accent}; font-size: 10px; font-weight: bold; font-variant-numeric: tabular-nums;"
                                 >15:32</span
                             >
                             <span
-                                style="color: {currentDraft.accent}; font-size: 10px; cursor: default;"
+                                style="color: {currentDraft.textMuted}; font-size: 10px; cursor: default;"
                                 >⏸</span
                             >
                             <span
@@ -2201,7 +2202,7 @@
                                     viewBox="0 0 24 24"
                                     fill="none"
                                     stroke="currentColor"
-                                    stroke-width="2"
+                                    stroke-width="2.5"
                                     stroke-linecap="round"
                                     stroke-linejoin="round"
                                     ><path
@@ -2265,18 +2266,12 @@
                                         width="12"
                                         height="12"
                                         viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        ><polygon
-                                            points="5 3 19 12 5 21 5 3"
-                                        /></svg
+                                        fill="currentColor"
+                                        ><path d="M8 5v14l11-7z" /></svg
                                     >
                                 </span>
                                 <span
-                                    style="color: {currentDraft.text}; cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
+                                    style="color: {currentDraft.textMuted}; cursor: default; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
                                 >
                                     <svg
                                         width="12"
@@ -2284,7 +2279,7 @@
                                         viewBox="0 0 24 24"
                                         fill="none"
                                         stroke="currentColor"
-                                        stroke-width="2"
+                                        stroke-width="2.5"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                         ><path
@@ -2301,7 +2296,7 @@
                                         viewBox="0 0 24 24"
                                         fill="none"
                                         stroke="currentColor"
-                                        stroke-width="2"
+                                        stroke-width="2.5"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                         ><path
@@ -2322,7 +2317,7 @@
                                         viewBox="0 0 24 24"
                                         fill="none"
                                         stroke="currentColor"
-                                        stroke-width="2"
+                                        stroke-width="2.5"
                                         stroke-linecap="round"
                                         stroke-linejoin="round"
                                         ><line
@@ -2338,24 +2333,33 @@
                             </div>
 
                             <div
-                                style="background: {currentDraft.surface}; border: 1px solid {currentDraft.border}; border-left: 3px solid var(--color-success); border-radius: 4px; padding: 4px 6px; display: flex; align-items: center; justify-content: space-between; font-size: 8px; text-align: left;"
+                                style="background: color-mix(in srgb, {currentDraft.success} 5%, {currentDraft.surface}); border: 1px solid color-mix(in srgb, {currentDraft.success} 25%, transparent); border-radius: 4px; padding: 6px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-align: left; width: 100%;"
                             >
                                 <div
                                     style="display: flex; align-items: center; gap: 4px; overflow: hidden;"
                                 >
-                                    <span
-                                        style="color: var(--color-success); font-weight: bold;"
-                                        >✓</span
+                                    <svg
+                                        width="11"
+                                        height="11"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="3"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        style="color: {currentDraft.success}; flex-shrink: 0;"
                                     >
+                                        <polyline points="20 6 9 17 4 12" />
+                                    </svg>
                                     <span
-                                        style="color: var(--color-success); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px;"
+                                        style="color: {currentDraft.success}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; font-weight: bold;"
                                         >無職転生 ~異世界行ったら本気だす~</span
                                     >
                                 </div>
                                 <span
                                     style="color: {currentDraft.accent}; font-weight: bold; white-space: nowrap;"
                                     >Vol 1 <span
-                                        style="color: {currentDraft.textMuted}; margin-left: 2px;"
+                                        style="color: #f0706a; margin-left: 4px; font-weight: bold; cursor: default;"
                                         >×</span
                                     ></span
                                 >
@@ -2377,7 +2381,7 @@
                                         <div
                                             style="font-size: 10px; font-weight: bold; color: {currentDraft.accent}; margin-top: 1px;"
                                         >
-                                            0m
+                                            12m
                                         </div>
                                     </div>
                                     <div>
@@ -2397,6 +2401,50 @@
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+
+                            <!-- past sessions history details mockup -->
+                            <div
+                                style="border-top: 1px solid {currentDraft.border}; margin-top: 6px; padding-top: 6px; text-align: left;"
+                            >
+                                <details
+                                    open
+                                    style="cursor: pointer; user-select: none;"
+                                >
+                                    <summary
+                                        style="font-size: 11px; font-weight: bold; color: {currentDraft.textMuted}; display: flex; align-items: center; gap: 4px; outline: none; list-style: none;"
+                                    >
+                                        <span
+                                            style="font-size: 9px; color: {currentDraft.textMuted};"
+                                            >▼</span
+                                        > Past Sessions History
+                                    </summary>
+                                    <div
+                                        style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px;"
+                                    >
+                                        <div
+                                            style="display: flex; align-items: center; justify-content: space-between; background: {currentDraft.surfaceAlt ||
+                                                currentDraft.surface}; padding: 6px 8px; border-radius: 4px; font-size: 11px; color: {currentDraft.text};"
+                                        >
+                                            <span
+                                                style="color: {currentDraft.textMuted};"
+                                                >24 May</span
+                                            >
+                                            <span
+                                                style="font-weight: bold; color: {currentDraft.accent};"
+                                                >12m</span
+                                            >
+                                            <span
+                                                style="color: {currentDraft.textMuted}; font-family: var(--font-mono);"
+                                                >0 chars</span
+                                            >
+                                            <button
+                                                style="background: none; border: none; color: #f0706a; font-weight: bold; font-size: 12px; cursor: default; padding: 0; line-height: 1;"
+                                                >×</button
+                                            >
+                                        </div>
+                                    </div>
+                                </details>
                             </div>
                         </div>
 
