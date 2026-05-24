@@ -16,12 +16,19 @@ import '@/assets/overlay.css';
 
 let currentConfig: any = {};
 let websiteOverlayDismissed = false;
-let isAnalyzingPage = false; // Strict analysis lock to prevent self-closing bugs
+let isAnalyzingPage = false;
+let cachedIsJapanese: boolean | null = null;
 
 // Global cache to identify active section indexes based on text rendering
 let sectionTextsCached: string[] = [];
 let sectionAccCharCounts: number[] = [];
 let hasStaticOffsets = false;
+
+// Trackers to optimize mutation and chrono lookups
+let lastObservedContainerId = '';
+let progressObserver: MutationObserver | null = null;
+let scrollTimeout: any = null;
+let isChronoInitializing = false; // Prevents double initialization on reader load
 
 function normalizeText(str: string): string {
   return str.replace(/[\s\p{P}]/gu, '').slice(0, 80);
@@ -50,15 +57,26 @@ function isWebsiteOverlaySkipped(cfg: any): boolean {
 }
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
+  if (cachedIsJapanese !== null) return cachedIsJapanese;
+
   const host = window.location.hostname;
   const allowSites: string[] = cfg.allowSites ?? [...JP_DOMAINS_DEFAULT];
   const allowListOnly: boolean = cfg.allowListOnly ?? false;
 
-  if (allowSites.some((d: string) => host.includes(d))) return true;
-  if (allowListOnly) return false;
+  if (allowSites.some((d: string) => host.includes(d))) {
+    cachedIsJapanese = true;
+    return true;
+  }
+  if (allowListOnly) {
+    cachedIsJapanese = false;
+    return false;
+  }
 
   const lang = document.documentElement.lang;
-  if (lang.startsWith('ja')) return true;
+  if (lang.startsWith('ja')) {
+    cachedIsJapanese = true;
+    return true;
+  }
 
   await new Promise(r => setTimeout(r, 1500));
   const sample = (document.body?.innerText ?? '').slice(0, 8000);
@@ -71,21 +89,15 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
     isJapanese: result
   });
 
+  cachedIsJapanese = result;
   return result;
 }
-
-const ttuState = {
-  id: crypto.randomUUID(),
-  running: false,
-  timeMs: 0,
-  chars: 0, // Explicitly declared to prevent ts compile-time warnings
-};
 
 interface StateRefs {
   globalSessionStartChar: number;
   globalManualCharOffset: number;
   globalLastTick: number;
-  lastSectionIndex: number; // Strictly typed number (never null) to satisfy TS compiler
+  lastSectionIndex: number;
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
 }
@@ -98,6 +110,34 @@ const stateRefs: StateRefs = {
   lastSectionTotal: 0,
   visitedSections: new Map<number, number>()
 };
+
+/**
+ * Reactive proxy container for the tracking state.
+ * Intercepts resets to synchronize the tick baseline, eliminating fractional carryover.
+ */
+const ttuState = new Proxy({
+  id: crypto.randomUUID(),
+  running: false,
+  timeMs: 0,
+  chars: 0,
+}, {
+  set(target, prop, value) {
+    if (prop === 'timeMs') {
+      const numVal = Number(value) || 0;
+      if (numVal < target.timeMs || numVal === 0) {
+        stateRefs.globalLastTick = Date.now();
+      }
+      target.timeMs = numVal;
+      return true;
+    }
+    if (prop === 'chars') {
+      target.chars = Number(value) || 0;
+      return true;
+    }
+    (target as any)[prop] = value;
+    return true;
+  }
+});
 
 let isSyncing = false;
 
@@ -123,6 +163,23 @@ function getReaderName() {
   if (host.includes('manga.manabe.es')) return 'Manabe Reader';
   if (host.includes('reader.ttsu.app')) return 'TTU Reader';
   return 'Reader';
+}
+
+/**
+ * Validates if the user is currently looking at active reading content.
+ */
+function isReadingViewActive(): boolean {
+  const path = window.location.pathname;
+  if (path.includes('/settings') || path === '/' || path === '') {
+    return false;
+  }
+  const hasContainer = !!(
+    document.querySelector('.book-content-container') ||
+    document.querySelector('.book-content') ||
+    document.querySelector('[data-ref="container"]') ||
+    document.querySelector('.reader-container')
+  );
+  return hasContainer;
 }
 
 async function liveSyncQueue() {
@@ -224,6 +281,7 @@ async function saveSessionAndQueue() {
   stateRefs.lastSectionIndex = -1;
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
+  stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
 
   showToast('Success', 'Session queued!');
@@ -258,7 +316,6 @@ interface BooksDbBook {
 
 function getBookIdFromUrl(): number | null {
   try {
-    // 1. Try matching pathname identifiers (e.g., /b/123, /book/123)
     const pathParts = window.location.pathname.split('/');
     const bIdx = pathParts.findIndex(part => part === 'b' || part === 'book');
     if (bIdx !== -1 && pathParts[bIdx + 1]) {
@@ -267,7 +324,6 @@ function getBookIdFromUrl(): number | null {
       if (!isNaN(parsed)) return parsed;
     }
 
-    // 2. Query parameter fallback (e.g., ?id=123)
     const params = new URLSearchParams(window.location.search);
     const id = params.get('id');
     if (id) {
@@ -290,7 +346,6 @@ function fetchBookFromDatabase(bookId: number): Promise<BooksDbBook | null> {
         console.log(`[TextTracker Diagnostic] Discovered databases on this origin:`, dbNames);
       }
 
-      // Try opening each discovered database in sequence to find the book
       for (const name of dbNames) {
         console.log(`[TextTracker Diagnostic] Testing database: '${name}'...`);
         const book = await new Promise<BooksDbBook | null>((res) => {
@@ -304,10 +359,10 @@ function fetchBookFromDatabase(bookId: number): Promise<BooksDbBook | null> {
             const stores = Array.from(db.objectStoreNames);
             console.log(`  [Database] Opened '${name}' (v${db.version}). Stores:`, stores);
 
-            // Svelte Reader book stores could be 'books' or 'keyvaluepairs' or 'files'
-            const targetStore = stores.find(s => s === 'books' || s === 'keyvaluepairs' || s === 'files');
+            // Added "data" to target store matches for v6 Svelte Reader layout compatibility
+            const targetStore = stores.find(s => s === 'books' || s === 'keyvaluepairs' || s === 'files' || s === 'data');
             if (!targetStore) {
-              console.log(`    [Database] Store 'books' or 'keyvaluepairs' not found in '${name}'`);
+              console.log(`    [Database] Target store not found in '${name}'`);
               db.close();
               res(null);
               return;
@@ -317,7 +372,6 @@ function fetchBookFromDatabase(bookId: number): Promise<BooksDbBook | null> {
               const transaction = db.transaction([targetStore], 'readonly');
               const store = transaction.objectStore(targetStore);
 
-              // Query key by numeric and string
               const getNumeric = store.get(bookId);
               getNumeric.onsuccess = () => {
                 if (getNumeric.result) {
@@ -371,7 +425,7 @@ function calculateSectionAccCharCounts(htmlContent: string): number[] {
   return sections.map((section) => {
     const paragraphs = Array.from(section.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
       if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-      return true; // MATCH REMOVAL OF TEXT FILTER
+      return true;
     });
 
     const sectionCharCount = paragraphs.reduce((acc, el) => {
@@ -395,8 +449,6 @@ function calculateSectionAccCharCounts(htmlContent: string): number[] {
 
 function getTtuNativeProgressFromDom(): { current: number; total: number } | null {
   try {
-    // 1. Check all elements matching the "Click to copy Progress" title and filter for the visible one
-    // High-precision visibility verification containing strict visibility, display, and opacity parameters
     const copyDivs = Array.from(document.querySelectorAll('div[title="Click to copy Progress"]'));
     const visibleCopyDiv = copyDivs.find(el => {
       const rect = el.getBoundingClientRect();
@@ -412,12 +464,10 @@ function getTtuNativeProgressFromDom(): { current: number; total: number } | nul
       const text = visibleCopyDiv.textContent;
       const match = text.replace(/,/g, '').match(/(\d+)\s*\/\s*(\d+)/);
       if (match) {
-        console.log(`[TextTracker Diagnostic] getTtuNativeProgressFromDom matched 'Click to copy Progress' element. Text: "${text}"`, visibleCopyDiv);
         return { current: parseInt(match[1], 10), total: parseInt(match[2], 10) };
       }
     }
 
-    // 2. Scan the document body for fractional text "X / Y" (excluding hidden segments)
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let n;
     while ((n = walker.nextNode())) {
@@ -436,7 +486,6 @@ function getTtuNativeProgressFromDom(): { current: number; total: number } | nul
           const text = val.replace(/,/g, '');
           const match = text.match(/^(\d+)\s*\/\s*(\d+)/);
           if (match) {
-            console.log(`[TextTracker Diagnostic] getTtuNativeProgressFromDom matched visible text node. Text: "${val}" Parent:`, parent);
             return { current: parseInt(match[1], 10), total: parseInt(match[2], 10) };
           }
         }
@@ -446,26 +495,72 @@ function getTtuNativeProgressFromDom(): { current: number; total: number } | nul
   return null;
 }
 
-async function checkAndRunOverlay(cfg: any) {
-  if (window.self !== window.top) return; // Only execute overlay building in top-level context
+/**
+ * Perform progression mapping and dispatch instant UI updates.
+ */
+function recalculateChars() {
+  if (!ttuState.running) return;
 
-  if (isAnalyzingPage) {
-    console.log(`[TextTracker Diagnostic] Overlay check skipped: analysis already in progress.`);
+  if (!isReadingViewActive()) {
+    ttuState.running = false;
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
     return;
   }
+
+  const charData = extractAdvancedCharCount();
+  if (charData !== null) {
+    const { current } = charData;
+
+    if (stateRefs.globalSessionStartChar === -1) {
+      stateRefs.globalSessionStartChar = current;
+    }
+
+    let diff = current - stateRefs.globalSessionStartChar;
+    if (diff < 0) diff = 0;
+
+    let calculatedChars = diff + stateRefs.globalManualCharOffset;
+    ttuState.chars = calculatedChars;
+
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+  }
+}
+
+/**
+ * Targets and observes Svelte/TTU's progress changes directly.
+ */
+function setupProgressObserver() {
+  if (progressObserver) return;
+
+  const target = document.querySelector('div[title="Click to copy Progress"]');
+  if (!target) return;
+
+  progressObserver = new MutationObserver(() => {
+    if (ttuState.running && isReadingViewActive()) {
+      recalculateChars();
+    }
+  });
+
+  progressObserver.observe(target, { childList: true, characterData: true, subtree: true });
+}
+
+async function checkAndRunOverlay(cfg: any, triggerSource = 'unknown') {
+  if (window.self !== window.top) return;
+
+  console.log(`[TextTracker Diagnostic] checkAndRunOverlay() triggered by: '${triggerSource}'`, {
+    isAnalyzingPage,
+    hasExistingOverlay: !!document.getElementById('nt-overlay')
+  });
+
+  if (isAnalyzingPage) return;
   const existing = document.getElementById('nt-overlay');
-  if (existing) {
-    console.log(`[TextTracker Diagnostic] Overlay check skipped: element already exists in DOM.`);
-    return;
-  }
+  if (existing) return;
 
   isAnalyzingPage = true;
-  console.log(`[TextTracker Diagnostic] Starting Japanese page analysis...`);
   try {
     const isJP = await isJapanesePage(cfg);
-    console.log(`[TextTracker Diagnostic] Analysis result: isJapanese = ${isJP}`);
     if (isJP && cfg.overlayPosition !== 'hidden' && !document.getElementById('nt-overlay')) {
-      console.log(`[TextTracker Diagnostic] Appending overlay to DOM...`);
       runOverlaySetup(cfg);
     }
   } catch (e) {
@@ -476,104 +571,102 @@ async function checkAndRunOverlay(cfg: any) {
 }
 
 async function setupTTUChronometer() {
-  const pt = findTTUInsertPoint();
-  if (!pt) return;
+  if (isChronoInitializing) return;
+  if (document.getElementById('nt-ttu-chrono-wrapper')) return;
 
-  // Scan and log all active databases on this origin to help debug store structure
-  if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
-    try {
-      const dbs = await indexedDB.databases();
-      console.log(`[TextTracker Diagnostic] Active IndexedDB databases on this origin:`, dbs);
-    } catch (e) {
-      console.error(`[TextTracker Diagnostic] Failed to list IndexedDB databases:`, e);
-    }
-  }
+  isChronoInitializing = true;
+  try {
+    const pt = findTTUInsertPoint();
+    if (!pt) return;
 
-  const bookId = getBookIdFromUrl();
+    const bookId = getBookIdFromUrl();
 
-  if (bookId !== null) {
-    const bookData = await fetchBookFromDatabase(bookId);
-    if (bookData && bookData.htmlContent) {
-      sectionAccCharCounts = calculateSectionAccCharCounts(bookData.htmlContent);
-      hasStaticOffsets = sectionAccCharCounts.length > 0;
+    if (bookId !== null) {
+      const bookData = await fetchBookFromDatabase(bookId);
+      if (bookData && bookData.htmlContent) {
+        sectionAccCharCounts = calculateSectionAccCharCounts(bookData.htmlContent);
+        hasStaticOffsets = sectionAccCharCounts.length > 0;
 
-      // Cache normalized text prefixes for section index matching
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(bookData.htmlContent, 'text/html');
-      sectionTextsCached = Array.from(doc.body.children).map(section => {
-        return normalizeText(section.textContent || '');
-      });
-      console.log(`[TextTracker Diagnostic] Static offsets successfully loaded from database. Sections count: ${sectionAccCharCounts.length}`);
-    }
-  }
-
-  if (!hasStaticOffsets) {
-    console.log(`[TextTracker Diagnostic] Database offsets empty or unreachable. Operating in Dynamic Offset Mode.`);
-  }
-
-  setupTTUChronometerUI(pt, currentConfig, ttuState, stateRefs, {
-    getTTUTitle,
-    parseTitleWithConfig,
-    extractTTUCharCount: () => {
-      const res = extractAdvancedCharCount();
-      return res !== null ? res.current : null;
-    },
-    getReaderName,
-    getReaderConfig,
-    liveSyncQueue,
-    saveSessionAndQueue
-  });
-
-  if ((window as any).ntChronoInterval) {
-    clearInterval((window as any).ntChronoInterval);
-  }
-
-  (window as any).ntChronoInterval = setInterval(() => {
-    if (ttuState.running && !document.hidden) {
-      const now = Date.now();
-      ttuState.timeMs += (now - stateRefs.globalLastTick);
-
-      const charData = extractAdvancedCharCount();
-      if (charData !== null) {
-        const { current } = charData;
-
-        if (stateRefs.globalSessionStartChar === -1) {
-          stateRefs.globalSessionStartChar = current;
-          console.log(`[TextTracker Diagnostic] Set session starting baseline to: ${current}`);
-        }
-
-        let diff = current - stateRefs.globalSessionStartChar;
-        if (diff < 0) diff = 0;
-
-        let calculatedChars = diff + stateRefs.globalManualCharOffset;
-
-        // DOM Progress indicator is used SOLELY for diagnostic logging.
-        // The progression engine remains completely decoupled and natively tracked.
-        const nativeTtuProgress = getTtuNativeProgressFromDom();
-
-        ttuState.chars = calculatedChars;
-
-        console.log(`[TextTracker Diagnostic] Chronometer Tick Progress:`, {
-          calculatedCurrentInActiveSection: current,
-          startingSessionBaseline: stateRefs.globalSessionStartChar,
-          diffReadThisSession: diff,
-          manualOffsetCalculated: stateRefs.globalManualCharOffset,
-          finalCalculatedChars: ttuState.chars,
-          activeSection: stateRefs.lastSectionIndex,
-          nativeTtuProgressCurrent: nativeTtuProgress ? nativeTtuProgress.current : 'not found',
-          nativeTtuProgressTotal: nativeTtuProgress ? nativeTtuProgress.total : 'not found'
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(bookData.htmlContent, 'text/html');
+        sectionTextsCached = Array.from(doc.body.children).map(section => {
+          return normalizeText(section.textContent || '');
         });
+        console.log(`[TextTracker Diagnostic] Static offsets loaded. Sections: ${sectionAccCharCounts.length}`);
       }
-      stateRefs.globalLastTick = now;
-
-      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-      if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-
-      if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
-    } else if (ttuState.running && document.hidden) {
-      stateRefs.globalLastTick = Date.now();
     }
-  }, 1000);
+
+    setupTTUChronometerUI(pt, currentConfig, ttuState, stateRefs, {
+      getTTUTitle,
+      parseTitleWithConfig,
+      extractTTUCharCount: () => {
+        const res = extractAdvancedCharCount();
+        return res !== null ? res.current : null;
+      },
+      getReaderName,
+      getReaderConfig,
+      liveSyncQueue,
+      saveSessionAndQueue
+    });
+
+    setupProgressObserver();
+
+    if ((window as any).ntChronoInterval) {
+      clearInterval((window as any).ntChronoInterval);
+    }
+
+    (window as any).ntChronoInterval = setInterval(() => {
+      if (!isReadingViewActive()) {
+        if (ttuState.running) {
+          ttuState.running = false;
+          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        }
+        return;
+      }
+
+      if (ttuState.running && !document.hidden) {
+        const now = Date.now();
+        ttuState.timeMs += (now - stateRefs.globalLastTick);
+        stateRefs.globalLastTick = now;
+
+        recalculateChars();
+
+        if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
+      } else if (ttuState.running && document.hidden) {
+        stateRefs.globalLastTick = Date.now();
+      }
+    }, 1000);
+  } finally {
+    isChronoInitializing = false;
+  }
+}
+
+// ── Ultra-Performant Interaction Hooks ────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  const handleScrollUpdate = () => {
+    if (!ttuState.running || !isReadingViewActive()) return;
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+
+    scrollTimeout = setTimeout(() => {
+      recalculateChars();
+    }, 150);
+  };
+
+  window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
+  window.addEventListener('resize', handleScrollUpdate, { passive: true });
+
+  window.addEventListener('click', () => {
+    if (ttuState.running && isReadingViewActive()) {
+      setTimeout(recalculateChars, 40);
+    }
+  }, { passive: true });
+
+  window.addEventListener('keyup', (e) => {
+    if (ttuState.running && isReadingViewActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
+      setTimeout(recalculateChars, 40);
+    }
+  }, { passive: true });
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -586,77 +679,80 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       if (readerCfg.enabled !== false) setupTTUChronometer();
     }
 
-    // 2. Real-time section transition detector
-    // Captures page shifts instantly, preventing dynamic offset skips during fast paging
-    const charData = extractAdvancedCharCount();
-    if (charData !== null) {
-      const { total, sectionIndex, isPaginated } = charData;
-      const activeSection = sectionIndex !== null ? sectionIndex : -1;
+    if (ttuState.running && isReadingViewActive()) {
+      setupProgressObserver();
+    }
 
-      if (stateRefs.lastSectionIndex !== activeSection) {
-        console.log(`[TextTracker Diagnostic] Section transition detected: ${stateRefs.lastSectionIndex} -> ${activeSection}`);
+    // 2. High-Performance Container Transition detector.
+    const container = document.querySelector('.book-content-container') || document.querySelector('.book-content');
+    const currentContainerId = container ? container.id : '';
 
-        // In paginated mode, initialize globalSessionStartChar to 0 instantly
-        // instead of waiting for the chronometer tick, completely preventing rapid page-turning gaps
-        if (isPaginated && activeSection !== -1) {
-          stateRefs.globalSessionStartChar = 0;
-          console.log(`[TextTracker Diagnostic] Paginated transition. Initialized baseline to 0.`);
-        } else {
-          stateRefs.globalSessionStartChar = -1; // Continuous baseline is initialized on the next tick
-        }
+    if (currentContainerId && currentContainerId !== lastObservedContainerId) {
+      lastObservedContainerId = currentContainerId;
 
-        if (activeSection === -1) {
-          stateRefs.lastSectionIndex = -1;
-          stateRefs.globalManualCharOffset = 0;
-          stateRefs.visitedSections.clear(); // Clear cached sections to completely fix backwards scrolling drift
-          console.log(`[TextTracker Diagnostic] Reset dynamic tracking baseline to 0. Cleared visitedSections cache.`);
-        } else {
-          if (hasStaticOffsets) {
-            // Static DB offset mapper
-            stateRefs.globalManualCharOffset = sectionAccCharCounts[activeSection - 1] || 0;
-            stateRefs.lastSectionIndex = activeSection;
+      const charData = extractAdvancedCharCount();
+      if (charData !== null) {
+        const { total, sectionIndex, isPaginated } = charData;
+        const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+        if (stateRefs.lastSectionIndex !== activeSection) {
+          console.log(`[TextTracker Diagnostic] Container transition: ${stateRefs.lastSectionIndex} -> ${activeSection}`);
+
+          if (isPaginated && activeSection !== -1) {
+            stateRefs.globalSessionStartChar = 0;
           } else {
-            // Dynamic visitedSections offset mapper fallback
-            if (stateRefs.lastSectionIndex === -1) {
-              stateRefs.lastSectionIndex = activeSection;
-              stateRefs.lastSectionTotal = total;
-              stateRefs.visitedSections.set(activeSection, 0);
-            }
+            stateRefs.globalSessionStartChar = -1;
+          }
 
-            if (stateRefs.lastSectionIndex !== activeSection) {
-              if (activeSection > stateRefs.lastSectionIndex) {
-                // --- FORWARD PROGRESSION ---
-                if (stateRefs.visitedSections.has(activeSection)) {
-                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+          if (activeSection === -1) {
+            stateRefs.lastSectionIndex = -1;
+            stateRefs.globalManualCharOffset = 0;
+            stateRefs.visitedSections.clear();
+          } else {
+            if (hasStaticOffsets) {
+              stateRefs.globalManualCharOffset = sectionAccCharCounts[activeSection - 1] || 0;
+              stateRefs.lastSectionIndex = activeSection;
+            } else {
+              if (stateRefs.lastSectionIndex === -1) {
+                stateRefs.lastSectionIndex = activeSection;
+                stateRefs.lastSectionTotal = total;
+                stateRefs.visitedSections.set(activeSection, 0);
+              }
+
+              if (stateRefs.lastSectionIndex !== activeSection) {
+                if (activeSection > stateRefs.lastSectionIndex) {
+                  if (stateRefs.visitedSections.has(activeSection)) {
+                    stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                  } else {
+                    stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                    stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                  }
                 } else {
-                  stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                }
-              } else {
-                // --- BACKWARD PROGRESSION ---
-                if (stateRefs.visitedSections.has(activeSection)) {
-                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                } else {
-                  stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                  if (stateRefs.visitedSections.has(activeSection)) {
+                    stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                  } else {
+                    stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                    stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                  }
                 }
               }
-            }
 
-            stateRefs.lastSectionIndex = activeSection;
-            stateRefs.lastSectionTotal = total;
+              stateRefs.lastSectionIndex = activeSection;
+              stateRefs.lastSectionTotal = total;
+            }
           }
+
+          recalculateChars();
         }
       }
     }
 
-    // 3. Non-TTU Overlay recovery check (Heals dynamically deleted overlays)
+    // 3. Non-TTU Overlay recovery check (Corrected frame check helper)
     if (!TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
       if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
         const overlay = document.getElementById('nt-overlay');
         if (!overlay) {
-          console.log(`[TextTracker Diagnostic] Overlay removed by host page DOM changes. Rebuilding overlay...`);
-          checkAndRunOverlay(currentConfig);
+          checkAndRunOverlay(currentConfig, 'MutationObserver (Missing Overlay detection)');
         }
       }
     }
@@ -667,7 +763,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
     if (req.action === 'GET_ACTIVE_TIME') {
-      const nt = (window as any).__nt;
+      const nt = (window as any).__nt_tracker_session_active_ms__;
       if (nt && nt.getTotal) sendResponse({ minutes: Math.floor(nt.getTotal() / 60000) });
     }
     if (req.action === 'SHOW_TOAST') {
@@ -696,23 +792,65 @@ function startTimeTracker() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { accrue(); isVisible = false; } else { lastStamp = Date.now(); isVisible = true; }
   });
-  (window as any).__nt = { getTotal, setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); }, pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } }, isPaused: () => isPaused };
+
+  (window as any).__nt_tracker_session_active_ms__ = {
+    getTotal,
+    setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); },
+    pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
+    isPaused: () => isPaused
+  };
 }
 
 function runOverlaySetup(cfg: any) {
+  console.log(`[TextTracker Diagnostic] runOverlaySetup() executing.`, {
+    hasBodyOverlay: !!document.body.querySelector('#nt-overlay'),
+    hasHtmlOverlay: !!document.documentElement.querySelector('#nt-overlay'),
+    callerStack: new Error().stack
+  });
+
   addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
     url: window.location.href,
     pos: cfg.overlayPosition
   });
+
   buildOverlay(
     cfg,
     { dismissed: websiteOverlayDismissed },
-    (isPaused) => { (window as any).__nt.pause(isPaused); },
-    () => { (window as any).__nt.setMs(0); },
-    (ms) => { (window as any).__nt.setMs(ms); },
-    () => (window as any).__nt.getTotal(),
+    (isPaused) => { (window as any).__nt_tracker_session_active_ms__.pause(isPaused); },
+    () => { (window as any).__nt_tracker_session_active_ms__.setMs(0); },
+    (ms) => { (window as any).__nt_tracker_session_active_ms__.setMs(ms); },
+    () => (window as any).__nt_tracker_session_active_ms__.getTotal(),
     () => { websiteOverlayDismissed = true; }
   );
+
+  const overlay = document.getElementById('nt-overlay');
+  if (!overlay) {
+    console.error(`[TextTracker Diagnostic] ERROR: buildOverlay did not create #nt-overlay in DOM!`);
+    return;
+  }
+
+  if (overlay.parentElement === document.body) {
+    console.log(`[TextTracker Diagnostic] Relocating overlay to documentElement for framework protection.`);
+    document.documentElement.appendChild(overlay);
+  }
+
+  const removalObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (Array.from(mutation.removedNodes).includes(overlay)) {
+        console.warn(`[TextTracker Diagnostic] ALERT: #nt-overlay was deleted from the DOM!`, {
+          deletedFromNode: mutation.target,
+          currentParent: overlay.parentElement,
+          analyzingLock: isAnalyzingPage,
+          stack: new Error().stack
+        });
+        removalObserver.disconnect();
+      }
+    }
+  });
+
+  if (overlay.parentElement) {
+    removalObserver.observe(overlay.parentElement, { childList: true });
+  }
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -746,7 +884,7 @@ browser.storage.onChanged.addListener((changes, area) => {
         }
       }
     } else {
-      if (window.self !== window.top) return; // Only process overlay changes in top-level context
+      if (window.self !== window.top) return;
 
       if (isWebsiteOverlaySkipped(newCfg) || websiteOverlayDismissed) {
         const overlay = document.getElementById('nt-overlay');
@@ -764,7 +902,7 @@ browser.storage.onChanged.addListener((changes, area) => {
         return;
       }
 
-      checkAndRunOverlay(newCfg);
+      checkAndRunOverlay(newCfg, 'browser.storage.onChanged (Config modified)');
     }
   }
 
@@ -774,7 +912,9 @@ browser.storage.onChanged.addListener((changes, area) => {
     const existing = queue.find((q: any) => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
 
     if (!existing && ttuState.timeMs > 0) {
-      ttuState.timeMs = 0; ttuState.chars = 0;
+      ttuState.timeMs = 0;
+      ttuState.chars = 0;
+      stateRefs.globalLastTick = Date.now();
 
       const initCount = extractAdvancedCharCount();
       stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
@@ -833,8 +973,8 @@ export default defineContentScript({
       const readerCfg = getReaderConfig(cfg);
       if (!readerCfg.enabled) return;
       startTimeTracker();
-      await new Promise(r => setTimeout(r, 2500));
-      setupTTUChronometer();
+      // setupTTUChronometer() execution has been removed from here.
+      // It is now handled cleanly by the MutationObserver exactly once when the DOM is ready.
       return;
     }
 
@@ -842,7 +982,7 @@ export default defineContentScript({
     startTimeTracker();
     if (cfg.overlayPosition === 'hidden') return;
 
-    if (window.self !== window.top) return; // Only process overlay triggers in top-level context
-    checkAndRunOverlay(cfg);
+    if (window.self !== window.top) return;
+    checkAndRunOverlay(cfg, 'defineContentScript.main()');
   },
 });
