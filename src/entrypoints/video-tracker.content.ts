@@ -568,17 +568,17 @@ export default defineContentScript({
 
               btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
 
-              // Adjusted styles to match YouTube's native action buttons (subtle background, correct dimensions)
+              // Adjusted styles to match YouTube's native action buttons (transparent background, correct dimensions)
               Object.assign(btn.style, {
-                background: 'rgba(255, 255, 255, 0.1)',
+                background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
                 margin: '0 4px',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: '36px',
-                height: '36px',
+                width: '40px',
+                height: '40px',
                 borderRadius: '50%',
                 transition: 'background-color 0.2s',
                 filter: 'none !important',
@@ -587,7 +587,7 @@ export default defineContentScript({
               });
 
               btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-              btn.onmouseleave = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+              btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
               btn.onclick = (e) => {
                 e.stopPropagation();
                 showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);

@@ -172,29 +172,39 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   requestAnimationFrame(() => {
     const popRect = modal.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
-    const gap = 6; // Decreased gap between the button and the overlay
+    const gap = 6; // Closer spacing to the button
+    const margin = 12;
 
+    // Determine vertical placement: try placing below first, then above
     let top = btnRect.bottom + gap;
-    let left = btnRect.left;
-
-    if (isInline) {
-      // Right-align with the target button for inline sidebar players
-      left = btnRect.right - popRect.width;
-    } else {
-      // Center horizontally relative to the target button
-      left = btnRect.left + (btnRect.width / 2) - (popRect.width / 2);
-    }
-
-    // Determine vertical placement based on viewport boundaries
-    const fitsBelow = (top + popRect.height) <= window.innerHeight;
-    const fitsAbove = (btnRect.top - popRect.height - gap) >= 0;
+    const fitsBelow = (top + popRect.height) <= window.innerHeight - margin;
+    const fitsAbove = (btnRect.top - popRect.height - gap) >= margin;
 
     if (!fitsBelow && (fitsAbove || (btnRect.top > window.innerHeight - btnRect.bottom))) {
       top = btnRect.top - popRect.height - gap;
     }
 
-    // Clamp coordinates within the viewport safe boundaries (12px margin)
-    const margin = 12;
+    // Determine horizontal placement: prioritize aligning to the edges of the button
+    let left = btnRect.left; // Default left-align with button
+    if (isInline) {
+      left = btnRect.right - popRect.width; // Right-align for inline sidebar panels
+    } else {
+      // Try left-aligning with the button first
+      const fitsLeftAlign = (btnRect.left + popRect.width) <= window.innerWidth - margin;
+      // Try right-aligning with the button second
+      const fitsRightAlign = (btnRect.right - popRect.width) >= margin;
+
+      if (fitsLeftAlign) {
+        left = btnRect.left;
+      } else if (fitsRightAlign) {
+        left = btnRect.right - popRect.width;
+      } else {
+        // Fallback: Center the modal if neither side fits cleanly within screen boundaries
+        left = btnRect.left + (btnRect.width / 2) - (popRect.width / 2);
+      }
+    }
+
+    // Viewport margin safety clamping as a fallback if everything else overflows
     if (left + popRect.width > window.innerWidth - margin) {
       left = window.innerWidth - popRect.width - margin;
     }
