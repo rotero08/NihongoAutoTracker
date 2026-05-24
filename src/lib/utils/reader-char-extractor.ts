@@ -10,11 +10,47 @@ const ttuCharCountCache = new WeakMap<Element, number>();
 let ttuCachedNodes: Element[] = [];
 let ttuCachedAccumulated: number[] = [];
 
+// Module-level cache to track unique section IDs and assign sequential order integers on the fly
+const seenSectionIds = new Map<string, number>();
+
 export interface AdvancedCharData {
     current: number;
     total: number;
     sectionIndex: number | null;
     isPaginated: boolean;
+}
+
+/**
+ * Calculates a sequential integer for the active section container.
+ * Resolves DOM order if multiple elements exist, otherwise maps ID hashes sequentially.
+ */
+function getSectionIndex(container: Element): number | null {
+    const id = container.id || '';
+
+    // Approach 1: Check physical position relative to all section containers in DOM
+    let containers = Array.from(document.querySelectorAll('.book-content-container'));
+    if (containers.length === 0) {
+        containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
+    }
+
+    if (containers.length > 1) {
+        const idx = containers.indexOf(container);
+        if (idx !== -1) {
+            return idx;
+        }
+    }
+
+    // Approach 2: If single-container or fallback, map unique ID strings sequentially
+    if (id) {
+        if (!seenSectionIds.has(id)) {
+            // Assign next sequential index strictly to prevent trailing digit collisions (e.g., fmatter-001 vs 001)
+            const nextVal = seenSectionIds.size;
+            seenSectionIds.set(id, nextVal);
+        }
+        return seenSectionIds.get(id) ?? null;
+    }
+
+    return null;
 }
 
 export function extractAdvancedCharCount(
@@ -51,16 +87,14 @@ export function extractAdvancedCharCount(
             // Svelte Ebook Reader cover page or image-only sections have no readable pTags.
             // We extract the section index container and return a zero-progress baseline to prevent reset freezing.
             const container = readerContainer.querySelector('.book-content-container') || readerContainer;
-            const id = container.id || '';
-            const match = id.match(/ttu-id(\d+)/);
-            const sectionIndex = match ? parseInt(match[1], 10) : null;
+            const sectionIndex = getSectionIndex(container);
 
             addDebugLog('INFO', 'TextTracker', 'extractAdvancedCharCount (Zero-Text Baseline Page)', {
                 isPaginated,
                 isVerticalText,
                 writingMode,
                 sectionIndex,
-                containerId: id
+                containerId: container.id || ''
             });
 
             return { current: 0, total: 0, sectionIndex, isPaginated };
@@ -98,31 +132,31 @@ export function extractAdvancedCharCount(
 
         while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            const rect = ttuCachedNodes[mid].getBoundingClientRect();
+            const r = ttuCachedNodes[mid].getBoundingClientRect();
 
             let explored = false;
-            if (rect.width === 0 || rect.height === 0) {
+            if (r.width === 0 || r.height === 0) {
                 explored = true; // Skip hidden
             } else if (isVerticalText) {
                 if (isPaginated) {
                     // Vertical Paginated: previous pages move UP out of the viewport
-                    explored = rect.bottom <= 1;
+                    explored = r.bottom <= 1;
                 } else {
                     // Vertical Continuous: previous pages move LEFT or RIGHT
                     if (writingMode === 'vertical-lr') {
-                        explored = rect.right <= 1;
+                        explored = r.right <= 1;
                     } else {
                         // Calibrated subpixel right-edge horizontal continuous boundary (vw + 1)
-                        explored = rect.left >= (vw + 1);
+                        explored = r.left >= (vw + 1);
                     }
                 }
             } else {
                 if (isPaginated) {
                     // Horizontal Paginated: previous pages move LEFT out of the viewport
-                    explored = rect.right <= 1;
+                    explored = r.right <= 1;
                 } else {
                     // Horizontal Continuous: previous pages move UP out of the viewport
-                    explored = rect.bottom <= 1;
+                    explored = r.bottom <= 1;
                 }
             }
 
@@ -221,11 +255,9 @@ export function extractAdvancedCharCount(
 
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
 
-        // Extract numeric section index from parent wrapper
+        // Extract sequential section index from current wrapper relative to document flow
         const container = readerContainer.querySelector('.book-content-container') || readerContainer;
-        const id = container.id || '';
-        const match = id.match(/ttu-id(\d+)/);
-        const sectionIndex = match ? parseInt(match[1], 10) : null;
+        const sectionIndex = getSectionIndex(container);
 
         addDebugLog('INFO', 'TextTracker', 'extractAdvancedCharCount', {
             isPaginated,
@@ -236,7 +268,7 @@ export function extractAdvancedCharCount(
             current,
             total,
             sectionIndex,
-            containerId: id
+            containerId: container.id || ''
         });
 
         return { current, total, sectionIndex, isPaginated };

@@ -168,13 +168,24 @@ export function showNTEditModal(
   }, 0);
 }
 
+// Tracking variable to store the style signature of the last injected theme
+let lastInjectedThemeSignature = '';
+
 /**
  * Inject the modal CSS styles into the page <head>.
  *
  * @param theme - Optional theme override. Defaults to DEFAULT_THEME.
  */
 export function injectModalStyles(theme: UITheme = DEFAULT_THEME): void {
+  // Generate a unique identifier signature from properties defined in UIThemeColors and UIThemeTypography
+  const activeThemeSignature = `${theme.colors.bg}_${theme.colors.accent}_${theme.typography.mono}`;
   let style = document.getElementById('nt-modal-styles') as HTMLStyleElement;
+
+  // Skip redundant style recalculations if style exists and theme hasn't changed
+  if (style && lastInjectedThemeSignature === activeThemeSignature) {
+    return;
+  }
+
   if (!style) {
     style = document.createElement('style');
     style.id = 'nt-modal-styles';
@@ -270,6 +281,8 @@ export function injectModalStyles(theme: UITheme = DEFAULT_THEME): void {
   .nt-btn-ghost { background:transparent !important; color:var(--color-text) !important; border:1px solid var(--color-border) !important; }
   .nt-btn-ghost:hover { color:var(--color-text) !important; border-color:var(--color-border-hover) !important; }
   `;
+
+  lastInjectedThemeSignature = activeThemeSignature;
 }
 
 /**

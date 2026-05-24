@@ -146,6 +146,16 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
  *
  * @returns Channel ID string (e.g., "UCxxxxxx") or null if not found
  */
+// Add these cache containers at the top of the file (outside the function)
+const handleCache = new Map<string, string>();
+const activeHandleFetches = new Map<string, Promise<string | null>>();
+
+/**
+ * Extract the YouTube channel ID from the current page's DOM.
+ * Looks for the canonical channel URL in various YouTube elements.
+ *
+ * @returns Channel ID string (e.g., "UCxxxxxx") or null if not found
+ */
 export async function getYouTubeChannelId(): Promise<string | null> {
   /* Try the channel link in the owner info section */
   const channelLink = document.querySelector<HTMLAnchorElement>(
@@ -160,14 +170,38 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     /* Handle @handle format — need to resolve to channel ID */
     const handleMatch = href.match(/\/@([^/?]+)/);
     if (handleMatch) {
-      try {
-        const res = await fetch(`https://www.youtube.com/${href}`, { redirect: 'follow' });
-        const text = await res.text();
-        const cidMatch = text.match(/"channelId":"([^"]+)"/);
-        if (cidMatch) return cidMatch[1];
-      } catch {
-        /* Resolution failed — return null */
+      const handle = handleMatch[1];
+
+      // Return from cache if already resolved
+      if (handleCache.has(handle)) {
+        return handleCache.get(handle) || null;
       }
+
+      // Check if there is an active HTTP fetch in progress for this handle
+      if (activeHandleFetches.has(handle)) {
+        return activeHandleFetches.get(handle) ?? null;
+      }
+
+      const fetchPromise = (async () => {
+        try {
+          const res = await fetch(`https://www.youtube.com/${href}`, { redirect: 'follow' });
+          const text = await res.text();
+          const cidMatch = text.match(/"channelId":"([^"]+)"/);
+          if (cidMatch) {
+            const channelId = cidMatch[1];
+            handleCache.set(handle, channelId);
+            return channelId;
+          }
+        } catch {
+          /* Resolution failed */
+        } finally {
+          activeHandleFetches.delete(handle);
+        }
+        return null;
+      })();
+
+      activeHandleFetches.set(handle, fetchPromise);
+      return fetchPromise;
     }
   }
 

@@ -14,6 +14,9 @@ import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 // Loads authentic branding asset cleanly without drop shadows
 const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');
 
+// Single global observer instantiated once to monitor text overflow changes efficiently
+let globalTitleResizeObserver: ResizeObserver | null = null;
+
 export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean, themeName: string) {
   const activeTheme = getTheme(themeName);
   injectModalStyles(activeTheme);
@@ -113,6 +116,18 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
   document.body.appendChild(modal);
 
+  // Initialize unified ResizeObserver if not already created
+  if (!globalTitleResizeObserver) {
+    globalTitleResizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const updater = (entry.target as any).__ntUpdateMask;
+        if (typeof updater === 'function') {
+          updater();
+        }
+      }
+    });
+  }
+
   const titleEls = modal.querySelectorAll('.pl-scroll-title');
   titleEls.forEach((el) => {
     const updateMask = () => {
@@ -141,8 +156,10 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
       }
     };
 
-    const observer = new ResizeObserver(() => updateMask());
-    observer.observe(el);
+    // Store update method directly on element for execution within unified observer
+    (el as any).__ntUpdateMask = updateMask;
+    globalTitleResizeObserver?.observe(el);
+
     el.addEventListener('scroll', updateMask, { passive: true });
     updateMask();
   });
@@ -159,28 +176,41 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     if (popRect.left < 0) modal.style.left = '20px';
   });
 
+  const cleanupObservers = () => {
+    titleEls.forEach(el => globalTitleResizeObserver?.unobserve(el));
+  };
+
   const clickOutsideHandler = (e: MouseEvent) => {
     if (!modal.contains(e.target as Node) && !btn.contains(e.target as Node)) {
+      cleanupObservers();
       modal.remove();
       document.removeEventListener('click', clickOutsideHandler);
     }
   };
   setTimeout(() => document.addEventListener('click', clickOutsideHandler), 10);
 
-  videos.forEach(async (v, i) => {
-    try {
-      const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
-      if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
-      if (data?.channel?.contentId) {
-        v.channelId = data.channel.contentId;
-        v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
-        v.channelImage = data.channel.contentImage;
-        v.channelDesc = data.channel.description?.[0]?.description;
-      }
-    } catch (e) { }
-    const timeEl = modal.querySelector(`#pl-time-${i}`);
-    if (timeEl) timeEl.textContent = `${v.time} min`;
-  });
+  // Fetch detailed metadata in sequential execution chunks of 3 rather than overloading concurrently
+  (async () => {
+    const chunkSize = 3;
+    for (let idx = 0; idx < videos.length; idx += chunkSize) {
+      const chunk = videos.slice(idx, idx + chunkSize);
+      await Promise.all(chunk.map(async (v) => {
+        const itemIdx = videos.indexOf(v);
+        try {
+          const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
+          if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
+          if (data?.channel?.contentId) {
+            v.channelId = data.channel.contentId;
+            v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
+            v.channelImage = data.channel.contentImage;
+            v.channelDesc = data.channel.description?.[0]?.description;
+          }
+        } catch (e) { }
+        const timeEl = modal.querySelector(`#pl-time-${itemIdx}`);
+        if (timeEl) timeEl.textContent = `${v.time} min`;
+      }));
+    }
+  })();
 
   modal.querySelector('#pl-toggle-jp')!.addEventListener('click', (e) => {
     hideNonJp = !hideNonJp;
@@ -203,6 +233,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   });
 
   modal.querySelector('#pl-cancel')!.addEventListener('click', () => {
+    cleanupObservers();
     document.removeEventListener('click', clickOutsideHandler);
     modal.remove();
   });
@@ -230,6 +261,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   });
 
   modal.querySelector('#pl-confirm-yes')!.addEventListener('click', async () => {
+    cleanupObservers();
     document.removeEventListener('click', clickOutsideHandler);
     const checked = Array.from(modal.querySelectorAll('.pl-vid-chk:checked')).map((c: any) => videos[c.dataset.idx]);
 

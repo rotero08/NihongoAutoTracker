@@ -811,24 +811,30 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
       if (stateRefs.lastSectionIndex !== activeSection) {
-        addDebugLog('INFO', 'TextTracker', 'Section transition detected', {
-          from: stateRefs.lastSectionIndex,
-          to: activeSection
-        });
-
-        if (isPaginated && activeSection !== -1) {
-          stateRefs.globalSessionStartChar = 0;
-          addDebugLog('INFO', 'TextTracker', 'Paginated transition. Initialized baseline to 0.');
-        } else {
-          stateRefs.globalSessionStartChar = -1;
-        }
-
+        // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
         if (activeSection === -1) {
-          stateRefs.lastSectionIndex = -1;
-          stateRefs.globalManualCharOffset = 0;
-          stateRefs.visitedSections.clear();
-          addDebugLog('INFO', 'TextTracker', 'Reset dynamic tracking baseline to 0. Cleared visitedSections cache.');
+          if (!isReadingViewActive()) {
+            stateRefs.lastSectionIndex = -1;
+            stateRefs.globalManualCharOffset = 0;
+            stateRefs.visitedSections.clear();
+            addDebugLog('INFO', 'TextTracker', 'Reset dynamic tracking baseline to 0. Cleared visitedSections cache.');
+            recalculateChars();
+          } else {
+            addDebugLog('INFO', 'TextTracker', 'Temporary non-text page encountered within active session. Preserving state.');
+          }
         } else {
+          addDebugLog('INFO', 'TextTracker', 'Section transition detected', {
+            from: stateRefs.lastSectionIndex,
+            to: activeSection
+          });
+
+          if (isPaginated) {
+            stateRefs.globalSessionStartChar = 0;
+            addDebugLog('INFO', 'TextTracker', 'Paginated transition. Initialized baseline to 0.');
+          } else {
+            stateRefs.globalSessionStartChar = -1;
+          }
+
           if (stateRefs.lastSectionIndex === -1) {
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
@@ -855,9 +861,8 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
           stateRefs.lastSectionIndex = activeSection;
           stateRefs.lastSectionTotal = total;
+          recalculateChars();
         }
-
-        recalculateChars();
       }
     }
 

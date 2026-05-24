@@ -29,16 +29,18 @@ if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
   browser.runtime.onMessage.addListener((req: any) => {
     if (req?.action === 'SHOW_TOAST') {
       if (window.self !== window.top) return;
-      // Show toast directly on top frame context
     }
   });
 }
 
+// Stores bound video contexts to avoid duplicate event listener registration
+const boundVideos = new WeakSet<HTMLVideoElement>();
+
 let _jpCacheUrl = '';
 let _jpCacheResult = false;
 function isLikelyJapaneseCached(): boolean {
-  const url = cleanUrl(window.location.href);
-  if (url !== _jpCacheUrl || !_jpCacheResult) {
+  const url = window.location.href;
+  if (url !== _jpCacheUrl) {
     _jpCacheResult = isLikelyJapanese();
     _jpCacheUrl = url;
   }
@@ -373,6 +375,13 @@ export default defineContentScript({
         if (existing) completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
       })();
 
+      // Prevent duplicate event handlers on recycled <video> nodes
+      if (boundVideos.has(vid)) {
+        if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) playClockStart = performance.now();
+        return;
+      }
+      boundVideos.add(vid);
+
       if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) playClockStart = performance.now();
       vid.addEventListener('playing', () => {
         if (isAdPlaying()) return;
@@ -508,14 +517,13 @@ export default defineContentScript({
             const btn = document.createElement('button');
             btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
 
-            // Explicitly force filter:none on the playlist button SVG template to omit shadows
             btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
 
             Object.assign(btn.style, {
               background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: '40px', height: '40px', borderRadius: '50%', transition: 'background-color 0.2s',
-              filter: 'none !important', boxShadow: 'none !important' // Guarantees zero shadows
+              filter: 'none !important', boxShadow: 'none !important'
             });
 
             btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
@@ -531,25 +539,23 @@ export default defineContentScript({
       }
     };
 
-    let timer: number | null = null;
-    const trigger = () => {
-      if (timer) clearTimeout(timer);
-      timer = window.setTimeout(runInjectionCycle, 500);
-    };
+    // Listen directly to play capturing phase for immediate non-polling interception of dynamic media elements
+    window.addEventListener('play', (e) => {
+      const target = e.target as HTMLVideoElement;
+      if (target && target.tagName === 'VIDEO') {
+        attach(target);
+      }
+    }, true);
 
-    trigger();
-    window.addEventListener('yt-navigate-finish', trigger);
+    // Initial check on DOM load
+    runInjectionCycle();
+
+    // YouTube SPA-specific navigation routing trigger
+    window.addEventListener('yt-navigate-finish', runInjectionCycle);
 
     window.addEventListener('yt-navigate-start', () => {
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
     });
-
-    const observer = new MutationObserver((mutations) => {
-      if (mutations.some(m => m.addedNodes.length > 0)) trigger();
-    });
-
-    const root = document.querySelector('ytd-app') || document.body;
-    observer.observe(root, { childList: true, subtree: true });
   },
 });
