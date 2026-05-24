@@ -72,6 +72,9 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   const modal = document.createElement('div');
   modal.id = 'nt-playlist-modal';
   modal.className = 'nt-modal';
+  modal.style.position = 'fixed';
+  modal.style.visibility = 'hidden';
+  modal.style.zIndex = '2147483647';
 
   modal.innerHTML = `
   <div class="nt-modal-header" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
@@ -166,16 +169,48 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     updateMask();
   });
 
-  const rect = btn.getBoundingClientRect();
-  modal.style.position = 'fixed';
-  modal.style.top = isInline ? `${rect.bottom + 10}px` : `${rect.bottom + 20}px`;
-  modal.style.left = isInline ? `${rect.left - 240}px` : `${rect.left}px`;
-  modal.style.zIndex = '2147483647';
-
   requestAnimationFrame(() => {
     const popRect = modal.getBoundingClientRect();
-    if (popRect.right > window.innerWidth) modal.style.left = `${window.innerWidth - popRect.width - 20}px`;
-    if (popRect.left < 0) modal.style.left = '20px';
+    const btnRect = btn.getBoundingClientRect();
+    const gap = 6; // Decreased gap between the button and the overlay
+
+    let top = btnRect.bottom + gap;
+    let left = btnRect.left;
+
+    if (isInline) {
+      // Right-align with the target button for inline sidebar players
+      left = btnRect.right - popRect.width;
+    } else {
+      // Center horizontally relative to the target button
+      left = btnRect.left + (btnRect.width / 2) - (popRect.width / 2);
+    }
+
+    // Determine vertical placement based on viewport boundaries
+    const fitsBelow = (top + popRect.height) <= window.innerHeight;
+    const fitsAbove = (btnRect.top - popRect.height - gap) >= 0;
+
+    if (!fitsBelow && (fitsAbove || (btnRect.top > window.innerHeight - btnRect.bottom))) {
+      top = btnRect.top - popRect.height - gap;
+    }
+
+    // Clamp coordinates within the viewport safe boundaries (12px margin)
+    const margin = 12;
+    if (left + popRect.width > window.innerWidth - margin) {
+      left = window.innerWidth - popRect.width - margin;
+    }
+    if (left < margin) {
+      left = margin;
+    }
+
+    if (top < margin) {
+      top = margin;
+    } else if (top + popRect.height > window.innerHeight - margin) {
+      top = window.innerHeight - popRect.height - margin;
+    }
+
+    modal.style.top = `${top}px`;
+    modal.style.left = `${left}px`;
+    modal.style.visibility = ''; // Make modal visible once position is applied
   });
 
   const cleanupObservers = () => {
