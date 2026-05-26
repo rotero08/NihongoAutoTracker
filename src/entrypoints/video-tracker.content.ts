@@ -17,7 +17,8 @@ import {
   fetchYouTubeVideoData,
   getYouTubeChannelId,
   getChannelNameFallback,
-  getChannelMediaData
+  getChannelMediaData,
+  clearExtractionCaches
 } from '@/lib/utils/youtube-extraction';
 import { getTheme, applyThemeToDocument } from '@/lib/ui/themes';
 import '@/assets/player.css';
@@ -57,12 +58,21 @@ function resolvePageLanguageAndType() {
   });
 }
 
-/** Detect if an ad is currently playing on the video player */
+/** Detect if an ad is currently playing on the video player (cached 500ms) */
+let _adPlayingCached = false;
+let _adPlayingLastCheck = 0;
+
 function isAdPlaying(): boolean {
+  const now = performance.now();
+  if (now - _adPlayingLastCheck < 500) return _adPlayingCached;
+  _adPlayingLastCheck = now;
+
   const host = window.location.hostname;
   if (host.includes('youtube.com')) {
-    return !!document.querySelector('.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+    _adPlayingCached = !!document.querySelector('.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+    return _adPlayingCached;
   }
+  _adPlayingCached = false;
   return false;
 }
 
@@ -189,10 +199,15 @@ function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFall
 }
 
 function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: { hasTriggered: boolean; isManualLogging: boolean }, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
-  resolvePageLanguageAndType();
-
-  const shouldHide = shouldHideBadge(cfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
+
+  // Fast path: if badge exists and we painted less than 1s ago, skip all DOM queries
+  const now = performance.now();
+  if (el && now - _lastCounterPaint < 1000) return;
+
+  // Only run expensive classification + visibility checks at most once per second
+  resolvePageLanguageAndType();
+  const shouldHide = shouldHideBadge(cfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
   if (shouldHide) { el?.remove(); return; }
 
   const multiSession = totalSecs > currentSecs + 2;
@@ -274,8 +289,6 @@ function ensureCounter(currentSecs: number, totalSecs: number, title: string, ur
     containerData.el.appendChild(el);
   }
 
-  const now = performance.now();
-  if (now - _lastCounterPaint < 1000) return;
   _lastCounterPaint = now;
 
   const timeLabel = el.querySelector<HTMLElement>('.nt-time-label')!;
@@ -540,6 +553,11 @@ export default defineContentScript({
           } catch (err) { }
         }
 
+        // Short-circuit: if our playlist button is already injected, skip all selector work
+        if (document.querySelector('.nt-playlist-logger')) {
+          return;
+        }
+
         if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
           const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
           const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
@@ -552,43 +570,39 @@ export default defineContentScript({
           const targetContainer = classicContainer || modernContainer || panelContainer;
 
           if (targetContainer instanceof HTMLElement) {
-            const alreadyHasLogger = !!targetContainer.querySelector('.nt-playlist-logger');
+            const btn = document.createElement('button');
+            btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+            btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
 
-            if (!alreadyHasLogger) {
-              const btn = document.createElement('button');
-              btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-              btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
+            Object.assign(btn.style, {
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              margin: '0 4px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              transition: 'background-color 0.2s',
+              filter: 'none !important',
+              boxShadow: 'none !important',
+              flexShrink: '0'
+            });
 
-              Object.assign(btn.style, {
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                margin: '0 4px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '40px',
-                height: '40px',
-                borderRadius: '50%',
-                transition: 'background-color 0.2s',
-                filter: 'none !important',
-                boxShadow: 'none !important',
-                flexShrink: '0'
-              });
+            btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+            btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
+            btn.onclick = (e) => {
+              e.stopPropagation();
+              showPlaylistSelectorModal(btn, targetContainer.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
+            };
 
-              btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-              btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
-              btn.onclick = (e) => {
-                e.stopPropagation();
-                showPlaylistSelectorModal(btn, targetContainer.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
-              };
-
-              const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
-              if (overflowNode && overflowNode.parentElement === targetContainer) {
-                targetContainer.insertBefore(btn, overflowNode);
-              } else {
-                targetContainer.appendChild(btn);
-              }
+            const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
+            if (overflowNode && overflowNode.parentElement === targetContainer) {
+              targetContainer.insertBefore(btn, overflowNode);
+            } else {
+              targetContainer.appendChild(btn);
             }
           }
         }
@@ -615,17 +629,23 @@ export default defineContentScript({
 
       const target = document.querySelector('ytd-page-manager') || document.body;
 
+      let rafPending = false;
       pageObserver = new MutationObserver(() => {
-        runInjectionCycle();
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          runInjectionCycle();
 
-        if (document.querySelector('.nt-playlist-logger')) {
-          pageObserver?.disconnect();
-          pageObserver = null;
-          if (pageObserverTimeout) {
-            clearTimeout(pageObserverTimeout);
-            pageObserverTimeout = null;
+          if (document.querySelector('.nt-playlist-logger')) {
+            pageObserver?.disconnect();
+            pageObserver = null;
+            if (pageObserverTimeout) {
+              clearTimeout(pageObserverTimeout);
+              pageObserverTimeout = null;
+            }
           }
-        }
+        });
       });
 
       pageObserver.observe(target, { childList: true, subtree: true });
@@ -650,6 +670,7 @@ export default defineContentScript({
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {
+      clearExtractionCaches();
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
     });

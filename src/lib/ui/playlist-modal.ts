@@ -91,21 +91,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   </div>
   </div>
 
-  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:8px; display:flex; flex-direction:column; gap:4px; flex-shrink:1;">
-  ${videos.map((v, i) => `
-    <label class="pl-vid-row" id="pl-row-${i}" style="display:${hideNonJp && !v.isJp ? 'none' : 'flex'}; gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;">
-    <input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" style="margin:0; flex-shrink:0; width:14px; height:14px;" />
-
-    <span style="font-family:ui-monospace,SFMono-Regular,monospace; color:#8A8A9A; width:14px; text-align:right; flex-shrink:0; font-size:10px; margin-right:2px;">${i + 1}.</span>
-
-    <div class="pl-scroll-title" id="pl-title-${i}" style="flex:1; overflow-x:auto; white-space:nowrap; padding: 2px 0; font-size:11px; scrollbar-width:none; -ms-overflow-style:none;">
-    ${v.title.replace(/</g, '&lt;')}
-    </div>
-
-    <span id="pl-time-${i}" style="color:var(--color-accent); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>
-    </label>
-    `).join('')}
-    </div>
+  <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:8px; display:flex; flex-direction:column; gap:4px; flex-shrink:1;"></div>
 
     <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:8px; padding:10px 0; text-align:center; flex-shrink:0;">
     <div style="font-size:14px; color:var(--color-text); font-weight:bold;">Confirm Logging</div>
@@ -119,6 +105,25 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     <div class="nt-modal-footer" id="pl-footer-confirm" style="display:none; margin-top: 4px;">
     <button id="pl-confirm-no" class="nt-btn-ghost">Go Back</button><button id="pl-confirm-yes" class="nt-btn-amber">Yes, Log Them</button>
     </div>`;
+
+  // Build playlist rows with DocumentFragment for batch DOM insertion
+  const listEl = modal.querySelector('#nt-playlist-modal-list')!;
+  const fragment = document.createDocumentFragment();
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i];
+    const row = document.createElement('label');
+    row.className = 'pl-vid-row';
+    row.id = `pl-row-${i}`;
+    row.style.cssText = `${hideNonJp && !v.isJp ? 'display:none;' : 'display:flex;'} gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;`;
+    row.innerHTML = `<input type="checkbox" class="nt-pl-chk pl-vid-chk" data-idx="${i}" style="margin:0; flex-shrink:0; width:14px; height:14px;" />
+    <span style="font-family:ui-monospace,SFMono-Regular,monospace; color:#8A8A9A; width:14px; text-align:right; flex-shrink:0; font-size:10px; margin-right:2px;">${i + 1}.</span>
+    <div class="pl-scroll-title" id="pl-title-${i}" style="flex:1; overflow-x:auto; white-space:nowrap; padding: 2px 0; font-size:11px; scrollbar-width:none; -ms-overflow-style:none;">
+    ${v.title.replace(/</g, '&lt;')}
+    </div>
+    <span id="pl-time-${i}" style="color:var(--color-accent); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>`;
+    fragment.appendChild(row);
+  }
+  listEl.appendChild(fragment);
 
   document.body.appendChild(modal);
 
@@ -242,8 +247,8 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     const chunkSize = 3;
     for (let idx = 0; idx < videos.length; idx += chunkSize) {
       const chunk = videos.slice(idx, idx + chunkSize);
-      await Promise.all(chunk.map(async (v) => {
-        const itemIdx = videos.indexOf(v);
+      await Promise.all(chunk.map(async (v, chunkIdx) => {
+        const itemIdx = idx + chunkIdx;
         try {
           const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
           if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
@@ -263,9 +268,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   modal.querySelector('#pl-toggle-jp')!.addEventListener('click', (e) => {
     hideNonJp = !hideNonJp;
     (e.target as HTMLElement).textContent = hideNonJp ? 'Show Non-JP' : 'Hide Non-JP';
-    videos.forEach((v, i) => {
-      const row = modal.querySelector(`#pl-row-${i}`) as HTMLElement;
-      if (row) row.style.display = (hideNonJp && !v.isJp) ? 'none' : 'flex';
+    const rows = modal.querySelectorAll<HTMLElement>('.pl-vid-row');
+    rows.forEach((row, i) => {
+      if (i < videos.length) {
+        row.style.display = (hideNonJp && !videos[i].isJp) ? 'none' : 'flex';
+      }
     });
   });
 
