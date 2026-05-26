@@ -1,24 +1,57 @@
 import { defineConfig } from 'wxt';
 import path from 'path';
+import fs from 'fs';
+
+// Safely load the .env file before WXT processes the configuration
+try {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf-8');
+    for (const line of envContent.split(/\r?\n/)) {
+      const trimmedLine = line.trim();
+      // Ignore empty lines and comments
+      if (!trimmedLine || trimmedLine.startsWith('#') || !trimmedLine.includes('=')) {
+        continue;
+      }
+      const [key, ...valueParts] = trimmedLine.split('=');
+      const value = valueParts.join('=').trim();
+      if (key) {
+        // Assign to process.env and strip wrapping quotes
+        process.env[key.trim()] = value.replace(/^["']|["']$/g, '');
+      }
+    }
+  }
+} catch (error) {
+  // Fall back silently if the .env file is missing or unreadable
+}
 
 // Retrieve the active target browser (defaults to 'chrome' if undefined)
 const currentBrowser = process.env.WXT_BROWSER || 'chrome';
 const isFirefox = currentBrowser === 'firefox';
+const isChromium = ['chrome', 'edge', 'opera'].includes(currentBrowser);
 
 export default defineConfig({
   /* ── Source directory ───────────────────────────────────────── */
   srcDir: 'src',
+
+  /* ── Target browser for development/builds ──────────────────── */
+  browser: currentBrowser,
 
   /* ── Svelte integration via WXT module ─────────────────────── */
   modules: ['@wxt-dev/module-svelte'],
 
   /* ── Runner configuration to lock toolbar layout profiles ─── */
   webExt: {
+    // Keep profile changes across restarts for both Firefox and Chromium browsers
+    keepProfileChanges: true,
+
     // Tells the runner where to securely store your layout customizations
-    ...(isFirefox ? {
-      firefoxProfile: path.resolve(__dirname, '.wxt/firefox-profile'),
-      keepProfileChanges: true,
-    } : {}),
+    ...(isFirefox && {
+      firefoxProfile: path.resolve(process.cwd(), '.wxt/firefox-profile'),
+    }),
+    ...(isChromium && {
+      chromiumProfile: path.resolve(process.cwd(), `.wxt/${currentBrowser}-profile`),
+    }),
 
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',

@@ -72,7 +72,7 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
   }
 
   await new Promise(r => setTimeout(r, 1500));
-  const sample = (document.body?.innerText ?? '').slice(0, 8000);
+  const sample = (document.body?.textContent ?? '').slice(0, 8000);
   const jpCount = (sample.match(JP_RE) ?? []).length;
   const result = jpCount >= 40;
 
@@ -372,6 +372,9 @@ function setupProgressObserver() {
 async function checkAndRunOverlay(cfg: any) {
   if (window.self !== window.top) return;
   if (isWebsiteOverlaySkipped(cfg)) return;
+
+  // Explicitly skip on Manabe Reader's top-level domain to avoid generic overlay injection
+  if (window.location.hostname.includes('manga.manabe.es')) return;
 
   if (isAnalyzingPage) return;
   const existing = document.getElementById('nt-overlay');

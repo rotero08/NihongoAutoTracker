@@ -15,5 +15,14 @@ export const READER_ADAPTERS: ReaderAdapter[] = [
  */
 export function getActiveReaderAdapter(): ReaderAdapter | null {
     const currentHostname = window.location.hostname;
-    return READER_ADAPTERS.find(adapter => currentHostname.includes(adapter.hostname)) || null;
+    const adapter = READER_ADAPTERS.find(adapter => currentHostname.includes(adapter.hostname)) || null;
+
+    // For Manabe Reader, the adapter should only activate inside the nested iframe,
+    // never in the top-level parent frame that merely embeds it.
+    if (adapter && adapter.hostname === 'manga.manabe.es') {
+        if (typeof window !== 'undefined' && window.self === window.top) {
+            return null;
+        }
+    }
+    return adapter;
 }

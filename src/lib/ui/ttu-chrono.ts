@@ -526,6 +526,10 @@ export function setupTTUChronometerUI(
         updateUI();
     });
 
+    wrapper.addEventListener('nt-history-refresh', () => {
+        updateHistoryData().then(() => updateUI());
+    });
+
     pt.el.insertAdjacentElement(pt.pos, wrapper);
     updateHistoryData().then(() => updateUI());
     refreshLinkerUI();

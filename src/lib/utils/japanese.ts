@@ -126,7 +126,7 @@ export async function isJapanesePage(
 
   /* Wait for page content to load, then sample body text */
   await new Promise((r) => setTimeout(r, 1500));
-  const sample = (document.body?.innerText ?? '').slice(0, 8000);
+  const sample = (document.body?.textContent ?? '').slice(0, 8000);
   const jpCount = (sample.match(JP_RE) ?? []).length;
   return jpCount >= 40;
 }

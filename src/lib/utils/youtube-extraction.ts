@@ -5,14 +5,86 @@ const ytApiCache: Record<string, any> = {};
 const ytApiInFlight: Record<string, Promise<any>> = {};
 const channelMediaCache: Record<string, any> = {};
 
-// URL-keyed caches for DOM-extracted channel info to avoid re-scanning <script> tags
+// URL-keyed caches for DOM-extracted channel info
 const _cachedChannelIdByUrl: Record<string, string | null> = {};
 const _cachedChannelNameByUrl: Record<string, string> = {};
 
-/** Clear URL-keyed extraction caches on navigation */
+let _extractedCid: string | null = null;
+let _extractedAuthor: string | null = null;
+
+// Tracking variables for scanning state
+let _lastUrl = '';
+let _lastScriptCount = 0;
+let _cidScannedAndFound = false;
+let _authorScannedAndFound = false;
+
+function extractFromScripts() {
+    const pageUrl = window.location.href;
+    const scripts = document.scripts;
+    const scriptCount = scripts.length;
+
+    // Reset tracking state if the URL has changed
+    if (_lastUrl !== pageUrl) {
+        _lastUrl = pageUrl;
+        _extractedCid = null;
+        _extractedAuthor = null;
+        _lastScriptCount = 0;
+        _cidScannedAndFound = false;
+        _authorScannedAndFound = false;
+    }
+
+    const needsCid = !_cidScannedAndFound;
+    const needsAuthor = !_authorScannedAndFound;
+
+    // Only scan if we still need data AND new scripts have been appended
+    if ((needsCid || needsAuthor) && scriptCount !== _lastScriptCount) {
+        _lastScriptCount = scriptCount;
+
+        for (let i = 0; i < scriptCount; i++) {
+            if (_cidScannedAndFound && _authorScannedAndFound) {
+                break; // Exit early if both pieces of data are resolved
+            }
+
+            const text = scripts[i].textContent;
+            if (text && text.includes('videoDetails')) {
+                if (needsCid && !_cidScannedAndFound) {
+                    const cidMatch = text.match(/"videoDetails":\{.*?"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
+                    if (cidMatch) {
+                        _extractedCid = cidMatch[1];
+                        _cidScannedAndFound = true;
+                    }
+                }
+                if (needsAuthor && !_authorScannedAndFound) {
+                    const authorMatch = text.match(/"videoDetails":\{.*?"author":"([^"]+)"/);
+                    if (authorMatch) {
+                        _extractedAuthor = authorMatch[1];
+                        _authorScannedAndFound = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Clear URL-keyed extraction caches and state */
 export function clearExtractionCaches() {
-  for (const key in _cachedChannelIdByUrl) delete _cachedChannelIdByUrl[key];
-  for (const key in _cachedChannelNameByUrl) delete _cachedChannelNameByUrl[key];
+    for (const key in _cachedChannelIdByUrl) delete _cachedChannelIdByUrl[key];
+    for (const key in _cachedChannelNameByUrl) delete _cachedChannelNameByUrl[key];
+    _extractedCid = null;
+    _extractedAuthor = null;
+    _lastScriptCount = 0;
+    _cidScannedAndFound = false;
+    _authorScannedAndFound = false;
+    _lastUrl = '';
+}
+
+/** Utility to automatically garbage-collect old cache entries on navigation */
+function guardUrlTransition() {
+    const pageUrl = window.location.href;
+    if (_lastUrl !== pageUrl) {
+        clearExtractionCaches();
+        _lastUrl = pageUrl;
+    }
 }
 
 export async function fetchYouTubeVideoData(url: string) {
@@ -41,22 +113,17 @@ export async function fetchYouTubeVideoData(url: string) {
     return ytApiInFlight[clean];
 }
 
-/** Parses channel ID instantly from local DOM, calling remote API ONLY if local extraction fails */
+/** Parses channel ID from local DOM, calling remote API ONLY if local extraction fails */
 export async function getYouTubeChannelId(): Promise<string | null> {
+    guardUrlTransition();
     const pageUrl = window.location.href;
     if (pageUrl in _cachedChannelIdByUrl) return _cachedChannelIdByUrl[pageUrl];
 
     // 1. Try local extraction via canonical script details
-    const scripts = document.getElementsByTagName('script');
-    for (let i = 0; i < scripts.length; i++) {
-        const text = scripts[i].textContent;
-        if (text && text.includes('videoDetails')) {
-            const match = text.match(/"videoDetails":\{.*?"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
-            if (match) {
-                _cachedChannelIdByUrl[pageUrl] = match[1];
-                return match[1];
-            }
-        }
+    extractFromScripts();
+    if (_extractedCid) {
+        _cachedChannelIdByUrl[pageUrl] = _extractedCid;
+        return _extractedCid;
     }
 
     // 2. Try canonical link tags
@@ -88,12 +155,12 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         }
     }
 
-    // Don't cache null — DOM may not be ready yet, allow retry
     return null;
 }
 
-/** Parses channel title instantly from local DOM, calling remote API ONLY if local extraction fails */
+/** Parses channel title from local DOM, calling remote API ONLY if local extraction fails */
 export async function getChannelNameFallback(): Promise<string> {
+    guardUrlTransition();
     const pageUrl = window.location.href;
     if (pageUrl in _cachedChannelNameByUrl) return _cachedChannelNameByUrl[pageUrl];
 
@@ -103,16 +170,10 @@ export async function getChannelNameFallback(): Promise<string> {
         return _cachedChannelNameByUrl[pageUrl];
     }
 
-    const scripts = document.getElementsByTagName('script');
-    for (let i = 0; i < scripts.length; i++) {
-        const text = scripts[i].textContent;
-        if (text && text.includes('videoDetails')) {
-            const match = text.match(/"videoDetails":\{.*?"author":"([^"]+)"/);
-            if (match) {
-                _cachedChannelNameByUrl[pageUrl] = match[1];
-                return match[1];
-            }
-        }
+    extractFromScripts();
+    if (_extractedAuthor) {
+        _cachedChannelNameByUrl[pageUrl] = _extractedAuthor;
+        return _extractedAuthor;
     }
 
     if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
@@ -124,7 +185,6 @@ export async function getChannelNameFallback(): Promise<string> {
         }
     }
 
-    // Don't cache empty — DOM may not be ready yet
     return '';
 }
 

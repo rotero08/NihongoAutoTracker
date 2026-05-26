@@ -528,11 +528,14 @@ export default defineContentScript({
       if (area === 'local' && changes['videoQueue']) {
         const queue = Array.isArray(changes['videoQueue'].newValue) ? changes['videoQueue'].newValue : [];
         const clean = cleanUrl(window.location.href);
-        if (!queue.some((q: any) => q.contentTitleEnglish === clean)) {
+        const existing = queue.find((q: any) => q.contentTitleEnglish === clean);
+        if (!existing) {
           completedSessionSecs = 0; watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
           if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2 && !isAdPlaying()) playClockStart = performance.now();
           const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
           if (badgeLabel) badgeLabel.textContent = "0:00";
+        } else {
+          completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
         }
       }
     });
@@ -553,11 +556,6 @@ export default defineContentScript({
           } catch (err) { }
         }
 
-        // Short-circuit: if our playlist button is already injected, skip all selector work
-        if (document.querySelector('.nt-playlist-logger')) {
-          return;
-        }
-
         if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
           const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
           const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
@@ -570,6 +568,11 @@ export default defineContentScript({
           const targetContainer = classicContainer || modernContainer || panelContainer;
 
           if (targetContainer instanceof HTMLElement) {
+            // Check if our playlist button is already injected in this target container
+            if (targetContainer.querySelector('.nt-playlist-logger')) {
+              return;
+            }
+
             const btn = document.createElement('button');
             btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
             btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
@@ -623,7 +626,14 @@ export default defineContentScript({
 
       runInjectionCycle();
 
-      if (document.querySelector('.nt-playlist-logger')) {
+      const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+      const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+      const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
+
+      const getActiveContainer = () => document.querySelector(classicSel) || document.querySelector(modernHeaderSel) || document.querySelector(panelSel);
+
+      const activeContainer = getActiveContainer();
+      if (activeContainer && activeContainer.querySelector('.nt-playlist-logger')) {
         return;
       }
 
@@ -637,7 +647,8 @@ export default defineContentScript({
           rafPending = false;
           runInjectionCycle();
 
-          if (document.querySelector('.nt-playlist-logger')) {
+          const currentContainer = getActiveContainer();
+          if (currentContainer && currentContainer.querySelector('.nt-playlist-logger')) {
             pageObserver?.disconnect();
             pageObserver = null;
             if (pageObserverTimeout) {

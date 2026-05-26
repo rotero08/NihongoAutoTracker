@@ -246,6 +246,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   (async () => {
     const chunkSize = 3;
     for (let idx = 0; idx < videos.length; idx += chunkSize) {
+      if (!modal.isConnected) break;
       const chunk = videos.slice(idx, idx + chunkSize);
       await Promise.all(chunk.map(async (v, chunkIdx) => {
         const itemIdx = idx + chunkIdx;
@@ -259,6 +260,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
             v.channelDesc = data.channel.description?.[0]?.description;
           }
         } catch (e) { }
+        if (!modal.isConnected) return;
         const timeEl = modal.querySelector(`#pl-time-${itemIdx}`);
         if (timeEl) timeEl.textContent = `${v.time} min`;
       }));

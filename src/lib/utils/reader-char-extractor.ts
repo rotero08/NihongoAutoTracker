@@ -17,7 +17,7 @@ interface GeometryCache {
     width: number;
     height: number;
 }
-const paragraphGeometryCache = new WeakMap<Element, GeometryCache>();
+let paragraphGeometryCache = new WeakMap<Element, GeometryCache>();
 
 // Cache for layout properties that rarely change during a reading session
 let _layoutCacheElement: Element | null = null;
@@ -26,6 +26,32 @@ let _layoutCacheWritingMode = '';
 let _layoutCacheColumnWidth = '';
 let _layoutCacheColumnCount = '';
 const LAYOUT_CACHE_TTL = 1000; // ms
+
+// Cache for last calculation inputs and result
+let lastContainerSelector = '';
+let lastReaderContainer: Element | null = null;
+let lastScrollY = -1;
+let lastScrollX = -1;
+let lastContainerScrollTop = -1;
+let lastContainerScrollLeft = -1;
+let lastViewportWidth = -1;
+let lastViewportHeight = -1;
+let lastDocumentTitle = '';
+let lastResult: AdvancedCharData | null = null;
+
+let isParagraphsCacheDirty = true;
+let containerObserver: MutationObserver | null = null;
+
+function setupContainerObserver(container: Element) {
+    if (containerObserver) {
+        containerObserver.disconnect();
+    }
+    containerObserver = new MutationObserver(() => {
+        isParagraphsCacheDirty = true;
+        paragraphGeometryCache = new WeakMap();
+    });
+    containerObserver.observe(container, { childList: true, subtree: true });
+}
 
 export interface AdvancedCharData {
     current: number;
@@ -113,13 +139,71 @@ export function extractAdvancedCharCount(
 ): AdvancedCharData | null {
     try {
         const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
         const readerContainer = document.querySelector(containerSelector) || document.body;
 
+        const currentTitle = document.title;
+        const isContainerDisconnected = lastReaderContainer && !lastReaderContainer.isConnected;
+
+        if (isContainerDisconnected || lastReaderContainer !== readerContainer || lastContainerSelector !== containerSelector || lastDocumentTitle !== currentTitle) {
+            clearCharacterExtractorCache();
+            seenSectionIds.clear();
+            paragraphGeometryCache = new WeakMap();
+
+            if (isContainerDisconnected || readerContainer === document.body) {
+                if (containerObserver) {
+                    containerObserver.disconnect();
+                    containerObserver = null;
+                }
+            } else {
+                setupContainerObserver(readerContainer);
+            }
+
+            lastReaderContainer = readerContainer;
+            lastContainerSelector = containerSelector;
+            lastDocumentTitle = currentTitle;
+            isParagraphsCacheDirty = true;
+        }
+
+        const scrollY = window.scrollY;
+        const scrollX = window.scrollX;
+        const containerScrollTop = readerContainer.scrollTop;
+        const containerScrollLeft = readerContainer.scrollLeft;
+
+        // Invalidate geometry cache if the viewport scrolls or resizes
+        if (
+            lastScrollY !== scrollY ||
+            lastScrollX !== scrollX ||
+            lastContainerScrollTop !== containerScrollTop ||
+            lastContainerScrollLeft !== containerScrollLeft ||
+            lastViewportWidth !== viewportWidth ||
+            lastViewportHeight !== viewportHeight
+        ) {
+            paragraphGeometryCache = new WeakMap();
+        }
+
+        if (
+            !isParagraphsCacheDirty &&
+            lastResult &&
+            lastScrollY === scrollY &&
+            lastScrollX === scrollX &&
+            lastContainerScrollTop === containerScrollTop &&
+            lastContainerScrollLeft === containerScrollLeft &&
+            lastViewportWidth === viewportWidth &&
+            lastViewportHeight === viewportHeight
+        ) {
+            return lastResult;
+        }
+
         // Select valid reading paragraphs
-        const paragraphs = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(element => {
-            if (element.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-            return (element.textContent || '').trim().length > 0;
-        }) as Element[];
+        let paragraphs = cachedNodes;
+        if (isParagraphsCacheDirty || cachedNodes.length === 0) {
+            paragraphs = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(element => {
+                if (element.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
+                return (element.textContent || '').trim().length > 0;
+            }) as Element[];
+            isParagraphsCacheDirty = false;
+        }
 
         const contentContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
         const { writingMode, columnWidth, columnCount } = getCachedLayoutProperties(contentContainer);
@@ -138,7 +222,14 @@ export function extractAdvancedCharCount(
         if (paragraphs.length === 0) {
             const container = readerContainer.querySelector('.book-content-container') || readerContainer;
             const sectionIndex = getSectionIndex(container);
-            return { current: 0, total: 0, sectionIndex, isPaginated };
+            lastScrollY = scrollY;
+            lastScrollX = scrollX;
+            lastContainerScrollTop = containerScrollTop;
+            lastContainerScrollLeft = containerScrollLeft;
+            lastViewportWidth = viewportWidth;
+            lastViewportHeight = viewportHeight;
+            lastResult = { current: 0, total: 0, sectionIndex, isPaginated };
+            return lastResult;
         }
 
         // Rebuild character position registry if structural changes occur
@@ -175,7 +266,7 @@ export function extractAdvancedCharCount(
         // We only force-refresh layouts for nodes within current search boundaries
         while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            const geom = getCachedGeometry(cachedNodes[mid], true);
+            const geom = getCachedGeometry(cachedNodes[mid], false);
 
             let isExplored = false;
             if (geom.width === 0 || geom.height === 0) {
@@ -289,7 +380,15 @@ export function extractAdvancedCharCount(
         const sectionContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
         const sectionIndex = getSectionIndex(sectionContainer);
 
-        return { current, total, sectionIndex, isPaginated };
+        lastScrollY = scrollY;
+        lastScrollX = scrollX;
+        lastContainerScrollTop = containerScrollTop;
+        lastContainerScrollLeft = containerScrollLeft;
+        lastViewportWidth = viewportWidth;
+        lastViewportHeight = viewportHeight;
+
+        lastResult = { current, total, sectionIndex, isPaginated };
+        return lastResult;
     } catch (error) {
         void addDebugLog('ERROR', 'CharExtractor', 'Error extracting character counts', error);
         return null;
