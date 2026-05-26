@@ -42,19 +42,36 @@ let isMusicVideoCached = false;
 let isJapaneseVideoCached = false;
 let metadataResolved = false;
 let lastAnalyzedUrl = '';
+let lastAnalyzedTitle = '';
 
 function resolvePageLanguageAndType() {
   const currentUrl = window.location.href;
-  if (currentUrl === lastAnalyzedUrl && metadataResolved) return;
+  const currentTitle = document.title;
+
+  // Re-resolve only if the URL or title shifts
+  if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved) {
+    return;
+  }
+
+  // Prevent caching generic metadata transitions
+  const isGenericTitle = currentTitle === 'YouTube' || currentTitle === '';
 
   isMusicVideoCached = isMusic();
   isJapaneseVideoCached = isLikelyJapanese();
   lastAnalyzedUrl = currentUrl;
-  metadataResolved = true;
+  lastAnalyzedTitle = currentTitle;
+
+  if (!isGenericTitle) {
+    metadataResolved = true;
+  } else {
+    metadataResolved = false;
+  }
 
   addDebugLog('INFO', 'VideoTracker', 'Resolved video classification metadata', {
+    title: currentTitle,
     isMusic: isMusicVideoCached,
-    isJapanese: isJapaneseVideoCached
+    isJapanese: isJapaneseVideoCached,
+    resolved: metadataResolved
   });
 }
 
@@ -178,6 +195,19 @@ async function removeFromQueue(url: string) {
 
 let watchedSecs = 0, completedSessionSecs = 0, lastSyncSecs = 0, lastAutoCheckSecs = 0, _lastCounterPaint = 0;
 let cachedConfig: any = {};
+let playClockStart = -1;
+
+function flushPlayClock(discard = false) {
+  if (playClockStart < 0) return;
+  const elapsed = (performance.now() - playClockStart) / 1000;
+  playClockStart = -1;
+  if (!discard && elapsed > 0 && elapsed < 7200) {
+    watchedSecs += elapsed;
+  }
+}
+
+const getLiveWatched = () => watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
+const getTotal = () => completedSessionSecs + getLiveWatched();
 
 function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFallback: boolean } | null {
   const host = window.location.hostname;
@@ -201,11 +231,19 @@ function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFall
 function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: { hasTriggered: boolean; isManualLogging: boolean }, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
 
-  // Fast path: if badge exists and we painted less than 1s ago, skip all DOM queries
+  // Fast path: if badge exists and we painted less than 500ms ago, update only dynamic texts
   const now = performance.now();
-  if (el && now - _lastCounterPaint < 1000) return;
+  if (el && now - _lastCounterPaint < 500) {
+    const timeLabel = el.querySelector<HTMLElement>('.nt-time-label');
+    if (timeLabel) {
+      const multiSession = totalSecs > currentSecs + 2;
+      const showTotal = cfg.showTotalInBadge ?? true;
+      const currentStr = fmtSecs(currentSecs);
+      timeLabel.textContent = (multiSession && showTotal) ? `${currentStr} / ${fmtSecs(totalSecs)}` : currentStr;
+    }
+    return;
+  }
 
-  // Only run expensive classification + visibility checks at most once per second
   resolvePageLanguageAndType();
   const shouldHide = shouldHideBadge(cfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
   if (shouldHide) { el?.remove(); return; }
@@ -327,18 +365,6 @@ export default defineContentScript({
     const state = { hasTriggered: false, isManualLogging: false };
     let trackedVideo: HTMLVideoElement | null = null;
     let currentUrl = '', channelId: string | null = null, cachedChannelName = '';
-    let playClockStart = -1;
-    let pollIntervalId: any = null;
-
-    function flushPlayClock(discard = false) {
-      if (playClockStart < 0) return;
-      const elapsed = (performance.now() - playClockStart) / 1000;
-      playClockStart = -1;
-      if (!discard && elapsed > 0 && elapsed < 7200) watchedSecs += elapsed;
-    }
-
-    const getLiveWatched = () => watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
-    const getTotal = () => completedSessionSecs + getLiveWatched();
 
     const resetSession = () => {
       flushPlayClock();
@@ -372,11 +398,6 @@ export default defineContentScript({
       currentSessionId = crypto.randomUUID(); metadataResolved = false; _lastCounterPaint = 0;
       document.getElementById('nt-status-badge')?.remove();
 
-      if (pollIntervalId) {
-        clearInterval(pollIntervalId);
-        pollIntervalId = null;
-      }
-
       const tryChannel = async () => {
         const foundId = await getYouTubeChannelId();
         const foundName = await getChannelNameFallback();
@@ -394,12 +415,9 @@ export default defineContentScript({
 
       tryChannel();
       let pollCount = 0;
-      pollIntervalId = setInterval(async () => {
+      const poll = setInterval(async () => {
         await tryChannel();
-        if ((channelId && cachedChannelName) || pollCount++ > 20) {
-          clearInterval(pollIntervalId);
-          pollIntervalId = null;
-        }
+        if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
       }, 500);
 
       (async () => {
@@ -410,24 +428,39 @@ export default defineContentScript({
 
       // Prevent duplicate event handlers on recycled <video> nodes
       if (boundVideos.has(vid)) {
-        if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) playClockStart = performance.now();
+        if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) {
+          playClockStart = performance.now();
+        }
         return;
       }
       boundVideos.add(vid);
 
-      if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) playClockStart = performance.now();
+      if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) {
+        playClockStart = performance.now();
+      }
+
       vid.addEventListener('playing', () => {
         if (isAdPlaying()) return;
         playClockStart = performance.now();
       });
+
       vid.addEventListener('play', () => {
         if (isAdPlaying()) return;
         playClockStart = performance.now();
         if (vid.currentTime < 5) state.hasTriggered = false;
       });
+
       const stopClock = () => { flushPlayClock(); };
-      vid.addEventListener('pause', stopClock); vid.addEventListener('waiting', stopClock); vid.addEventListener('seeking', stopClock);
-      vid.addEventListener('seeked', () => { if (vid.currentTime < 5) state.hasTriggered = false; if (!vid.paused && !vid.ended && !isAdPlaying()) playClockStart = performance.now(); });
+      vid.addEventListener('pause', stopClock);
+      vid.addEventListener('waiting', stopClock);
+      vid.addEventListener('seeking', stopClock);
+
+      vid.addEventListener('seeked', () => {
+        if (vid.currentTime < 5) state.hasTriggered = false;
+        if (!vid.paused && !vid.ended && !isAdPlaying()) {
+          playClockStart = performance.now();
+        }
+      });
 
       vid.addEventListener('timeupdate', async () => {
         if (isAdPlaying()) {
@@ -441,7 +474,9 @@ export default defineContentScript({
         }
 
         const cfg = cachedConfig;
-        if (!state.hasTriggered) ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
+        if (!state.hasTriggered) {
+          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
+        }
         if (state.hasTriggered || vid.duration <= 0 || state.isManualLogging) return;
 
         const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
@@ -449,6 +484,7 @@ export default defineContentScript({
 
         if (!autoOn && reachedQueueThreshold(cfg, liveSecs, vid) && (liveSecs - lastSyncSecs) >= 10) {
           lastSyncSecs = liveSecs;
+          resolvePageLanguageAndType();
           if (isJapaneseVideoCached && !isMusicVideoCached) {
             const chName = cachedChannelName || await getChannelNameFallback();
             await upsertQueueLive(liveSecs, document.title, chName, currentUrl, channelId, currentSessionId);
@@ -457,6 +493,7 @@ export default defineContentScript({
 
         if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
           lastAutoCheckSecs = liveSecs;
+          resolvePageLanguageAndType();
           if (isJapaneseVideoCached && !isMusicVideoCached) {
             const threshType = cfg.thresholdType ?? 'percent';
             const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
@@ -486,6 +523,7 @@ export default defineContentScript({
         if (state.hasTriggered) return;
         const cfg = cachedConfig;
         const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+        resolvePageLanguageAndType();
         if (!autoOn && isJapaneseVideoCached && !isMusicVideoCached && reachedQueueThreshold(cfg, watchedSecs, vid)) {
           await finalizeSession(watchedSecs, currentUrl, currentSessionId);
           completedSessionSecs += watchedSecs; watchedSecs = 0; currentSessionId = crypto.randomUUID();
@@ -496,6 +534,7 @@ export default defineContentScript({
         flushPlayClock();
         const urlNow = cleanUrl(window.location.href);
         if (urlNow !== currentUrl) {
+          resolvePageLanguageAndType();
           if (!state.hasTriggered && watchedSecs >= 1 && isJapaneseVideoCached && !isMusicVideoCached) {
             await finalizeSession(watchedSecs, currentUrl, currentSessionId);
           }
@@ -514,6 +553,7 @@ export default defineContentScript({
 
             const badge = document.getElementById('nt-status-badge');
             if (badge) {
+              resolvePageLanguageAndType();
               const shouldHide = shouldHideBadge(c, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
               if (shouldHide) {
                 badge.remove();
@@ -522,98 +562,140 @@ export default defineContentScript({
                 ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, trackedVideo!, c, cachedChannelName, resetSession);
               }
             }
+
+            // Handles live user config adjustments safely
+            if (c.enablePlaylistLogger === false) {
+              document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
+            } else {
+              runPlaylistInjection();
+            }
           }
         });
       }
       if (area === 'local' && changes['videoQueue']) {
         const queue = Array.isArray(changes['videoQueue'].newValue) ? changes['videoQueue'].newValue : [];
         const clean = cleanUrl(window.location.href);
-        const existing = queue.find((q: any) => q.contentTitleEnglish === clean);
-        if (!existing) {
+        if (!queue.some((q: any) => q.contentTitleEnglish === clean)) {
           completedSessionSecs = 0; watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
-          if (!trackedVideo?.paused && !trackedVideo?.ended && (trackedVideo?.readyState ?? 0) > 2 && !isAdPlaying()) playClockStart = performance.now();
+          playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && trackedVideo.readyState > 2 && !isAdPlaying()) ? performance.now() : -1;
           const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
           if (badgeLabel) badgeLabel.textContent = "0:00";
-        } else {
-          completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
         }
       }
     });
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;
-    let isInjecting = false;
 
-    const runInjectionCycle = () => {
-      if (isInjecting) return;
-      isInjecting = true;
+    /**
+     * Resolves the target playlist header or action button containers strictly within the active visible contexts.
+     */
+    function getActivePlaylistContainers(): HTMLElement[] {
+      const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+      const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+      const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
 
-      try {
-        const vid = document.querySelector<HTMLVideoElement>('video');
-        if (vid) {
-          try {
-            attach(vid);
-          } catch (err) { }
-        }
+      const containers: HTMLElement[] = [];
+      const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
+      const matches = document.querySelectorAll(selectors);
 
-        if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
-          const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-          const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-          const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
-
-          const classicContainer = document.querySelector(classicSel);
-          const modernContainer = document.querySelector(modernHeaderSel);
-          const panelContainer = document.querySelector(panelSel);
-
-          const targetContainer = classicContainer || modernContainer || panelContainer;
-
-          if (targetContainer instanceof HTMLElement) {
-            // Check if our playlist button is already injected in this target container
-            if (targetContainer.querySelector('.nt-playlist-logger')) {
-              return;
-            }
-
-            const btn = document.createElement('button');
-            btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-            btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
-
-            Object.assign(btn.style, {
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              margin: '0 4px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              transition: 'background-color 0.2s',
-              filter: 'none !important',
-              boxShadow: 'none !important',
-              flexShrink: '0'
-            });
-
-            btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-            btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
-            btn.onclick = (e) => {
-              e.stopPropagation();
-              showPlaylistSelectorModal(btn, targetContainer.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
-            };
-
-            const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
-            if (overflowNode && overflowNode.parentElement === targetContainer) {
-              targetContainer.insertBefore(btn, overflowNode);
-            } else {
-              targetContainer.appendChild(btn);
-            }
+      for (let i = 0; i < matches.length; i++) {
+        const el = matches[i];
+        if (el instanceof HTMLElement) {
+          if (el.offsetWidth > 0 || el.offsetHeight > 0) {
+            containers.push(el);
           }
         }
-      } finally {
-        isInjecting = false;
       }
-    };
+      return containers;
+    }
 
+    /**
+     * Checks and injects the playlist logger button into the active visible containers.
+     */
+    function runPlaylistInjection(): boolean {
+      if (!cachedConfig || cachedConfig.enablePlaylistLogger === false) {
+        return false;
+      }
+
+      const targets = getActivePlaylistContainers();
+      if (targets.length === 0) {
+        return false;
+      }
+
+      let injectedAny = false;
+
+      for (const targetContainer of targets) {
+        if (targetContainer.querySelector('.nt-playlist-logger')) {
+          injectedAny = true;
+          continue;
+        }
+
+        try {
+          const btn = document.createElement('button');
+          btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+          btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
+
+          Object.assign(btn.style, {
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            margin: '0 4px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            transition: 'background-color 0.2s',
+            filter: 'none !important',
+            boxShadow: 'none !important',
+            flexShrink: '0'
+          });
+
+          btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+          btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            const isInline = targetContainer.closest('ytd-playlist-panel-renderer') !== null;
+            showPlaylistSelectorModal(btn, isInline, cachedConfig.theme);
+          };
+
+          const overflowNode = targetContainer.querySelector(
+            'yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child'
+          );
+          if (overflowNode && overflowNode.parentElement === targetContainer) {
+            targetContainer.insertBefore(btn, overflowNode);
+          } else {
+            targetContainer.appendChild(btn);
+          }
+          injectedAny = true;
+        } catch (err) {
+          addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
+        }
+      }
+
+      return injectedAny;
+    }
+
+    /**
+     * Helper to run basic video element check
+     */
+    function runVideoInjection() {
+      const vid = document.querySelector<HTMLVideoElement>('video');
+      if (vid) {
+        try {
+          attach(vid);
+        } catch (err) {
+          // Silent catch
+        }
+      }
+    }
+
+    /**
+     * Starts a short-lived MutationObserver on navigation to handle lazy-loaded elements.
+     * The observer runs for up to 10 seconds and then disconnects completely to ensure 0% idle CPU overhead.
+     */
     const startTargetedObserver = () => {
       if (pageObserver) {
         pageObserver.disconnect();
@@ -624,38 +706,52 @@ export default defineContentScript({
         pageObserverTimeout = null;
       }
 
-      runInjectionCycle();
+      const currentUrl = window.location.href;
 
-      const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-      const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-      const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
-
-      const getActiveContainer = () => document.querySelector(classicSel) || document.querySelector(modernHeaderSel) || document.querySelector(panelSel);
-
-      const activeContainer = getActiveContainer();
-      if (activeContainer && activeContainer.querySelector('.nt-playlist-logger')) {
-        return;
-      }
+      // Immediate injection attempts
+      runVideoInjection();
+      runPlaylistInjection();
 
       const target = document.querySelector('ytd-page-manager') || document.body;
-
       let rafPending = false;
-      pageObserver = new MutationObserver(() => {
-        if (rafPending) return;
-        rafPending = true;
-        requestAnimationFrame(() => {
-          rafPending = false;
-          runInjectionCycle();
 
-          const currentContainer = getActiveContainer();
-          if (currentContainer && currentContainer.querySelector('.nt-playlist-logger')) {
-            pageObserver?.disconnect();
-            pageObserver = null;
-            if (pageObserverTimeout) {
-              clearTimeout(pageObserverTimeout);
-              pageObserverTimeout = null;
+      pageObserver = new MutationObserver((mutations) => {
+        if (window.location.href !== currentUrl) {
+          return;
+        }
+
+        let isRelevant = false;
+        for (let i = 0; i < mutations.length; i++) {
+          const added = mutations[i].addedNodes;
+          for (let j = 0; j < added.length; j++) {
+            const node = added[j];
+            if (node instanceof HTMLElement) {
+              const tag = node.tagName.toLowerCase();
+              if (
+                tag.includes('renderer') ||
+                tag.includes('action') ||
+                tag.includes('header') ||
+                node.id === 'playlist-action-menu' ||
+                node.id === 'top-level-buttons-computed' ||
+                node.querySelector('ytd-menu-renderer, .metadata-buttons-wrapper')
+              ) {
+                isRelevant = true;
+                break;
+              }
             }
           }
+          if (isRelevant) break;
+        }
+
+        if (!isRelevant) return;
+
+        if (rafPending) return;
+        rafPending = true;
+
+        requestAnimationFrame(() => {
+          rafPending = false;
+          runVideoInjection();
+          runPlaylistInjection();
         });
       });
 
@@ -666,7 +762,7 @@ export default defineContentScript({
           pageObserver.disconnect();
           pageObserver = null;
         }
-      }, 8000);
+      }, 10000);
     };
 
     window.addEventListener('play', (e) => {
@@ -676,6 +772,7 @@ export default defineContentScript({
       }
     }, true);
 
+    // Initial load execution
     startTargetedObserver();
 
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
