@@ -48,6 +48,7 @@ let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
 let _mutationMicrotaskScheduled = false;
 let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
+let _transitionGraceUntil = 0;
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
@@ -348,20 +349,17 @@ function recalculateChars() {
       stateRefs.globalSessionStartChar = current;
     }
 
+    // Scroll Alignment Grace Window: Set baseline to moving positions during layout
+    // recalculation to prevent premature character additions
+    if (Date.now() < _transitionGraceUntil) {
+      stateRefs.globalSessionStartChar = current;
+      return;
+    }
+
     let diff = current - stateRefs.globalSessionStartChar;
     if (diff < 0) diff = 0;
 
     let calculatedChars = diff + stateRefs.globalManualCharOffset;
-
-    console.log('[TextTracker-Diag] recalculateChars():', {
-      current,
-      globalSessionStartChar: stateRefs.globalSessionStartChar,
-      diff,
-      globalManualCharOffset: stateRefs.globalManualCharOffset,
-      calculatedChars,
-      timeMs: ttuState.timeMs
-    });
-
     ttuState.chars = calculatedChars;
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -469,10 +467,14 @@ async function setupTTUChronometer() {
             stateRefs.globalSessionStartChar = current;
           }
 
-          let diff = current - stateRefs.globalSessionStartChar;
-          if (diff < 0) diff = 0;
+          if (now >= _transitionGraceUntil) {
+            let diff = current - stateRefs.globalSessionStartChar;
+            if (diff < 0) diff = 0;
 
-          ttuState.chars = diff + stateRefs.globalManualCharOffset;
+            ttuState.chars = diff + stateRefs.globalManualCharOffset;
+          } else {
+            stateRefs.globalSessionStartChar = current;
+          }
         }
         stateRefs.globalLastTick = now;
 
@@ -553,18 +555,9 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     _mutationMicrotaskScheduled = false;
     invalidateReadingViewCache();
 
-    const isLoaderActive = isChapterLoading();
-    if (isReadingViewActive()) {
-      console.log('[TextTracker-Diag] Mutation Triggered:', {
-        isReadingViewActive: true,
-        isChapterLoading: isLoaderActive,
-        lastSectionIndex: stateRefs.lastSectionIndex,
-        globalManualCharOffset: stateRefs.globalManualCharOffset
-      });
-    }
-
     // Prevent corrupting session references when Svelte is displaying a transition loading spinner
-    if (isReadingViewActive() && isLoaderActive) {
+    if (isReadingViewActive() && isChapterLoading()) {
+      _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window on load
       return;
     }
 
@@ -602,30 +595,8 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
         const { total, sectionIndex, isPaginated } = charData;
         const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-        console.log('[TextTracker-Diag] Section Check Iteration:', {
-          activeSection,
-          total,
-          isPaginated,
-          lastLoggedPaginatedMode,
-          stateRefs: {
-            globalSessionStartChar: stateRefs.globalSessionStartChar,
-            globalManualCharOffset: stateRefs.globalManualCharOffset,
-            lastSectionIndex: stateRefs.lastSectionIndex,
-            lastSectionTotal: stateRefs.lastSectionTotal,
-            sessionInitialSectionIndex: stateRefs.sessionInitialSectionIndex,
-            sessionInitialStartChar: stateRefs.sessionInitialStartChar,
-            visitedSections: Array.from(stateRefs.visitedSections.entries())
-          },
-          ttuStateChars: ttuState.chars,
-          ttuStateTimeMs: ttuState.timeMs
-        });
-
         // View-Mode Switch Safeguard: Cleanly purge old metrics if we transitioned reading types
         if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-          console.log('[TextTracker-Diag] VIEW MODE TOGGLE DETECTED:', {
-            oldMode: lastLoggedPaginatedMode,
-            newMode: isPaginated
-          });
           stateRefs.globalSessionStartChar = -1;
           stateRefs.globalManualCharOffset = 0;
           stateRefs.lastSectionIndex = -1;
@@ -637,6 +608,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
           ttuState.timeMs = 0;
           stateRefs.globalLastTick = Date.now();
           lastLoggedPaginatedMode = isPaginated;
+          _transitionGraceUntil = Date.now() + 400; // Trigger grace window on mode switch
           recalculateChars();
           return;
         }
@@ -644,23 +616,10 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
         if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
           const currentCount = extractAdvancedCharCount();
-          console.log('[TextTracker-Diag] INITIALIZING SESSION REFERENCES:', {
-            currentCount: currentCount?.current,
-            activeSection,
-            total,
-            isPaginated
-          });
           initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
         }
 
         if (stateRefs.lastSectionIndex !== activeSection) {
-          console.log('[TextTracker-Diag] TRANSITION DETECTED:', {
-            from: stateRefs.lastSectionIndex,
-            to: activeSection,
-            lastSectionTotal: stateRefs.lastSectionTotal,
-            currentTotal: total
-          });
-
           // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
           if (activeSection === -1) {
             if (!isReadingViewActive()) {
@@ -671,31 +630,24 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
             }
           } else {
             if (activeSection > stateRefs.lastSectionIndex) {
-              console.log('[TextTracker-Diag] DIRECTION: FORWARD');
               if (stateRefs.visitedSections.has(activeSection)) {
                 stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                console.log('[TextTracker-Diag] Visited sections found, restored offset:', stateRefs.globalManualCharOffset);
               } else {
                 // Accumulate using the verified non-zero previous chapter total
                 stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
                 stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                console.log('[TextTracker-Diag] Visited sections absent, accumulated new offset:', stateRefs.globalManualCharOffset);
               }
             } else {
-              console.log('[TextTracker-Diag] DIRECTION: BACKWARD');
               if (stateRefs.visitedSections.has(activeSection)) {
                 stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                console.log('[TextTracker-Diag] Visited sections found, restored offset:', stateRefs.globalManualCharOffset);
               } else {
                 stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
                 stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                console.log('[TextTracker-Diag] Visited sections absent, subtracted offset:', stateRefs.globalManualCharOffset);
               }
             }
 
             // Sync baseline progress boundary so going backward stays clamped at 0 session progress
             if (isPaginated) {
-              const oldStart = stateRefs.globalSessionStartChar;
               if (activeSection < stateRefs.sessionInitialSectionIndex) {
                 stateRefs.globalSessionStartChar = total;
               } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
@@ -703,27 +655,15 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
               } else {
                 stateRefs.globalSessionStartChar = 0;
               }
-              console.log('[TextTracker-Diag] Paginated SessionStartChar Sync:', {
-                oldStart,
-                newStart: stateRefs.globalSessionStartChar,
-                sessionInitialSectionIndex: stateRefs.sessionInitialSectionIndex,
-                sessionInitialStartChar: stateRefs.sessionInitialStartChar
-              });
             }
 
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
+            _transitionGraceUntil = Date.now() + 400; // Trigger grace window on transitions
             recalculateChars();
           }
         } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-          const oldTotal = stateRefs.lastSectionTotal;
           stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
-          if (oldTotal !== stateRefs.lastSectionTotal) {
-            console.log('[TextTracker-Diag] Same section total updated:', {
-              oldTotal,
-              newTotal: stateRefs.lastSectionTotal
-            });
-          }
         }
       }
     }
