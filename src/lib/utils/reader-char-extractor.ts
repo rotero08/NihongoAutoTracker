@@ -34,6 +34,9 @@ let containerObserver: MutationObserver | null = null;
 let cachedVw = typeof window !== 'undefined' ? window.innerWidth : 1024;
 let cachedVh = typeof window !== 'undefined' ? window.innerHeight : 768;
 
+// Reusable DOM Range to completely eliminate GC allocation spikes during search loops
+let reusableRange: Range | null = null;
+
 if (typeof window !== 'undefined') {
     window.addEventListener('resize', () => {
         cachedVw = window.innerWidth;
@@ -56,6 +59,26 @@ if (typeof window !== 'undefined') {
  * - \uFF0A (＊ - Fullwidth Asterisk scene break/placeholder)
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1\u00D7\u2715\uFF0A]/gu;
+
+/**
+ * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
+ */
+function shouldIgnoreNode(node: Node | null): boolean {
+    let current = node;
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+        const el = current as Element;
+        const tag = el.tagName;
+        if (tag === 'RT' || tag === 'RP' || tag === 'SVG' || tag === 'FIGCAPTION' || tag === 'NOSCRIPT') {
+            return true;
+        }
+        const cl = el.classList;
+        if (cl && (cl.contains('ttu-illustration-container') || cl.contains('ttu-img-container'))) {
+            return true;
+        }
+        current = current.parentNode;
+    }
+    return false;
+}
 
 /**
  * Calculates a sequential integer for the active section container.
@@ -184,7 +207,7 @@ export function extractAdvancedCharCount(
                     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
                     let n;
                     while ((n = walker.nextNode())) {
-                        if (!n.parentElement?.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
+                        if (!shouldIgnoreNode(n.parentElement)) {
                             text += n.nodeValue || '';
                         }
                     }
@@ -269,7 +292,7 @@ export function extractAdvancedCharCount(
 
                 if (spans.length > 0) {
                     spans.forEach(s => {
-                        if (s.closest('rt, rp, svg, figcaption, noscript')) return;
+                        if (shouldIgnoreNode(s)) return;
 
                         const sr = s.getBoundingClientRect();
                         let sExp = false;
@@ -300,42 +323,49 @@ export function extractAdvancedCharCount(
                     // Fallback to text node precision tracking when highlights are absent
                     const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
                     let n;
+
+                    // Lazy-load DOM Range to prevent memory churn
+                    if (!reusableRange && typeof document !== 'undefined') {
+                        reusableRange = document.createRange();
+                    }
+
                     while ((n = walker.nextNode())) {
                         const parent = n.parentElement;
-                        if (!parent || parent.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
+                        if (!parent || shouldIgnoreNode(parent)) {
                             continue;
                         }
 
-                        const range = document.createRange();
-                        range.selectNodeContents(n);
-                        const nr = range.getBoundingClientRect();
+                        if (reusableRange) {
+                            reusableRange.selectNodeContents(n);
+                            const nr = reusableRange.getBoundingClientRect();
 
-                        if (nr.width === 0 || nr.height === 0) continue;
+                            if (nr.width === 0 || nr.height === 0) continue;
 
-                        let sExp = false;
-                        if (cachedIsVertical) {
-                            if (cachedIsPaginated) {
-                                sExp = nr.bottom <= 1;
+                            let sExp = false;
+                            if (cachedIsVertical) {
+                                if (cachedIsPaginated) {
+                                    sExp = nr.bottom <= 1;
+                                } else {
+                                    if (cachedWritingMode === 'vertical-lr') {
+                                        sExp = nr.right <= 1;
+                                    } else {
+                                        sExp = nr.left >= (cachedVw + 1);
+                                    }
+                                }
                             } else {
-                                if (cachedWritingMode === 'vertical-lr') {
+                                if (cachedIsPaginated) {
                                     sExp = nr.right <= 1;
                                 } else {
-                                    sExp = nr.left >= (cachedVw + 1);
+                                    sExp = nr.bottom <= 1;
                                 }
                             }
-                        } else {
-                            if (cachedIsPaginated) {
-                                sExp = nr.right <= 1;
-                            } else {
-                                sExp = nr.bottom <= 1;
-                            }
-                        }
 
-                        if (sExp) {
-                            const text = n.nodeValue || '';
-                            const matches = text.match(JP_CHAR_PATTERN);
-                            if (matches) {
-                                current += matches.length;
+                            if (sExp) {
+                                const text = n.nodeValue || '';
+                                const matches = text.match(JP_CHAR_PATTERN);
+                                if (matches) {
+                                    current += matches.length;
+                                }
                             }
                         }
                     }

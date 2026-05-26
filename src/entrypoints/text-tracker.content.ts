@@ -44,6 +44,7 @@ let _readingViewCacheTime = 0;
 const READING_VIEW_CACHE_TTL = 500; // ms
 
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
+let _overlayCache: HTMLElement | null = null;
 
 let _mutationMicrotaskScheduled = false;
 let _lastSectionCheckTime = 0;
@@ -188,6 +189,15 @@ function invalidateReadingViewCache() {
   _readingViewCache = null;
 }
 
+/** Retrieve the cached overlay element when possible to limit DOM query overhead */
+function getOverlayElement(): HTMLElement | null {
+  if (_overlayCache && _overlayCache.isConnected) {
+    return _overlayCache;
+  }
+  _overlayCache = document.getElementById('nt-overlay');
+  return _overlayCache;
+}
+
 async function liveSyncQueue() {
   if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
   isSyncing = true;
@@ -293,7 +303,7 @@ async function saveSessionAndQueue() {
   showToast('Success', 'Session queued!');
 }
 
-function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
+function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
   // Return cached result if the target element is still in the DOM
@@ -393,13 +403,13 @@ async function checkAndRunOverlay(cfg: any) {
   if (window.location.hostname.includes('manga.manabe.es')) return;
 
   if (isAnalyzingPage) return;
-  const existing = document.getElementById('nt-overlay');
+  const existing = getOverlayElement();
   if (existing) return;
 
   isAnalyzingPage = true;
   try {
     const isJP = await isJapanesePage(cfg);
-    if (isJP && cfg.overlayPosition !== 'hidden' && !document.getElementById('nt-overlay')) {
+    if (isJP && cfg.overlayPosition !== 'hidden' && !getOverlayElement()) {
       runOverlaySetup(cfg);
     }
   } catch (e) {
@@ -444,6 +454,14 @@ async function setupTTUChronometer() {
 
     // High temporal resolution interval (200ms) for an instantaneous, snappy timing experience
     (window as any).ntChronoInterval = setInterval(() => {
+      // Suspend calculations if tab is in the background to lower idle thread activity
+      if (document.hidden) {
+        if (ttuState.running) {
+          stateRefs.globalLastTick = Date.now();
+        }
+        return;
+      }
+
       if (!isReadingViewActive()) {
         if (ttuState.running) {
           ttuState.running = false;
@@ -453,7 +471,7 @@ async function setupTTUChronometer() {
         return;
       }
 
-      if (ttuState.running && !document.hidden) {
+      if (ttuState.running) {
         const now = Date.now();
         const elapsed = now - stateRefs.globalLastTick;
 
@@ -490,8 +508,6 @@ async function setupTTUChronometer() {
         }
 
         if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
-      } else if (ttuState.running && document.hidden) {
-        stateRefs.globalLastTick = Date.now();
       }
     }, 200);
   } finally {
@@ -686,7 +702,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     const adapter = getActiveReaderAdapter();
     if (!adapter) {
       if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
-        const overlay = document.getElementById('nt-overlay');
+        const overlay = getOverlayElement();
         if (!overlay) {
           checkAndRunOverlay(currentConfig);
         }
@@ -781,7 +797,7 @@ browser.storage.onChanged.addListener((changes, area) => {
       if (window.self !== window.top) return;
 
       if (isWebsiteOverlaySkipped(newCfg) || getOverlayDismissed()) {
-        const overlay = document.getElementById('nt-overlay');
+        const overlay = getOverlayElement();
         if (overlay) overlay.style.display = 'none';
         return;
       }
@@ -799,7 +815,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 
       injectThemeStyles(themeName, newCfg.font ?? 'sans', customColors);
 
-      const existingOverlay = document.getElementById('nt-overlay');
+      const existingOverlay = getOverlayElement();
       if (existingOverlay) {
         const overlayPos = newCfg.overlayPosition ?? 'top-right';
         if (overlayPos !== 'hidden') {
