@@ -7,10 +7,10 @@ import { submitLog } from '@/lib/api/nihongotracker';
 import { showToast } from '@/lib/utils/toast';
 import { fmt } from '@/lib/utils/time';
 import { injectTTUStyles } from './reader-overlay';
+import { searchAniList } from '@/lib/api/anilist';
 
 export function setupTTUChronometerUI(
     pt: { el: Element; pos: InsertPosition },
-    currentConfig: any,
     ttuState: any,
     stateRefs: {
         globalSessionStartChar: number;
@@ -22,7 +22,7 @@ export function setupTTUChronometerUI(
         parseTitleWithConfig: (t: string) => { query: string; volume?: number };
         extractTTUCharCount: () => number | null;
         getReaderName: () => string;
-        getReaderConfig: (cfg: any) => any;
+        getCurrentReaderConfig: () => any;
         liveSyncQueue: () => Promise<void>;
         saveSessionAndQueue: () => Promise<void>;
     }
@@ -127,7 +127,11 @@ export function setupTTUChronometerUI(
 
     const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-    const refreshLinkerUI = async () => {
+    const refreshLinkerUI = async (force = false) => {
+        if (!force && document.activeElement === linkInput) {
+            return;
+        }
+
         const title = helpers.getTTUTitle();
         const links = await ttuLinkStorage.getValue() || {};
         const match = links[title];
@@ -141,7 +145,7 @@ export function setupTTUChronometerUI(
             const unlinkBtn = linkerCompact.querySelector('#nt-ttu-unlink-btn');
             if (unlinkBtn && volPill.parentElement !== linkerCompact) linkerCompact.insertBefore(volPill, unlinkBtn);
 
-            if (helpers.getReaderConfig(currentConfig).directSend) {
+            if (helpers.getCurrentReaderConfig().directSend) {
                 btnDirect.disabled = false; btnDirect.style.opacity = '1'; btnDirect.style.cursor = 'pointer'; btnDirect.title = 'Send session to NT directly';
             } else {
                 btnDirect.disabled = true; btnDirect.style.opacity = '0.3'; btnDirect.style.cursor = 'not-allowed'; btnDirect.title = 'Direct send disabled in settings';
@@ -214,7 +218,7 @@ export function setupTTUChronometerUI(
         const queue = await readingQueueStorage.getValue();
         const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
         if (existing) { existing.mediaId = 'web-reading'; existing.mediaData = undefined; await readingQueueStorage.setValue(queue); }
-        refreshLinkerUI();
+        refreshLinkerUI(true);
     });
 
     let linkDebounce: any;
@@ -228,12 +232,7 @@ export function setupTTUChronometerUI(
             linkResults.classList.add('open');
 
             try {
-                const res = await fetch(`https://nihongotracker.app/api/media/anilist/search?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=5&format=NOVEL`, {
-                    headers: { 'X-API-Key': currentConfig.apiKey ?? '' }
-                });
-                if (!res.ok) throw new Error();
-                const data = await res.json();
-                const results = Array.isArray(data) ? data : (data.data ?? []);
+                const results = await searchAniList(query, 5);
 
                 if (results.length === 0) { linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>'; return; }
 
@@ -262,7 +261,7 @@ export function setupTTUChronometerUI(
                                 contentId: m.contentId, contentTitleNative: native,
                                 contentTitleEnglish: m.title?.contentTitleEnglish || m.contentTitleEnglish || '',
                                 contentTitleRomaji: m.title?.contentTitleRomaji || m.contentTitleRomaji,
-                                contentImage: img, coverImage: img, chapters: m.chapters, volumes: m.volumes,
+                                contentImage: img, coverImage: img, chapters: m.textChapters || m.chapters, volumes: m.volumes,
                             }
                         };
                         await ttuLinkStorage.setValue(links);
@@ -277,7 +276,8 @@ export function setupTTUChronometerUI(
                         }
 
                         linkResults.classList.remove('open');
-                        refreshLinkerUI();
+                        linkInput.blur();
+                        refreshLinkerUI(true);
                         if (ttuState.timeMs > 0 || ttuState.chars > 0) helpers.liveSyncQueue();
                     });
                     linkResults.appendChild(row);
@@ -288,7 +288,12 @@ export function setupTTUChronometerUI(
 
     linkInput.addEventListener('input', performLinkSearch);
     linkInput.addEventListener('focus', () => { if (linkInput.value.trim().length >= 2 && linkResults.children.length > 0) linkResults.classList.add('open'); else performLinkSearch(); });
-    linkInput.addEventListener('blur', () => { setTimeout(() => linkResults.classList.remove('open'), 200); });
+    linkInput.addEventListener('blur', () => {
+        setTimeout(() => {
+            linkResults.classList.remove('open');
+            refreshLinkerUI();
+        }, 200);
+    });
 
     const updateHistoryData = async () => {
         const history = await ttuHistoryStorage.getValue() || {};
@@ -352,7 +357,7 @@ export function setupTTUChronometerUI(
         if (playPath) { playPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg); toggleBtn.setAttribute('title', ttuState.running ? 'Pause Timer' : 'Start Timer'); }
         if (mainIconPath) mainIconPath.setAttribute('d', ttuState.running ? pauseSvg : playSvg);
 
-        if (helpers.getReaderConfig(currentConfig).autoSave !== false) {
+        if (helpers.getCurrentReaderConfig().autoSave !== false) {
             btnLog.disabled = true; btnLog.style.opacity = '0.3'; btnLog.style.cursor = 'not-allowed'; btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
         } else {
             btnLog.disabled = false; btnLog.style.opacity = '1'; btnLog.style.cursor = 'pointer'; btnLog.title = 'Save & Queue';
@@ -444,7 +449,7 @@ export function setupTTUChronometerUI(
     let isProcessingLog = false;
     btnLog.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (helpers.getReaderConfig(currentConfig).autoSave !== false) return;
+        if (helpers.getCurrentReaderConfig().autoSave !== false) return;
         if (isProcessingLog) return;
 
         isProcessingLog = true;

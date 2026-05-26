@@ -47,7 +47,7 @@
     href="https://nihongotracker.app/settings"
     target="_blank"
     rel="noopener noreferrer"
-    style="color: var(--amber); text-decoration: underline; transition: opacity 0.2s;"
+    style="color: var(--color-accent); text-decoration: underline; transition: opacity 0.2s;"
     >settings</a
   > page.
 </p>

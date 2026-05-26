@@ -5,6 +5,7 @@
  * injects mock data and pre-populates the API key from environment.
  */
 
+import '@/styles/app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';

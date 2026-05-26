@@ -17,22 +17,6 @@
   --font-sans: system-ui, -apple-system, sans-serif;
   --rounded-box: 6px;
   --rounded-btn: 4px;
-
-  /* Backward-Compatibility Aliases (Pointing to clear variables) */
-  --bg: var(--color-background);
-  --surf: var(--color-surface);
-  --surf2: var(--color-surface-alt);
-  --bdr: var(--color-border);
-  --bdr2: var(--color-border-hover);
-  --text: var(--color-text);
-  --muted: var(--color-text-muted);
-  --dim: var(--color-text-dimmed);
-  --amber: var(--color-accent);
-  --ambrh: var(--color-accent-hover);
-  --green: var(--color-success);
-  --red: var(--color-error);
-  --mono: var(--font-mono);
-  --sans: var(--font-sans);
 }
 
 *, *::before, *::after {

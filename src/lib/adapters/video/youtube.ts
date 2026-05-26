@@ -1,11 +1,6 @@
-/**
- * ── YouTube Video Adapter ────────────────────────────────────────────────────
- * Implements VideoSiteAdapter for YouTube and YouTube Music.
- */
-import type { TrackerConfig } from '../../types';
-import type { VideoSiteAdapter } from './types';
-import { getYouTubeChannelId, getChannelNameFallback } from '../../api/youtube';
-import { isLikelyJapanese, isMusic } from '../../utils/japanese';
+import type { TrackerConfig, VideoSiteAdapter } from '@/lib/types';
+import { getYouTubeChannelId, getChannelNameFallback } from '@/lib/utils/youtube-extraction';
+import { isLikelyJapanese, isMusic } from '@/lib/utils/japanese';
 
 export const youtubeAdapter: VideoSiteAdapter = {
   name: 'YouTube',
@@ -17,7 +12,6 @@ export const youtubeAdapter: VideoSiteAdapter = {
   ],
 
   isEnabled(_config: TrackerConfig): boolean {
-    /* YouTube tracking is always enabled when the content script loads */
     return true;
   },
 

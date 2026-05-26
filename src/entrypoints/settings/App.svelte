@@ -108,19 +108,6 @@
       colors.accentHover || colors.accent,
     );
     root.style.setProperty("--color-success", colors.success || "#3ddc84");
-
-    // Re-synchronize style aliases with custom accent color
-    root.style.setProperty("--bg", "var(--color-background)");
-    root.style.setProperty("--surf", "var(--color-surface)");
-    root.style.setProperty("--surf2", "var(--color-surface-alt)");
-    root.style.setProperty("--bdr", "var(--color-border)");
-    root.style.setProperty("--bdr2", "var(--color-border-hover)");
-    root.style.setProperty("--text", "var(--color-text)");
-    root.style.setProperty("--muted", "var(--color-text-muted)");
-    root.style.setProperty("--dim", "var(--color-text-dimmed)");
-    root.style.setProperty("--amber", "var(--color-accent)");
-    root.style.setProperty("--ambrh", "var(--color-accent-hover)");
-    root.style.setProperty("--green", "var(--color-success)");
   }
 
   function clearCustomTheme() {
@@ -136,18 +123,6 @@
     root.style.removeProperty("--color-accent");
     root.style.removeProperty("--color-accent-hover");
     root.style.removeProperty("--color-success");
-
-    root.style.removeProperty("--bg");
-    root.style.removeProperty("--surf");
-    root.style.removeProperty("--surf2");
-    root.style.removeProperty("--bdr");
-    root.style.removeProperty("--bdr2");
-    root.style.removeProperty("--text");
-    root.style.removeProperty("--muted");
-    root.style.removeProperty("--dim");
-    root.style.removeProperty("--amber");
-    root.style.removeProperty("--ambrh");
-    root.style.removeProperty("--green");
   }
 
   onMount(() => {

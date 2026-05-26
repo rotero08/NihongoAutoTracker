@@ -5,7 +5,6 @@
 -->
 <script lang="ts">
   import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
-  import { escapeHtml } from "@/lib/utils/text-parsing";
 
   /** Whether the dropdown is open */
   let open = $state(false);
@@ -15,6 +14,9 @@
   let loading = $state(false);
   /** Error state */
   let error = $state(false);
+
+  // Tracks the last query to prevent late-returning network requests
+  let activeQueryToken = $state(0);
 
   /** Callback when a result is selected */
   interface Props {
@@ -28,22 +30,34 @@
       open = false;
       return;
     }
+
+    // Generate a unique token for the current query
+    const currentToken = ++activeQueryToken;
+
     loading = true;
     error = false;
     open = true;
+
     try {
-      results = await searchAniList(query, 5);
+      const searchResults = await searchAniList(query, 5);
+
+      // Guard clause: Discard if a newer search query has already been executed
+      if (currentToken !== activeQueryToken) return;
+
+      results = searchResults;
       loading = false;
       if (results.length === 0) results = [];
     } catch {
+      if (currentToken !== activeQueryToken) return;
       error = true;
       loading = false;
     }
   }
 
-  /** Close the dropdown */
+  /** Close the dropdown and invalidate active requests */
   export function close() {
     open = false;
+    activeQueryToken++; // Invalidate any running network callbacks
   }
 
   /** Show existing results */
@@ -54,7 +68,7 @@
   function handleSelect(r: AniListSearchResult, e: MouseEvent) {
     e.preventDefault();
     onSelect(r);
-    open = false;
+    close();
   }
 </script>
 

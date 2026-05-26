@@ -6,304 +6,37 @@ import { configStorage } from '@/lib/storage/config';
 import { readingQueueStorage } from '@/lib/storage/queues';
 import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
 import { addDebugLog } from '@/lib/storage/debug';
-import { SKIP_HOSTS_DEFAULT, JP_DOMAINS_DEFAULT, JP_RE, TTU_HOSTS } from '@/lib/constants';
+import { JP_DOMAINS_DEFAULT, JP_RE } from '@/lib/constants';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
-import { injectThemeStyles, buildOverlay } from '@/lib/ui/reader-overlay';
-import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
+import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { fmt } from '@/lib/utils/time';
+import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
+import {
+  getActiveThemeName,
+  updateActiveThemeStyles,
+  getReaderConfig
+} from '@/lib/ui/text-tracker-theme-manager';
+import {
+  runOverlaySetup,
+  updatePauseIconState,
+  applyOverlayPosition,
+  enforceOverlayLayout,
+  injectOverlayCustomOverrides,
+  getOverlayDismissed,
+  isWebsiteOverlaySkipped
+} from '@/lib/ui/reader-overlay';
 import '@/assets/overlay.css';
 
 let currentConfig: any = {};
-let websiteOverlayDismissed = false;
 let isAnalyzingPage = false;
 let cachedIsJapanese: boolean | null = null;
 
 // Trackers to optimize mutation and chrono lookups
-let lastObservedContainerId = '';
 let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
-
-function getActiveThemeName(cfg: any): string {
-  const host = window.location.hostname;
-  if (host.includes('reader.ttsu.app') || host.includes('ttsu.app')) {
-    const override = cfg.ttuThemeOverride ?? 'global';
-    if (override !== 'global') return override;
-  } else if (host.includes('app.yatsu.moe')) {
-    const override = cfg.yatsuThemeOverride ?? 'global';
-    if (override !== 'global') return override;
-  } else if (host.includes('manga.manabe.es')) {
-    const override = cfg.manabeThemeOverride ?? 'global';
-    if (override !== 'global') return override;
-  }
-  return cfg.theme ?? 'nihongo';
-}
-
-function getCustomColorsForSite(cfg: any): any {
-  const activeThemeName = getActiveThemeName(cfg);
-  if (!activeThemeName) return null;
-  if (activeThemeName.startsWith('custom-') || activeThemeName.startsWith('custom_') || activeThemeName === 'custom') {
-    const id = activeThemeName.replace('custom-', '').replace('custom_', '');
-    const themes = cfg.customThemes || cfg.userThemes || [];
-    const theme = themes.find((t: any) => t.id === id || t.id === activeThemeName);
-    return theme ? theme.colors : (cfg.customColors || null);
-  }
-  return null;
-}
-
-/**
- * Parses any color format (hex or rgb/rgba) to numerical RGB components.
- */
-function parseColorToRgb(colorStr: string): { r: number, g: number, b: number } {
-  const defaultVal = { r: 7, g: 7, b: 14 }; // Default dark background
-  if (!colorStr) return defaultVal;
-
-  const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  if (rgbMatch) {
-    return {
-      r: parseInt(rgbMatch[1], 10),
-      g: parseInt(rgbMatch[2], 10),
-      b: parseInt(rgbMatch[3], 10)
-    };
-  }
-
-  if (colorStr.startsWith('#')) {
-    let hex = colorStr.slice(1);
-    if (hex.length === 3) {
-      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
-    }
-    if (hex.length === 6) {
-      return {
-        r: parseInt(hex.slice(0, 2), 16),
-        g: parseInt(hex.slice(2, 4), 16),
-        b: parseInt(hex.slice(4, 6), 16)
-      };
-    }
-  }
-
-  return defaultVal;
-}
-
-/**
- * Converts RGB components to Hue, Saturation, Lightness.
- */
-function rgbToHsl(r: number, g: number, b: number) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0, l = (max + min) / 2;
-
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
-  return { h: h * 360, s: s * 100, l: l * 100 };
-}
-
-/**
- * Converts Hue, Saturation, Lightness components back to RGB.
- */
-function hslToRgb(h: number, s: number, l: number) {
-  h /= 360; s /= 100; l /= 100;
-  let r = l, g = l, b = l;
-  if (s !== 0) {
-    const hue2rgb = (p: number, q: number, t: number) => {
-      if (t < 0) t += 1;
-      if (t > 1) t -= 1;
-      if (t < 1 / 6) return p + (q - p) * 6 * t;
-      if (t < 1 / 2) return q;
-      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-      return p;
-    };
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    r = hue2rgb(p, q, h + 1 / 3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1 / 3);
-  }
-  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
-}
-
-/**
- * Shifts the lightness of an RGB color by a safe offset.
- */
-function adjustLightness(rgb: { r: number, g: number, b: number }, offset: number): string {
-  const r = Math.max(0, Math.min(255, rgb.r + offset));
-  const g = Math.max(0, Math.min(255, rgb.g + offset));
-  const b = Math.max(0, Math.min(255, rgb.b + offset));
-  return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
-}
-
-/**
- * Dynamically extracts computed styles from the reader viewport to adaptive contrast matching.
- */
-function detectReaderThemeColors(): any {
-  try {
-    const bodyStyle = window.getComputedStyle(document.body);
-    let bgColor = bodyStyle.backgroundColor;
-
-    // Find active reader content element for robust text color tracking (bypassing unstyled body color fallbacks)
-    let textColor = bodyStyle.color;
-    const contentEl = document.querySelector('.book-content, .book-content-container, .reader-container, .text-container, p, span, h1, div[class*="content"]');
-    if (contentEl) {
-      textColor = window.getComputedStyle(contentEl).color;
-    }
-
-    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
-      const container = document.querySelector(
-        '.book-content-container, .book-content, [data-ref="container"], .reader-container, #ttu-page-footer, #root, #app'
-      );
-      if (container) {
-        const containerStyle = window.getComputedStyle(container);
-        bgColor = containerStyle.backgroundColor;
-      }
-    }
-
-    const parsedBg = parseColorToRgb(bgColor || '#07070e');
-    const parsedText = parseColorToRgb(textColor || '#dde4f0');
-
-    // Extract HSL from background to calculate safe hue/contrast shifts
-    const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
-    const isDark = hslBg.l < 50;
-
-    // Shift Hue of the background color by 12 degrees to get a beautifully rich, contrasting panel color!
-    const shiftedBgHsl = {
-      h: (hslBg.h + 12) % 360,
-      s: Math.max(10, Math.min(90, isDark ? hslBg.s + 5 : hslBg.s - 5)),
-      l: isDark ? Math.min(95, hslBg.l + 4) : Math.max(5, hslBg.l - 4)
-    };
-    const shiftedBg = hslToRgb(shiftedBgHsl.h, shiftedBgHsl.s, shiftedBgHsl.l);
-
-    let background = `rgb(${shiftedBg.r}, ${shiftedBg.g}, ${shiftedBg.b})`;
-    let surface = isDark ? adjustLightness(shiftedBg, 6) : adjustLightness(shiftedBg, -6);
-    let surfaceAlt = isDark ? adjustLightness(shiftedBg, 12) : adjustLightness(shiftedBg, -12);
-    let border = isDark ? adjustLightness(shiftedBg, 22) : adjustLightness(shiftedBg, -22);
-    let borderHover = isDark ? adjustLightness(shiftedBg, 32) : adjustLightness(shiftedBg, -32);
-    let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
-
-    let accent = isDark ? 'var(--color-accent, #f0b429)' : 'var(--color-accent, #b45309)';
-    let accentHover = isDark ? 'var(--color-accent-hover, #ffd060)' : 'var(--color-accent-hover, #78350f)';
-
-    // Adaptive green color that adjusts light/dark contrast but remains strictly green
-    const greenHsl = {
-      h: 135, // True Green spectrum
-      s: isDark ? 65 : 75,
-      l: isDark ? 55 : 35
-    };
-    const successGreen = hslToRgb(greenHsl.h, greenHsl.s, greenHsl.l);
-    const success = `rgb(${successGreen.r}, ${successGreen.g}, ${successGreen.b})`;
-
-    return {
-      background,
-      surface,
-      surfaceAlt,
-      border,
-      borderHover,
-      text: textColor,
-      textMuted,
-      accent,
-      accentHover,
-      success
-    };
-  } catch (e) {
-    return null;
-  }
-}
-
-function updateActiveThemeStyles(themeName: string, cfg: any) {
-  if (themeName === 'match-reader') {
-    const detectedColors = detectReaderThemeColors();
-    if (detectedColors) {
-      applyCustomThemeToDoc(detectedColors);
-      injectThemeStyles('custom', cfg.font ?? 'sans');
-    } else {
-      clearCustomThemeFromDoc();
-      injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
-    }
-  } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
-    const colors = getCustomColorsForSite(cfg);
-    if (colors) {
-      applyCustomThemeToDoc(colors);
-      injectThemeStyles('custom', cfg.font ?? 'sans');
-    } else {
-      clearCustomThemeFromDoc();
-      injectThemeStyles('dark-amber', cfg.font ?? 'sans');
-    }
-  } else {
-    clearCustomThemeFromDoc();
-    injectThemeStyles(themeName, cfg.font ?? 'sans');
-  }
-}
-
-function applyCustomThemeToDoc(customColors: any) {
-  if (!customColors) return;
-  const root = document.documentElement;
-  const mapping: Record<string, string> = {
-    "--color-background": customColors.background,
-    "--color-surface": customColors.surface,
-    "--color-surface-alt": customColors.surfaceAlt || customColors.surface,
-    "--color-border": customColors.border,
-    "--color-border-hover": customColors.borderHover || customColors.border,
-    "--color-text": customColors.text,
-    "--color-text-muted": customColors.textMuted,
-    "--color-text-dimmed": customColors.textMuted,
-    "--color-accent": customColors.accent,
-    "--color-accent-hover": customColors.accentHover || customColors.accent,
-    "--color-success": customColors.success || customColors.accent,
-  };
-  for (const [prop, val] of Object.entries(mapping)) {
-    if (val) root.style.setProperty(prop, val, 'important');
-  }
-}
-
-function clearCustomThemeFromDoc() {
-  const root = document.documentElement;
-  const props = [
-    "--color-background",
-    "--color-surface",
-    "--color-surface-alt",
-    "--color-border",
-    "--color-border-hover",
-    "--color-text",
-    "--color-text-muted",
-    "--color-text-dimmed",
-    "--color-accent",
-    "--color-accent-hover",
-    "--color-success"
-  ];
-  for (const prop of props) {
-    root.style.removeProperty(prop);
-  }
-}
-
-function getReaderConfig(cfg: any) {
-  const host = window.location.hostname;
-  const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
-  const directSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
-
-  if (host.includes('app.yatsu.moe')) {
-    return { enabled: cfg.yatsuEnabled ?? true, autoSave, directSend };
-  }
-  if (host.includes('manga.manabe.es')) {
-    return { enabled: cfg.manabeEnabled ?? true, autoSave, directSend };
-  }
-  return { enabled: cfg.ttuEnabled ?? true, autoSave, directSend };
-}
-
-function isWebsiteOverlaySkipped(cfg: any): boolean {
-  const host = window.location.hostname;
-  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
-  if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
-  if (skipSites.some((h: string) => host.includes(h))) return true;
-  return false;
-}
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
@@ -407,16 +140,10 @@ function parseTitleWithConfig(docTitle: string) {
 }
 
 function getReaderName() {
-  const host = window.location.hostname;
-  if (host.includes('app.yatsu.moe')) return 'Yatsu Reader';
-  if (host.includes('manga.manabe.es')) return 'Manabe Reader';
-  if (host.includes('reader.ttsu.app')) return 'TTU Reader';
-  return 'Reader';
+  const adapter = getActiveReaderAdapter();
+  return adapter ? adapter.name : 'Reader';
 }
 
-/**
- * Validates if the user is currently looking at active reading content.
- */
 function isReadingViewActive(): boolean {
   const path = window.location.pathname;
   if (path.includes('/settings') || path === '/' || path === '') {
@@ -426,7 +153,9 @@ function isReadingViewActive(): boolean {
     document.querySelector('.book-content-container') ||
     document.querySelector('.book-content') ||
     document.querySelector('[data-ref="container"]') ||
-    document.querySelector('.reader-container')
+    document.querySelector('.reader-container') ||
+    document.querySelector('#reader-container') ||
+    document.querySelector('.reader-wrapper')
   );
   return hasContainer;
 }
@@ -555,6 +284,12 @@ function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
     return { el: container, pos: 'afterbegin' };
   }
 
+  const adapter = getActiveReaderAdapter();
+  if (adapter) {
+    const pt = adapter.findInsertPoint();
+    if (pt) return pt;
+  }
+
   return null;
 }
 
@@ -619,10 +354,9 @@ function recalculateChars() {
     return;
   }
 
-  const charData = extractAdvancedCharCount();
-  if (charData !== null) {
-    const { current } = charData;
-
+  const adapter = getActiveReaderAdapter();
+  const current = adapter ? adapter.extractCharCount() : null;
+  if (current !== null) {
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
     }
@@ -658,7 +392,7 @@ function setupProgressObserver() {
 
 async function checkAndRunOverlay(cfg: any) {
   if (window.self !== window.top) return;
-  if (isWebsiteOverlaySkipped(cfg)) return; // Strictly block execution on skipped sites like YouTube
+  if (isWebsiteOverlaySkipped(cfg)) return;
 
   if (isAnalyzingPage) return;
   const existing = document.getElementById('nt-overlay');
@@ -679,6 +413,11 @@ async function checkAndRunOverlay(cfg: any) {
 
 async function setupTTUChronometer() {
   if (isChronoInitializing) return;
+  if (!isReadingViewActive()) {
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.remove();
+    return;
+  }
   if (document.getElementById('nt-ttu-chrono-wrapper')) return;
 
   isChronoInitializing = true;
@@ -686,15 +425,15 @@ async function setupTTUChronometer() {
     const pt = findTTUInsertPoint();
     if (!pt) return;
 
-    setupTTUChronometerUI(pt, currentConfig, ttuState, stateRefs, {
+    setupTTUChronometerUI(pt, ttuState, stateRefs, {
       getTTUTitle,
       parseTitleWithConfig,
       extractTTUCharCount: () => {
-        const res = extractAdvancedCharCount();
-        return res !== null ? res.current : null;
+        const adapter = getActiveReaderAdapter();
+        return adapter ? adapter.extractCharCount() : null;
       },
       getReaderName,
-      getReaderConfig,
+      getCurrentReaderConfig: () => getReaderConfig(currentConfig),
       liveSyncQueue,
       saveSessionAndQueue
     });
@@ -795,9 +534,26 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     // 1. TTU Chrono insert check
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     const target = findTTUInsertPoint();
-    if (target && !wrapper) {
-      const readerCfg = getReaderConfig(currentConfig);
-      if (readerCfg.enabled !== false) setupTTUChronometer();
+    if (isReadingViewActive()) {
+      if (target) {
+        const readerCfg = getReaderConfig(currentConfig);
+        if (readerCfg.enabled !== false) {
+          if (!wrapper) {
+            setupTTUChronometer();
+          } else {
+            const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
+            if (wrapper.parentElement !== expectedParent) {
+              target.el.insertAdjacentElement(target.pos, wrapper);
+              addDebugLog('INFO', 'TextTracker', 'Moved chrono wrapper to correct insert point');
+            }
+          }
+        }
+      }
+    } else {
+      if (wrapper) {
+        wrapper.remove();
+        addDebugLog('INFO', 'TextTracker', 'Removed chrono wrapper as reading view is inactive');
+      }
     }
 
     if (ttuState.running && isReadingViewActive()) {
@@ -872,9 +628,10 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       updateActiveThemeStyles(activeTheme, currentConfig);
     }
 
-    // 4. Non-TTU Overlay recovery check
-    if (!TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
-      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !websiteOverlayDismissed) {
+    // 4. Non-reader Overlay recovery check
+    const adapter = getActiveReaderAdapter();
+    if (!adapter) {
+      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
         const overlay = document.getElementById('nt-overlay');
         if (!overlay) {
           addDebugLog('INFO', 'TextTracker', 'Overlay removed by host page DOM changes. Rebuilding overlay...');
@@ -883,7 +640,6 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       }
     }
   });
-  // We added attributes observer to track class and style changes on body, making sure theme updates inside the reader get captured instantly.
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
 }
 
@@ -928,258 +684,6 @@ function startTimeTracker() {
   };
 }
 
-function applyOverlayPosition(overlay: HTMLElement, pos: string) {
-  overlay.style.setProperty('top', '', 'important');
-  overlay.style.setProperty('bottom', '', 'important');
-  overlay.style.setProperty('left', '', 'important');
-  overlay.style.setProperty('right', '', 'important');
-
-  if (pos === 'top-left') {
-    overlay.style.setProperty('top', '16px', 'important');
-    overlay.style.setProperty('left', '16px', 'important');
-  } else if (pos === 'top-right') {
-    overlay.style.setProperty('top', '16px', 'important');
-    overlay.style.setProperty('right', '16px', 'important');
-  } else if (pos === 'bottom-left') {
-    overlay.style.setProperty('bottom', '16px', 'important');
-    overlay.style.setProperty('left', '16px', 'important');
-  } else if (pos === 'bottom-right') {
-    overlay.style.setProperty('bottom', '16px', 'important');
-    overlay.style.setProperty('right', '16px', 'important');
-  }
-}
-
-/**
- * Injects CSS rules targeting control buttons with high specificity
- * to completely eliminate default and theme-enforced border boxes.
- */
-function injectOverlayCustomOverrides() {
-  if (document.getElementById('nt-overlay-custom-overrides')) return;
-  const style = document.createElement('style');
-  style.id = 'nt-overlay-custom-overrides';
-  style.textContent = `
-    #nt-overlay {
-      /* ── TRANSPARENCY SETTINGS ──────────────────────────────────────────
-         Adjust "opacity" below to change base transparency when not hovered.
-         0.0 = completely invisible, 1.0 = completely solid.
-      */
-      opacity: 0.35 !important;
-      transition: opacity 0.15s ease-in-out !important;
-    }
-    #nt-overlay:hover {
-      opacity: 1 !important;
-    }
-
-    #nt-overlay .nt-ctrl,
-    #nt-overlay .nt-close {
-      border: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-      box-shadow: none !important;
-      outline: none !important;
-      padding: 0 1px !important;
-      margin: 0 !important;
-      border-radius: 0 !important;
-      cursor: pointer !important;
-      display: inline-flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      height: 100% !important;
-      line-height: 1 !important;
-      vertical-align: middle !important;
-    }
-    #nt-overlay button {
-      border: none !important;
-      background: transparent !important;
-      background-color: transparent !important;
-      box-shadow: none !important;
-      outline: none !important;
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-/**
- * Sets size and vertical scaling classes directly on the pause button.
- * Resolves disproportionately small native width profiles on ⏸ double bar glyph.
- */
-function updatePauseIconState(pauseBtn: HTMLButtonElement, isPaused: boolean) {
-  pauseBtn.textContent = isPaused ? '▶' : '⏸';
-  if (isPaused) {
-    pauseBtn.style.setProperty('font-size', '10px', 'important');
-    pauseBtn.style.setProperty('transform', 'none', 'important');
-  } else {
-    pauseBtn.style.setProperty('font-size', '13px', 'important');
-    // Offset baseline displacement common to vertical line double-bar unicode glyphtypes
-    pauseBtn.style.setProperty('transform', 'translateY(-1px)', 'important');
-  }
-}
-
-/**
- * Enforces key horizontal layout metrics directly as inline rules.
- * This prevents theme style changes from breaking alignment or wrapping elements.
- */
-function enforceOverlayLayout(overlay: HTMLElement) {
-  overlay.style.setProperty('display', 'flex', 'important');
-  overlay.style.setProperty('flex-direction', 'row', 'important');
-  overlay.style.setProperty('align-items', 'center', 'important');
-  overlay.style.setProperty('justify-content', 'space-between', 'important');
-  overlay.style.setProperty('gap', '4px', 'important');
-  overlay.style.setProperty('padding', '0 6px', 'important');
-  overlay.style.setProperty('box-sizing', 'border-box', 'important');
-  overlay.style.setProperty('white-space', 'nowrap', 'important');
-  overlay.style.setProperty('height', '22px', 'important');
-  overlay.style.setProperty('width', 'auto', 'important');
-  overlay.style.setProperty('min-width', 'unset', 'important');
-  overlay.style.setProperty('min-height', 'unset', 'important');
-  overlay.style.setProperty('line-height', '1', 'important');
-
-  const handle = overlay.querySelector('.nt-handle') as HTMLElement;
-  if (handle) {
-    handle.style.setProperty('display', 'inline-flex', 'important');
-    handle.style.setProperty('align-items', 'center', 'important');
-    handle.style.setProperty('justify-content', 'center', 'important');
-    handle.style.setProperty('cursor', 'grab', 'important');
-    handle.style.setProperty('user-select', 'none', 'important');
-    handle.style.setProperty('margin-right', '1px', 'important');
-    handle.style.setProperty('font-size', '10px', 'important');
-    handle.style.setProperty('height', '100%', 'important');
-    handle.style.setProperty('line-height', '1', 'important');
-  }
-
-  const timeEl = overlay.querySelector('.nt-time') as HTMLElement;
-  if (timeEl) {
-    timeEl.style.setProperty('display', 'inline-flex', 'important');
-    timeEl.style.setProperty('align-items', 'center', 'important');
-    timeEl.style.setProperty('justify-content', 'center', 'important');
-    timeEl.style.setProperty('font-variant-numeric', 'tabular-nums', 'important');
-    timeEl.style.setProperty('margin-right', '2px', 'important');
-    timeEl.style.setProperty('font-size', '12px', 'important');
-    timeEl.style.setProperty('height', '100%', 'important');
-    timeEl.style.setProperty('line-height', '1', 'important');
-  }
-
-  // Force strict centered alignment inside all overlay buttons
-  const buttons = overlay.querySelectorAll('button');
-  buttons.forEach(btn => {
-    btn.style.setProperty('display', 'inline-flex', 'important');
-    btn.style.setProperty('align-items', 'center', 'important');
-    btn.style.setProperty('justify-content', 'center', 'important');
-    btn.style.setProperty('height', '100%', 'important');
-    btn.style.setProperty('line-height', '1', 'important');
-    btn.style.setProperty('vertical-align', 'middle', 'important');
-  });
-}
-
-function runOverlaySetup(cfg: any) {
-  addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
-    url: window.location.href,
-    pos: cfg.overlayPosition
-  });
-
-  if (websiteOverlayDismissed) {
-    const existing = document.getElementById('nt-overlay');
-    if (existing) existing.style.display = 'none';
-    return;
-  }
-
-  let overlay = document.getElementById('nt-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'nt-overlay';
-    const handle = document.createElement('div');
-    handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.innerHTML = '⠿';
-    const timeEl = document.createElement('span');
-    timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
-    const pauseBtn = document.createElement('button');
-    pauseBtn.className = 'nt-ctrl'; pauseBtn.title = 'Pause / Resume';
-    const resetBtn = document.createElement('button');
-    resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'nt-close'; closeBtn.textContent = '×'; closeBtn.title = 'Hide overlay (until reload)';
-    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); websiteOverlayDismissed = true; overlay!.style.display = 'none'; });
-
-    // Initial state setup for play/pause toggle sizes
-    updatePauseIconState(pauseBtn, false);
-    resetBtn.style.setProperty('font-size', '11px', 'important');
-    closeBtn.style.setProperty('font-size', '12px', 'important');
-
-    overlay.append(handle, timeEl, pauseBtn, resetBtn, closeBtn);
-    document.body.appendChild(overlay);
-
-    let dragging = false, ox = 0, oy = 0;
-    handle.addEventListener('mousedown', e => {
-      dragging = true;
-      const r = overlay!.getBoundingClientRect();
-      ox = e.clientX - r.left; oy = e.clientY - r.top;
-      overlay!.style.setProperty('right', '', 'important');
-      overlay!.style.setProperty('bottom', '', 'important');
-      overlay!.style.setProperty('left', r.left + 'px', 'important');
-      overlay!.style.setProperty('top', r.top + 'px', 'important');
-      handle.style.cursor = 'grabbing'; e.preventDefault();
-    });
-    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } });
-    document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
-
-    pauseBtn.addEventListener('click', () => {
-      const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (nt) {
-        const nowPaused = !nt.isPaused();
-        nt.pause(nowPaused);
-        updatePauseIconState(pauseBtn, nowPaused);
-        pauseBtn.classList.toggle('active', nowPaused);
-      }
-    });
-    resetBtn.addEventListener('click', () => {
-      const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (nt) nt.setMs(0);
-    });
-    timeEl.addEventListener('click', () => {
-      const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (!nt) return;
-      const input = document.createElement('input');
-      input.type = 'text'; input.className = 'nt-edit';
-      input.value = fmt(nt.getTotal()); input.placeholder = 'M:SS';
-      const commit = () => {
-        const parts = input.value.split(':').map(Number);
-        let ms = -1;
-        if (!parts.some(isNaN)) {
-          if (parts.length === 1) ms = parts[0] * 60 * 1000;
-          else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
-          else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
-        }
-        if (ms >= 0) nt.setMs(ms);
-        input.replaceWith(timeEl);
-      };
-      input.addEventListener('blur', commit);
-      input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
-      timeEl.replaceWith(input); input.focus(); input.select();
-    });
-
-    setInterval(() => {
-      const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (nt) {
-        timeEl.textContent = fmt(nt.getTotal());
-      }
-    }, 1000);
-  }
-
-  const pos = cfg.overlayPosition ?? 'top-right';
-  applyOverlayPosition(overlay, pos);
-  injectOverlayCustomOverrides();
-  enforceOverlayLayout(overlay);
-
-  if (cfg.overlayPosition === 'hidden') {
-    overlay.style.setProperty('display', 'none', 'important');
-  } else {
-    overlay.style.setProperty('display', 'flex', 'important');
-  }
-
-  if (overlay.parentElement === document.body) {
-    document.documentElement.appendChild(overlay);
-  }
-}
-
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['config']) {
     const newCfg: any = changes['config'].newValue || {};
@@ -1188,7 +692,8 @@ browser.storage.onChanged.addListener((changes, area) => {
     const themeName = getActiveThemeName(newCfg);
     updateActiveThemeStyles(themeName, newCfg);
 
-    if (TTU_HOSTS.some(h => window.location.hostname.includes(h))) {
+    const adapter = getActiveReaderAdapter();
+    if (adapter) {
       const oldReaderCfg = getReaderConfig(changes['config'].oldValue || {});
       const newReaderCfg = getReaderConfig(newCfg);
       const wasEnabled = oldReaderCfg.enabled;
@@ -1214,7 +719,7 @@ browser.storage.onChanged.addListener((changes, area) => {
     } else {
       if (window.self !== window.top) return;
 
-      if (isWebsiteOverlaySkipped(newCfg) || websiteOverlayDismissed) {
+      if (isWebsiteOverlaySkipped(newCfg) || getOverlayDismissed()) {
         const overlay = document.getElementById('nt-overlay');
         if (overlay) overlay.style.display = 'none';
         return;
@@ -1228,7 +733,6 @@ browser.storage.onChanged.addListener((changes, area) => {
           injectOverlayCustomOverrides();
           enforceOverlayLayout(existingOverlay);
 
-          // Force precise control element state-sizes on theme switch
           const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
           if (pauseBtn) {
             updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
@@ -1313,16 +817,17 @@ export default defineContentScript({
 
   async main() {
     currentConfig = await configStorage.getValue() || {};
-    const host = window.location.hostname;
     const cfg = currentConfig;
 
     const themeName = getActiveThemeName(cfg);
     updateActiveThemeStyles(themeName, cfg);
 
-    if (TTU_HOSTS.some(h => host.includes(h))) {
+    const adapter = getActiveReaderAdapter();
+    if (adapter) {
       const readerCfg = getReaderConfig(cfg);
       if (!readerCfg.enabled) return;
       startTimeTracker();
+      setupTTUChronometer();
       return;
     }
 

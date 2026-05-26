@@ -6,6 +6,7 @@
  * real browsing sessions.
  */
 
+import '@/styles/app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';

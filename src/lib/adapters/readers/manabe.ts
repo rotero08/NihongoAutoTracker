@@ -1,5 +1,4 @@
-import type { TrackerConfig } from '../../types';
-import type { ReaderAdapter } from './types';
+import type { TrackerConfig, ReaderAdapter } from '@/lib/types';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
 export const manabeAdapter: ReaderAdapter = {
@@ -11,18 +10,18 @@ export const manabeAdapter: ReaderAdapter = {
   },
 
   findInsertPoint() {
-    const c = document.querySelector('.reader-container, main, #app');
-    if (c) return { el: c, pos: 'beforeend' as InsertPosition };
-    return document.body ? { el: document.body, pos: 'beforeend' as InsertPosition } : null;
+    const container = document.querySelector('.reader-container, main, #app');
+    if (container) return { el: container, pos: 'beforeend' };
+    return document.body ? { el: document.body, pos: 'beforeend' } : null;
   },
 
   extractCharCount(): number | null {
     const advancedCount = extractAdvancedCharCount('.reader-container, .book-content');
-    if (advancedCount !== null) return advancedCount;
+    if (advancedCount !== null) return advancedCount.current;
 
-    const pageEls = document.querySelectorAll('.page-indicator, [data-page], .current-page');
-    for (const el of pageEls) {
-      const text = (el as HTMLElement).innerText || '';
+    const pageElements = document.querySelectorAll('.page-indicator, [data-page], .current-page');
+    for (const element of pageElements) {
+      const text = (element as HTMLElement).innerText || '';
       const match = text.match(/(\d+)\s*\/\s*(\d+)/);
       if (match) {
         const current = parseInt(match[1], 10);

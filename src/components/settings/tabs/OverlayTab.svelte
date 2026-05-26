@@ -221,11 +221,11 @@
 <!-- Sites sub-section -->
 <div class="sub-head"><h3>Sites</h3></div>
 <p class="hint" style="margin-top:0">
-  <strong style="color:var(--text)"
+  <strong style="color:var(--color-text)"
     >It auto-detects japanese characters in a website to force the overlay.</strong
   ><br />
   To control where the overlay appears, click a domain to edit it inline.<br />
-  <strong style="color:var(--text)">Note:</strong> Sites in the Allow list force
+  <strong style="color:var(--color-text)">Note:</strong> Sites in the Allow list force
   the overlay to appear, bypassing auto-detection. Sites on the Skip list, skips
   them even if it detects japanese characters.
 </p>
@@ -249,7 +249,7 @@
     type="button"
     class="sites-toggle-head"
     class:open={allowOpen}
-    style="width:100%; border:1px solid var(--bdr); text-align:left; background:var(--surf2);"
+    style="width:100%; border:1px solid var(--color-border); text-align:left; background:var(--color-surface-alt);"
     onclick={() => (allowOpen = !allowOpen)}
   >
     <div class="sites-head-left">
@@ -327,7 +327,7 @@
     type="button"
     class="sites-toggle-head"
     class:open={skipOpen}
-    style="width:100%; border:1px solid var(--bdr); text-align:left; background:var(--surf2);"
+    style="width:100%; border:1px solid var(--color-border); text-align:left; background:var(--color-surface-alt);"
     onclick={() => (skipOpen = !skipOpen)}
   >
     <div class="sites-head-left">

@@ -6,6 +6,8 @@
 <script lang="ts">
   import type { QueueSession } from "@/lib/types";
   import { toLocalDT } from "@/lib/utils/time";
+  import { storage } from "wxt/utils/storage";
+  import { onMount } from "svelte";
 
   interface Props {
     sessions: QueueSession[];
@@ -20,13 +22,15 @@
 
   /* Track collapsed state in localStorage, reactive to itemId changes */
   let isOpen = $state(true);
-  $effect(() => {
-    isOpen = localStorage.getItem(`nt-sess-closed-${itemId}`) !== "1";
+
+  onMount(async () => {
+    const val = await storage.getItem(`local:sess-closed-${itemId}`);
+    isOpen = val !== "1";
   });
 
-  function toggleOpen() {
+  async function toggleOpen() {
     isOpen = !isOpen;
-    localStorage.setItem(`nt-sess-closed-${itemId}`, isOpen ? "0" : "1");
+    await storage.setItem(`local:sess-closed-${itemId}`, isOpen ? "0" : "1");
   }
 </script>
 

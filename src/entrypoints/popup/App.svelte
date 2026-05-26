@@ -60,39 +60,60 @@
   function applyCustomTheme(colors: any) {
     if (!colors) return;
     const root = document.documentElement;
-    root.style.setProperty("--color-background", colors.background);
-    root.style.setProperty("--color-surface", colors.surface);
+    const defaultColors = {
+      background: "#07070e",
+      surface: "#0d0d1c",
+      surfaceAlt: "#10101f",
+      border: "#1a2235",
+      borderHover: "#222d42",
+      text: "#dde4f0",
+      textMuted: "#7a8ca5",
+      accent: "#f0b429",
+      accentHover: "#ffd060",
+      success: "#3ddc84",
+    };
+
+    root.style.setProperty(
+      "--color-background",
+      colors.background || defaultColors.background,
+    );
+    root.style.setProperty(
+      "--color-surface",
+      colors.surface || defaultColors.surface,
+    );
     root.style.setProperty(
       "--color-surface-alt",
-      colors.surfaceAlt || colors.surface,
+      colors.surfaceAlt || colors.surface || defaultColors.surfaceAlt,
     );
-    root.style.setProperty("--color-border", colors.border);
+    root.style.setProperty(
+      "--color-border",
+      colors.border || defaultColors.border,
+    );
     root.style.setProperty(
       "--color-border-hover",
-      colors.borderHover || colors.border,
+      colors.borderHover || colors.border || defaultColors.borderHover,
     );
-    root.style.setProperty("--color-text", colors.text);
-    root.style.setProperty("--color-text-muted", colors.textMuted);
-    root.style.setProperty("--color-text-dimmed", colors.textMuted);
-    root.style.setProperty("--color-accent", colors.accent);
+    root.style.setProperty("--color-text", colors.text || defaultColors.text);
+    root.style.setProperty(
+      "--color-text-muted",
+      colors.textMuted || defaultColors.textMuted,
+    );
+    root.style.setProperty(
+      "--color-text-dimmed",
+      colors.textMuted || defaultColors.textMuted,
+    );
+    root.style.setProperty(
+      "--color-accent",
+      colors.accent || defaultColors.accent,
+    );
     root.style.setProperty(
       "--color-accent-hover",
-      colors.accentHover || colors.accent,
+      colors.accentHover || colors.accent || defaultColors.accentHover,
     );
-    root.style.setProperty("--color-success", colors.success || "#3ddc84");
-
-    // Re-synchronize style aliases with custom accent color
-    root.style.setProperty("--bg", "var(--color-background)");
-    root.style.setProperty("--surf", "var(--color-surface)");
-    root.style.setProperty("--surf2", "var(--color-surface-alt)");
-    root.style.setProperty("--bdr", "var(--color-border)");
-    root.style.setProperty("--bdr2", "var(--color-border-hover)");
-    root.style.setProperty("--text", "var(--color-text)");
-    root.style.setProperty("--muted", "var(--color-text-muted)");
-    root.style.setProperty("--dim", "var(--color-text-dimmed)");
-    root.style.setProperty("--amber", "var(--color-accent)");
-    root.style.setProperty("--ambrh", "var(--color-accent-hover)");
-    root.style.setProperty("--green", "var(--color-success)");
+    root.style.setProperty(
+      "--color-success",
+      colors.success || defaultColors.success,
+    );
   }
 
   function clearCustomTheme() {
@@ -108,18 +129,6 @@
     root.style.removeProperty("--color-accent");
     root.style.removeProperty("--color-accent-hover");
     root.style.removeProperty("--color-success");
-
-    root.style.removeProperty("--bg");
-    root.style.removeProperty("--surf");
-    root.style.removeProperty("--surf2");
-    root.style.removeProperty("--bdr");
-    root.style.removeProperty("--bdr2");
-    root.style.removeProperty("--text");
-    root.style.removeProperty("--muted");
-    root.style.removeProperty("--dim");
-    root.style.removeProperty("--amber");
-    root.style.removeProperty("--ambrh");
-    root.style.removeProperty("--green");
   }
 
   function decorateDropdownOptions() {
@@ -588,10 +597,21 @@
       }
     }
 
-    const nextReadingQueue = rItems.filter((item) =>
-      failedReadingIds.has(item.id),
-    );
-    const nextVideoQueue = vItems.filter((item) => failedVideoIds.has(item.id));
+    const freshReadingQueue = await readingQueueStorage.getValue();
+    const freshVideoQueue = await videoQueueStorage.getValue();
+
+    const nextReadingQueue = [
+      ...freshReadingQueue.filter(
+        (item: any) => !rItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...rItems.filter((item: any) => failedReadingIds.has(item.id)),
+    ];
+    const nextVideoQueue = [
+      ...freshVideoQueue.filter(
+        (item: any) => !vItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
+    ];
 
     await readingQueueStorage.setValue(nextReadingQueue);
     await videoQueueStorage.setValue(nextVideoQueue);

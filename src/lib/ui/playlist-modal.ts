@@ -2,6 +2,7 @@
  * ── Playlist Modal Interface Renderer ───────────────────────────────────────
  */
 import { getTheme } from './themes';
+import type { UITheme } from '@/lib/types';
 import { configStorage } from '@/lib/storage/config';
 import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
@@ -85,8 +86,8 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   <div class="nt-title-area"><span class="nt-brand-name">Log Playlist Videos</span></div>
   </div>
   <div id="pl-top-actions" style="display:flex; gap:10px;">
-  <button id="pl-toggle-jp" style="background:none; border:none; color:var(--muted); font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">${hideNonJp ? 'Show Non-JP' : 'Hide Non-JP'}</button>
-  <button id="pl-toggle-all" style="background:none; border:none; color:var(--amber); font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">Select All</button>
+  <button id="pl-toggle-jp" style="background:none; border:none; color:var(--color-text-muted); font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">${hideNonJp ? 'Show Non-JP' : 'Hide Non-JP'}</button>
+  <button id="pl-toggle-all" style="background:none; border:none; color:var(--color-accent); font-size:10px; cursor:pointer; font-weight:bold; font-family:inherit;">Select All</button>
   </div>
   </div>
 
@@ -101,14 +102,14 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     ${v.title.replace(/</g, '&lt;')}
     </div>
 
-    <span id="pl-time-${i}" style="color:var(--amber); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>
+    <span id="pl-time-${i}" style="color:var(--color-accent); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>
     </label>
     `).join('')}
     </div>
 
     <div id="nt-playlist-confirm-layer" style="display:none; flex-direction:column; align-items:center; gap:12px; margin-bottom:8px; padding:10px 0; text-align:center; flex-shrink:0;">
-    <div style="font-size:14px; color:var(--text); font-weight:bold;">Confirm Logging</div>
-    <div style="font-size:12px; color:var(--muted);">Are you sure you want to log <span id="pl-confirm-count" style="color:var(--amber); font-weight:bold;">0</span> videos directly?</div>
+    <div style="font-size:14px; color:var(--color-text); font-weight:bold;">Confirm Logging</div>
+    <div style="font-size:12px; color:var(--color-text-muted);">Are you sure you want to log <span id="pl-confirm-count" style="color:var(--color-accent); font-weight:bold;">0</span> videos directly?</div>
     </div>
 
     <div class="nt-modal-footer" id="pl-footer-main" style="margin-top: 4px;">

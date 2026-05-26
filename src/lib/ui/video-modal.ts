@@ -13,8 +13,8 @@
  * without changing any CSS values or logic.
  */
 
-import type { UITheme } from './types';
-import { DEFAULT_THEME } from './types';
+import type { UITheme } from '@/lib/types';
+import { DEFAULT_THEME } from '@/lib/types';
 import { getTheme } from './themes';
 import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 
@@ -65,9 +65,9 @@ export function showNTEditModal(
   </div>
 
   <div style="display:flex; justify-content:flex-start; gap:10px; font-size:10px; font-weight:bold; margin-bottom:16px;">
-  <span style="color:var(--muted);">DISPLAY:</span>
+  <span style="color:var(--color-text-muted);">DISPLAY:</span>
   <button id="nt-badge-session" class="nt-link-btn ${!data.showTotal ? 'active' : ''}">Session Only</button>
-  <span style="color:var(--bdr2);">|</span>
+  <span style="color:var(--color-border-hover);">|</span>
   <button id="nt-badge-total" class="nt-link-btn ${data.showTotal ? 'active' : ''}">Session / Total</button>
   </div>
 

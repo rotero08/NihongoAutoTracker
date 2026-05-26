@@ -1,6 +1,10 @@
 import { defineConfig } from 'wxt';
 import path from 'path';
 
+// Retrieve the active target browser (defaults to 'chrome' if undefined)
+const currentBrowser = process.env.WXT_BROWSER || 'chrome';
+const isFirefox = currentBrowser === 'firefox';
+
 export default defineConfig({
   /* ── Source directory ───────────────────────────────────────── */
   srcDir: 'src',
@@ -8,19 +12,13 @@ export default defineConfig({
   /* ── Svelte integration via WXT module ─────────────────────── */
   modules: ['@wxt-dev/module-svelte'],
 
-  /* ── Use Firefox for development ─────────────────────────── */
-  browser: 'firefox',
-
   /* ── Runner configuration to lock toolbar layout profiles ─── */
   webExt: {
     // Tells the runner where to securely store your layout customizations
-    firefoxProfile: path.resolve(__dirname, '.wxt/firefox-profile'),
-    keepProfileChanges: true,
-
-    // @ts-expect-error - WXT's WebExtConfig type definitions omit additionalExtensions, but the runner supports it at runtime.
-    additionalExtensions: [
-      path.resolve(__dirname, '.wxt/addons/uBlock0_1.62.0.firefox.xpi'),
-    ],
+    ...(isFirefox ? {
+      firefoxProfile: path.resolve(__dirname, '.wxt/firefox-profile'),
+      keepProfileChanges: true,
+    } : {}),
 
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',
@@ -37,7 +35,7 @@ export default defineConfig({
     name: 'NihongoAutoTracker',
     description:
       'An unofficial extension for NihongoTracker that automates and streamlines your Japanese immersion logging.',
-    version: '3.4.3',
+    version: '3.9.0',
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs'],
     host_permissions: [
       'https://nihongotracker.app/*',

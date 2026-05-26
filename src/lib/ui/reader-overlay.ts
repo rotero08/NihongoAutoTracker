@@ -1,25 +1,31 @@
 /**
- * ── Reader Overlay Styles ───────────────────────────────────────────────────
+ * ── Reader Overlay Styles & DOM Builder ──────────────────────────────────────
  *
- * CSS for the reading chronometer overlay injected by the text-tracker
- * content script on Japanese reading sites (TTU, Yatsu, Manabe, etc.).
- *
- * The overlay is a small draggable widget showing:
- * - Current reading time (HH:MM:SS)
- * - Character count
- * - Book linking status
- *
- * Extracted from text-tracker.content.ts to allow future per-site theming.
- * The text-tracker still handles DOM creation and interaction — this module
- * only provides the style injection function.
- *
- */
-
-/**
- * ── Dynamic Theme & Reader Overlay Injector ──────────────────────────────────
+ * Extracted overlay DOM rendering and custom styling rules from text-tracker
+ * content script to modularize the codebase and improve readability.
  */
 import { getTheme } from './themes';
 import { fmt } from '../utils/time';
+import { addDebugLog } from '../storage/debug';
+import { SKIP_HOSTS_DEFAULT } from '../constants';
+
+let overlayDismissed = false;
+
+export function getOverlayDismissed(): boolean {
+  return overlayDismissed;
+}
+
+export function setOverlayDismissed(val: boolean) {
+  overlayDismissed = val;
+}
+
+export function isWebsiteOverlaySkipped(cfg: any): boolean {
+  const host = window.location.hostname;
+  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
+  if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
+  if (skipSites.some((h: string) => host.includes(h))) return true;
+  return false;
+}
 
 export function injectThemeStyles(themeName: string, fontName: string) {
   const theme = getTheme(themeName);
@@ -151,16 +157,137 @@ export function injectTTUStyles() {
   document.head.appendChild(s);
 }
 
-export function buildOverlay(
-  cfg: any,
-  dismissedState: { dismissed: boolean },
-  onPauseToggle: (isPaused: boolean) => void,
-  onReset: () => void,
-  onManualTimeEdit: (ms: number) => void,
-  getTimeFunc: () => number,
-  onDismiss: () => void
-) {
-  if (dismissedState.dismissed) {
+export function applyOverlayPosition(overlay: HTMLElement, pos: string) {
+  overlay.style.setProperty('top', '', 'important');
+  overlay.style.setProperty('bottom', '', 'important');
+  overlay.style.setProperty('left', '', 'important');
+  overlay.style.setProperty('right', '', 'important');
+
+  if (pos === 'top-left') {
+    overlay.style.setProperty('top', '16px', 'important');
+    overlay.style.setProperty('left', '16px', 'important');
+  } else if (pos === 'top-right') {
+    overlay.style.setProperty('top', '16px', 'important');
+    overlay.style.setProperty('right', '16px', 'important');
+  } else if (pos === 'bottom-left') {
+    overlay.style.setProperty('bottom', '16px', 'important');
+    overlay.style.setProperty('left', '16px', 'important');
+  } else if (pos === 'bottom-right') {
+    overlay.style.setProperty('bottom', '16px', 'important');
+    overlay.style.setProperty('right', '16px', 'important');
+  }
+}
+
+export function injectOverlayCustomOverrides() {
+  if (document.getElementById('nt-overlay-custom-overrides')) return;
+  const style = document.createElement('style');
+  style.id = 'nt-overlay-custom-overrides';
+  style.textContent = `
+    #nt-overlay {
+      opacity: 0.35 !important;
+      transition: opacity 0.15s ease-in-out !important;
+    }
+    #nt-overlay:hover {
+      opacity: 1 !important;
+    }
+    #nt-overlay .nt-ctrl,
+    #nt-overlay .nt-close {
+      border: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+      padding: 0 1px !important;
+      margin: 0 !important;
+      border-radius: 0 !important;
+      cursor: pointer !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      height: 100% !important;
+      line-height: 1 !important;
+      vertical-align: middle !important;
+    }
+    #nt-overlay button {
+      border: none !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+      outline: none !important;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+export function updatePauseIconState(pauseBtn: HTMLButtonElement, isPaused: boolean) {
+  pauseBtn.textContent = isPaused ? '▶' : '⏸';
+  if (isPaused) {
+    pauseBtn.style.setProperty('font-size', '10px', 'important');
+    pauseBtn.style.setProperty('transform', 'none', 'important');
+  } else {
+    pauseBtn.style.setProperty('font-size', '13px', 'important');
+    pauseBtn.style.setProperty('transform', 'translateY(-1px)', 'important');
+  }
+}
+
+export function enforceOverlayLayout(overlay: HTMLElement) {
+  overlay.style.setProperty('display', 'flex', 'important');
+  overlay.style.setProperty('flex-direction', 'row', 'important');
+  overlay.style.setProperty('align-items', 'center', 'important');
+  overlay.style.setProperty('justify-content', 'space-between', 'important');
+  overlay.style.setProperty('gap', '4px', 'important');
+  overlay.style.setProperty('padding', '0 6px', 'important');
+  overlay.style.setProperty('box-sizing', 'border-box', 'important');
+  overlay.style.setProperty('white-space', 'nowrap', 'important');
+  overlay.style.setProperty('height', '22px', 'important');
+  overlay.style.setProperty('width', 'auto', 'important');
+  overlay.style.setProperty('min-width', 'unset', 'important');
+  overlay.style.setProperty('min-height', 'unset', 'important');
+  overlay.style.setProperty('line-height', '1', 'important');
+
+  const handle = overlay.querySelector('.nt-handle') as HTMLElement;
+  if (handle) {
+    handle.style.setProperty('display', 'inline-flex', 'important');
+    handle.style.setProperty('align-items', 'center', 'important');
+    handle.style.setProperty('justify-content', 'center', 'important');
+    handle.style.setProperty('cursor', 'grab', 'important');
+    handle.style.setProperty('user-select', 'none', 'important');
+    handle.style.setProperty('margin-right', '1px', 'important');
+    handle.style.setProperty('font-size', '10px', 'important');
+    handle.style.setProperty('height', '100%', 'important');
+    handle.style.setProperty('line-height', '1', 'important');
+  }
+
+  const timeEl = overlay.querySelector('.nt-time') as HTMLElement;
+  if (timeEl) {
+    timeEl.style.setProperty('display', 'inline-flex', 'important');
+    timeEl.style.setProperty('align-items', 'center', 'important');
+    timeEl.style.setProperty('justify-content', 'center', 'important');
+    timeEl.style.setProperty('font-variant-numeric', 'tabular-nums', 'important');
+    timeEl.style.setProperty('margin-right', '2px', 'important');
+    timeEl.style.setProperty('font-size', '12px', 'important');
+    timeEl.style.setProperty('height', '100%', 'important');
+    timeEl.style.setProperty('line-height', '1', 'important');
+  }
+
+  const buttons = overlay.querySelectorAll('button');
+  buttons.forEach(btn => {
+    btn.style.setProperty('display', 'inline-flex', 'important');
+    btn.style.setProperty('align-items', 'center', 'important');
+    btn.style.setProperty('justify-content', 'center', 'important');
+    btn.style.setProperty('height', '100%', 'important');
+    btn.style.setProperty('line-height', '1', 'important');
+    btn.style.setProperty('vertical-align', 'middle', 'important');
+  });
+}
+
+export function runOverlaySetup(cfg: any) {
+  addDebugLog('INFO', 'TextTracker', `Building Overlay`, {
+    url: window.location.href,
+    pos: cfg.overlayPosition
+  });
+
+  if (overlayDismissed) {
     const existing = document.getElementById('nt-overlay');
     if (existing) existing.style.display = 'none';
     return;
@@ -175,17 +302,20 @@ export function buildOverlay(
     const timeEl = document.createElement('span');
     timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
     const pauseBtn = document.createElement('button');
-    pauseBtn.className = 'nt-ctrl'; pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause / Resume';
+    pauseBtn.className = 'nt-ctrl'; pauseBtn.title = 'Pause / Resume';
     const resetBtn = document.createElement('button');
     resetBtn.className = 'nt-ctrl'; resetBtn.textContent = '↺'; resetBtn.title = 'Reset timer';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'nt-close'; closeBtn.textContent = '×'; closeBtn.title = 'Hide overlay (until reload)';
     closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      dismissedState.dismissed = true;
+      overlayDismissed = true;
       overlay!.style.display = 'none';
-      onDismiss();
     });
+
+    updatePauseIconState(pauseBtn, false);
+    resetBtn.style.setProperty('font-size', '11px', 'important');
+    closeBtn.style.setProperty('font-size', '12px', 'important');
 
     overlay.append(handle, timeEl, pauseBtn, resetBtn, closeBtn);
     document.body.appendChild(overlay);
@@ -195,25 +325,34 @@ export function buildOverlay(
       dragging = true;
       const r = overlay!.getBoundingClientRect();
       ox = e.clientX - r.left; oy = e.clientY - r.top;
-      overlay!.style.right = ''; overlay!.style.bottom = '';
-      overlay!.style.left = r.left + 'px'; overlay!.style.top = r.top + 'px';
+      overlay!.style.setProperty('right', '', 'important');
+      overlay!.style.setProperty('bottom', '', 'important');
+      overlay!.style.setProperty('left', r.left + 'px', 'important');
+      overlay!.style.setProperty('top', r.top + 'px', 'important');
       handle.style.cursor = 'grabbing'; e.preventDefault();
     });
-    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.left = (e.clientX - ox) + 'px'; overlay!.style.top = (e.clientY - oy) + 'px'; } });
+    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } });
     document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
 
     pauseBtn.addEventListener('click', () => {
-      const nt = (window as any).__nt;
-      const nowPaused = !nt.isPaused();
-      onPauseToggle(nowPaused);
-      pauseBtn.textContent = nowPaused ? '▶' : '⏸';
-      pauseBtn.classList.toggle('active', nowPaused);
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) {
+        const nowPaused = !nt.isPaused();
+        nt.pause(nowPaused);
+        updatePauseIconState(pauseBtn, nowPaused);
+        pauseBtn.classList.toggle('active', nowPaused);
+      }
     });
-    resetBtn.addEventListener('click', onReset);
+    resetBtn.addEventListener('click', () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) nt.setMs(0);
+    });
     timeEl.addEventListener('click', () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (!nt) return;
       const input = document.createElement('input');
       input.type = 'text'; input.className = 'nt-edit';
-      input.value = fmt(getTimeFunc()); input.placeholder = 'M:SS';
+      input.value = fmt(nt.getTotal()); input.placeholder = 'M:SS';
       const commit = () => {
         const parts = input.value.split(':').map(Number);
         let ms = -1;
@@ -222,23 +361,36 @@ export function buildOverlay(
           else if (parts.length === 2) ms = (parts[0] * 60 + parts[1]) * 1000;
           else if (parts.length === 3) ms = (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000;
         }
-        if (ms >= 0) onManualTimeEdit(ms);
+        if (ms >= 0) nt.setMs(ms);
         input.replaceWith(timeEl);
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
       timeEl.replaceWith(input); input.focus(); input.select();
     });
-    setInterval(() => { timeEl.textContent = fmt(getTimeFunc()); }, 1000);
+
+    setInterval(() => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) {
+        timeEl.textContent = fmt(nt.getTotal());
+        const isPaused = nt.isPaused();
+        const curD = pauseBtn.textContent;
+        if (isPaused && curD !== '▶') {
+          updatePauseIconState(pauseBtn, true);
+          pauseBtn.classList.add('active');
+        } else if (!isPaused && curD !== '⏸') {
+          updatePauseIconState(pauseBtn, false);
+          pauseBtn.classList.remove('active');
+        }
+      }
+    }, 1000);
   }
 
   const pos = cfg.overlayPosition ?? 'top-right';
-  overlay.style.top = ''; overlay.style.bottom = ''; overlay.style.left = ''; overlay.style.right = '';
-  if (pos === 'top-left') { overlay.style.top = '16px'; overlay.style.left = '16px'; }
-  if (pos === 'top-right') { overlay.style.top = '16px'; overlay.style.right = '16px'; }
-  if (pos === 'bottom-left') { overlay.style.bottom = '16px'; overlay.style.left = '16px'; }
-  if (pos === 'bottom-right') { overlay.style.bottom = '16px'; overlay.style.right = '16px'; }
+  applyOverlayPosition(overlay, pos);
+  injectOverlayCustomOverrides();
+  enforceOverlayLayout(overlay);
 
-  if (cfg.overlayPosition === 'hidden') overlay.style.display = 'none';
-  else overlay.style.display = 'flex';
+  if (cfg.overlayPosition === 'hidden') overlay.style.setProperty('display', 'none', 'important');
+  else overlay.style.setProperty('display', 'flex', 'important');
 }

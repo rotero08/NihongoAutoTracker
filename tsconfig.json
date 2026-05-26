@@ -1,4 +1,6 @@
 {
   "extends": "./.wxt/tsconfig.json",
-  "exclude": ["originalfiles/**"]
+  "exclude": [
+    "originalfiles/**"
+  ]
 }

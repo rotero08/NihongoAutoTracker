@@ -221,16 +221,40 @@
       } catch {}
     }
 
+    /* Auto-sum calculations */
     const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+    const sumMins = Math.max(1, Math.round(sumSecs / 60));
+
+    const sumChars = isRead
+      ? entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+      : 0;
+
+    // Preserve manual overrides: only update the totals if they match the previous sum
+    const previousSumSecs = item.sessions.reduce(
+      (a: number, b: any) => a + b.secs,
+      0,
+    );
+    const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+    const previousSumChars = isRead
+      ? item.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+      : 0;
+
+    let finalTime = item.time;
+    let finalChars = item.chars;
+
     if (isRead) {
-      entry.time = sumSecs;
-      entry.chars = entry.sessions.reduce(
-        (a: number, b: any) => a + (b.chars || 0),
-        0,
-      );
+      const isTimeOverridden = displayMins > previousSumMins;
+      const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+
+      finalTime = isTimeOverridden ? item.time * 60 : sumSecs;
+      finalChars = areCharsOverridden ? item.chars : sumChars;
     } else {
-      entry.time = Math.round(sumSecs / 60);
+      const isTimeOverridden = displayMins > previousSumMins;
+      finalTime = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
     }
+
+    entry.time = finalTime;
+    entry.chars = finalChars;
 
     await qStorage.setValue(q as any);
     onRefresh();
@@ -428,7 +452,7 @@
           onclick={handleUnlink}
           onmouseenter={() => (isUnlinkHovered = true)}
           onmouseleave={() => (isUnlinkHovered = false)}
-          style={isUnlinkHovered ? "color: var(--red)" : "color: var(--green)"}
+          style={isUnlinkHovered ? "color: var(--color-error)" : "color: var(--color-success)"}
         >
           {isUnlinkHovered ? "✗" : "✓"}
         </button>

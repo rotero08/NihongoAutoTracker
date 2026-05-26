@@ -1,4 +1,4 @@
-import type { UITheme } from '../types';
+import type { UITheme } from '@/lib/types';
 
 export const THEMES: Record<string, UITheme> = {
     'dark-amber': {
@@ -121,7 +121,7 @@ export const FONTS = {
 
 export const THEME_OPTIONS = Object.entries(THEMES).map(([value, theme]) => ({
     value,
-    label: theme.name
+    label: theme.name || "Unnamed Theme"
 }));
 
 export const FONT_OPTIONS = [
@@ -143,20 +143,19 @@ export function applyThemeToDocument(themeName: string, fontName?: string, custo
     const selectedFont = FONTS[fontName as keyof typeof FONTS] || theme.typography.sans;
     const isLight = themeName === 'light';
 
-    const bg = customColors?.background || theme.colors.bg;
+    const bg = customColors?.bg || theme.colors.bg;
     const surface = customColors?.surface || theme.colors.surface;
     const surfaceAlt = customColors?.surfaceAlt || customColors?.surface || theme.colors.surfaceAlt;
     const border = customColors?.border || theme.colors.border;
     const borderHover = customColors?.borderHover || customColors?.border || theme.colors.borderHover;
     const text = customColors?.text || theme.colors.text;
-    const muted = customColors?.textMuted || theme.colors.muted;
+    const muted = customColors?.muted || theme.colors.muted;
     const accent = customColors?.accent || theme.colors.accent;
     const accentHover = customColors?.accentHover || customColors?.accent || theme.colors.accentHover;
     const success = customColors?.success || theme.colors.success;
     const error = customColors?.error || theme.colors.error;
 
     const variables: Record<string, string> = {
-        // Clear, descriptive variables
         '--color-background': bg,
         '--color-surface': surface,
         '--color-surface-alt': surfaceAlt,
@@ -175,24 +174,7 @@ export function applyThemeToDocument(themeName: string, fontName?: string, custo
         '--rounded-btn': `${theme.borderRadiusSmall}px`,
         '--nt-color-scheme': isLight ? 'light' : 'dark',
 
-        // Internal non-exposed variables (always permanent system green)
         '--color-success-system': '#3ddc84',
-
-        // Backward-compatibility aliases (so you don't have to rewrite 100 files!)
-        '--bg': 'var(--color-background)',
-        '--surf': 'var(--color-surface)',
-        '--surf2': 'var(--color-surface-alt)',
-        '--bdr': 'var(--color-border)',
-        '--bdr2': 'var(--color-border-hover)',
-        '--text': 'var(--color-text)',
-        '--muted': 'var(--color-text-muted)',
-        '--dim': 'var(--color-text-dimmed)',
-        '--amber': 'var(--color-accent)',
-        '--ambrh': 'var(--color-accent-hover)',
-        '--green': 'var(--color-success)',
-        '--red': 'var(--color-error)',
-        '--mono': 'var(--font-mono)',
-        '--sans': 'var(--font-sans)',
     };
 
     Object.entries(variables).forEach(([key, value]) => {
@@ -204,12 +186,10 @@ export function clearThemeOverrides() {
     const root = document.documentElement;
     root.removeAttribute('data-theme');
 
-    // Clear everything, including aliases
     const variablesToClear = [
         '--color-background', '--color-surface', '--color-surface-alt', '--color-border', '--color-border-hover',
         '--color-text', '--color-text-muted', '--color-text-dimmed', '--color-accent', '--color-accent-hover',
-        '--color-success', '--color-error', '--font-mono', '--font-sans', '--rounded-box', '--rounded-btn', '--nt-color-scheme',
-        '--bg', '--surf', '--surf2', '--bdr', '--bdr2', '--text', '--muted', '--dim', '--amber', '--ambrh', '--green', '--red', '--mono', '--sans'
+        '--color-success', '--color-error', '--font-mono', '--font-sans', '--rounded-box', '--rounded-btn', '--nt-color-scheme'
     ];
     variablesToClear.forEach(variable => root.style.removeProperty(variable));
 }

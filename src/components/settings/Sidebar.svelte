@@ -211,7 +211,7 @@
 
   <!-- Advanced toggle at bottom of sidebar -->
   <div
-    style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--bdr);"
+    style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--color-border);"
   >
     <label class="toggle" style="font-size: 11px;">
       <input

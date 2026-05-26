@@ -31,13 +31,9 @@ export async function fetchYouTubeVideoData(url: string) {
     return ytApiInFlight[clean];
 }
 
+/** Parses channel ID instantly from local DOM, calling remote API ONLY if local extraction fails */
 export async function getYouTubeChannelId(): Promise<string | null> {
-    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-        const data = await fetchYouTubeVideoData(window.location.href);
-        if (data?.channel?.contentId) return data.channel.contentId;
-    }
-
-    // Fallback: strictly scoped DOM selector
+    // 1. Try local extraction via canonical script details
     const scripts = document.getElementsByTagName('script');
     for (let i = 0; i < scripts.length; i++) {
         const text = scripts[i].textContent;
@@ -47,22 +43,31 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         }
     }
 
+    // 2. Try canonical link tags
+    const channelLink = document.querySelector('link[itemprop="channelId"]');
+    if (channelLink) {
+        const cid = channelLink.getAttribute('content');
+        if (cid) return cid;
+    }
+
+    // 3. Try layout anchor tags
     const ownerLink = document.querySelector('#owner ytd-video-owner-renderer a[href*="/channel/"]');
     if (ownerLink) {
         const m = ownerLink.getAttribute('href')?.match(/(UC[a-zA-Z0-9_-]{22})/);
         if (m) return m[1];
     }
+
+    // 4. Remote API resolution fallback
+    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+        const data = await fetchYouTubeVideoData(window.location.href);
+        if (data?.channel?.contentId) return data.channel.contentId;
+    }
+
     return null;
 }
 
+/** Parses channel title instantly from local DOM, calling remote API ONLY if local extraction fails */
 export async function getChannelNameFallback(): Promise<string> {
-    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-        const data = await fetchYouTubeVideoData(window.location.href);
-        if (data?.channel?.title) {
-            return data.channel.title.contentTitleNative || data.channel.title.contentTitleEnglish || '';
-        }
-    }
-
     const ownerName = document.querySelector('#owner ytd-video-owner-renderer yt-formatted-string.ytd-channel-name');
     if (ownerName?.textContent?.trim()) return ownerName.textContent.trim();
 
@@ -74,6 +79,14 @@ export async function getChannelNameFallback(): Promise<string> {
             if (match) return match[1];
         }
     }
+
+    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+        const data = await fetchYouTubeVideoData(window.location.href);
+        if (data?.channel?.title) {
+            return data.channel.title.contentTitleNative || data.channel.title.contentTitleEnglish || '';
+        }
+    }
+
     return '';
 }
 

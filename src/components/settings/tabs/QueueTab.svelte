@@ -223,11 +223,23 @@
       }
     }
 
-    // Update queue to only retain the ones that failed
-    const nextReadingQueue = rItems.filter((item) =>
-      failedReadingIds.has(item.id),
-    );
-    const nextVideoQueue = vItems.filter((item) => failedVideoIds.has(item.id));
+    // Retrieve the absolute freshest queue values from storage right before writing
+    const freshReadingQueue = await readingQueueStorage.getValue();
+    const freshVideoQueue = await videoQueueStorage.getValue();
+
+    // Retain failed items, while preserving newly added items that came in during the network requests
+    const nextReadingQueue = [
+      ...freshReadingQueue.filter(
+        (item: any) => !rItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...rItems.filter((item: any) => failedReadingIds.has(item.id)),
+    ];
+    const nextVideoQueue = [
+      ...freshVideoQueue.filter(
+        (item: any) => !vItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
+    ];
 
     await readingQueueStorage.setValue(nextReadingQueue);
     await videoQueueStorage.setValue(nextVideoQueue);
@@ -299,7 +311,7 @@
 <!-- Auto-send EOD toggle box (Contrast Fixed) -->
 <div
   class="field"
-  style="margin-bottom: 16px; background: color-mix(in srgb, var(--amber) 5%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 20%, transparent); border-radius: 6px; padding: 12px 16px;"
+  style="margin-bottom: 16px; background: color-mix(in srgb, var(--color-accent) 5%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 6px; padding: 12px 16px;"
 >
   <div class="tooltip-wrap" style="display:flex; width:100%;">
     <label class="toggle" style="flex:1;">

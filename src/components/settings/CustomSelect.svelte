@@ -82,7 +82,7 @@
     .select-label {
         font-size: 11px;
         font-weight: 600;
-        color: var(--muted);
+        color: var(--color-text-muted);
         text-transform: uppercase;
         letter-spacing: 0.08em;
     }
@@ -92,11 +92,11 @@
     }
     .select-trigger {
         width: 100%;
-        background: var(--surf2);
-        border: 1px solid var(--bdr);
+        background: var(--color-surface-alt);
+        border: 1px solid var(--color-border);
         border-radius: 4px;
-        color: var(--text);
-        font-family: var(--mono);
+        color: var(--color-text);
+        font-family: var(--font-mono);
         font-size: 13px;
         padding: 10px 12px;
         outline: none;
@@ -111,13 +111,13 @@
     }
     .select-trigger:focus,
     .select-trigger:hover {
-        border-color: var(--amber);
+        border-color: var(--color-accent);
     }
     .chevron {
         width: 10px;
         height: 6px;
         transition: transform 0.2s;
-        color: var(--muted);
+        color: var(--color-text-muted);
     }
     .chevron.open {
         transform: rotate(180deg);
@@ -127,8 +127,8 @@
         top: calc(100% + 4px);
         left: 0;
         width: 100%;
-        background: var(--surf);
-        border: 1px solid var(--bdr2);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border-hover);
         border-radius: 4px;
         z-index: 100000; /* Floats above compact popover containers securely */
         display: flex;
@@ -139,9 +139,9 @@
     .select-option {
         background: none;
         border: none;
-        color: var(--text);
+        color: var(--color-text);
         padding: 10px 12px;
-        font-family: var(--mono);
+        font-family: var(--font-mono);
         font-size: 13px;
         text-align: left;
         cursor: pointer;
@@ -152,12 +152,12 @@
     }
     .select-option:hover {
         background: rgba(255, 255, 255, 0.05);
-        color: var(--amber);
+        color: var(--color-accent);
     }
     .select-option.selected {
         /* Mapped selection background dynamically to your active theme accent color */
-        background: color-mix(in srgb, var(--amber) 12%, transparent);
-        color: var(--amber);
+        background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+        color: var(--color-accent);
         font-weight: bold;
     }
 

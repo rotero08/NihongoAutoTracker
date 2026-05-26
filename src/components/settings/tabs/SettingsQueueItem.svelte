@@ -19,6 +19,8 @@
   } from "@/lib/utils/text-parsing";
   import { toLocalDT } from "@/lib/utils/time";
   import SearchDropdown from "@/components/popup/SearchDropdown.svelte";
+  import { storage } from "wxt/utils/storage";
+  import { onMount } from "svelte";
 
   interface Props {
     item: any;
@@ -81,14 +83,16 @@
 
   /* Collapsible sessions open/closed state tracking */
   let isSessionsOpen = $state(true);
-  $effect(() => {
-    isSessionsOpen = localStorage.getItem(`nt-sess-closed-${item.id}`) !== "1";
+
+  onMount(async () => {
+    const val = await storage.getItem(`local:sess-closed-${item.id}`);
+    isSessionsOpen = val !== "1";
   });
 
-  function toggleSessionsOpen() {
+  async function toggleSessionsOpen() {
     isSessionsOpen = !isSessionsOpen;
-    localStorage.setItem(
-      `nt-sess-closed-${item.id}`,
+    await storage.setItem(
+      `local:sess-closed-${item.id}`,
       isSessionsOpen ? "0" : "1",
     );
   }
@@ -291,18 +295,36 @@
       } catch {}
     }
 
-    /* Auto-sum session totals to the general item fields */
+    /* Auto-sum calculations */
     const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-    let finalTime = entry.time;
-    let finalChars = entry.chars;
+    const sumMins = Math.max(1, Math.round(sumSecs / 60));
+
+    const sumChars = isRead
+      ? entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+      : 0;
+
+    // Preserve manual overrides: only update the totals if they match the previous sum
+    const previousSumSecs = item.sessions.reduce(
+      (a: number, b: any) => a + b.secs,
+      0,
+    );
+    const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+    const previousSumChars = isRead
+      ? item.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+      : 0;
+
+    let finalTime = item.time;
+    let finalChars = item.chars;
+
     if (isRead) {
-      finalTime = sumSecs;
-      finalChars = entry.sessions.reduce(
-        (a: number, b: any) => a + (b.chars || 0),
-        0,
-      );
+      const isTimeOverridden = displayMins > previousSumMins;
+      const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+
+      finalTime = isTimeOverridden ? item.time * 60 : sumSecs;
+      finalChars = areCharsOverridden ? item.chars : sumChars;
     } else {
-      finalTime = Math.round(sumSecs / 60);
+      const isTimeOverridden = displayMins > previousSumMins;
+      finalTime = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
     }
 
     await saveItem({
@@ -510,8 +532,8 @@
             onmouseenter={() => (isUnlinkHovered = true)}
             onmouseleave={() => (isUnlinkHovered = false)}
             style={isUnlinkHovered
-              ? "color: var(--red)"
-              : "color: var(--green)"}
+              ? "color: var(--color-error)"
+              : "color: var(--color-success)"}
           >
             {isUnlinkHovered ? "✗" : "✓"}
           </button>
@@ -519,7 +541,7 @@
           <span
             class="qi-link-status video-matched"
             title="Matched"
-            style="cursor:default; color:var(--green); position:absolute; right:8px; top:50%; transform:translateY(-50%)"
+            style="cursor:default; color:var(--color-success); position:absolute; right:8px; top:50%; transform:translateY(-50%)"
             >✓</span
           >
         {/if}
@@ -568,7 +590,7 @@
             onchange={handleCharsChange}
             aria-label="Character count"
           />
-          <span style="font-size:10px; color:var(--muted); padding-right:2px;"
+          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
             >chars</span
           >
           <div class="qi-spin-nav">
@@ -606,7 +628,7 @@
           onchange={handleMinsChange}
           aria-label="Minutes duration"
         />
-        <span style="font-size:10px; color:var(--muted); padding-right:2px;"
+        <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
           >min</span
         >
         <div class="qi-spin-nav">
@@ -685,7 +707,7 @@
                     )}
                   aria-label={`Session ${i + 1} characters`}
                 />
-                <span style="font-size:10px; color:var(--muted);">chars</span>
+                <span style="font-size:10px; color:var(--color-text-muted);">chars</span>
               {/if}
 
               <input
@@ -701,7 +723,7 @@
                   )}
                 aria-label={`Session ${i + 1} minutes`}
               />
-              <span style="font-size:10px; color:var(--muted);">min</span>
+              <span style="font-size:10px; color:var(--color-text-muted);">min</span>
 
               <input
                 type="datetime-local"
@@ -749,7 +771,7 @@
     cursor: pointer;
     padding: 0 4px !important;
     font-size: 12px !important;
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     line-height: 1;
     display: inline-flex;
     align-items: center;
@@ -757,7 +779,7 @@
     box-shadow: none !important;
   }
   .qi-session-remove:hover {
-    color: var(--red) !important;
+    color: var(--color-error) !important;
     background: rgba(240, 112, 106, 0.08) !important;
   }
 </style>

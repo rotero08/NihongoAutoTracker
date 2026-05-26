@@ -51,31 +51,39 @@ export default defineBackground(() => {
    * Also handles queue badge refresh and queue count requests.
    */
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    /* Relay toast to active tab */
-    if (msg.action === 'NOTIFY') {
-      browser.tabs
-        .query({ active: true, currentWindow: true })
-        .then((tabs) => {
-          if (tabs[0]?.id) {
-            browser.tabs
-              .sendMessage(tabs[0].id, {
-                action: 'SHOW_TOAST',
-                title: msg.title,
-                message: msg.message,
-              })
-              .catch(() => null);
-          }
-        })
-        .catch(() => null);
-    }
+    try {
+      /* Relay toast to active tab */
+      if (msg.action === 'NOTIFY') {
+        browser.tabs
+          .query({ active: true, currentWindow: true })
+          .then((tabs) => {
+            if (tabs[0]?.id) {
+              browser.tabs
+                .sendMessage(tabs[0].id, {
+                  action: 'SHOW_TOAST',
+                  title: msg.title,
+                  message: msg.message,
+                })
+                .catch(() => null);
+            }
+          })
+          .catch(() => null);
+      }
 
-    /* Refresh the badge count when queue changes */
-    if (msg.action === 'QUEUE_UPDATED') refreshBadge();
+      /* Refresh the badge count when queue changes */
+      if (msg.action === 'QUEUE_UPDATED') refreshBadge();
 
-    /* Return current queue count (used by popup) */
-    if (msg.action === 'GET_QUEUE_COUNT') {
-      videoQueueStorage.getValue().then((q) => sendResponse({ count: q.length }));
-      return true; /* Keep message channel open for async response */
+      /* Return current queue count (used by popup) */
+      if (msg.action === 'GET_QUEUE_COUNT') {
+        videoQueueStorage.getValue().then((q) => {
+          try {
+            sendResponse({ count: q.length });
+          } catch { }
+        }).catch(() => null);
+        return true; /* Keep message channel open for async response */
+      }
+    } catch (err) {
+      // Discard context-invalidation exceptions silently
     }
   });
 
@@ -256,13 +264,13 @@ export default defineBackground(() => {
           item.mediaData ||
           (type === 'reading'
             ? {
-                contentId: 'web-reading',
-                contentTitleNative: item.contentTitleNative,
-              }
+              contentId: 'web-reading',
+              contentTitleNative: item.contentTitleNative,
+            }
             : {
-                channelId: item.channelId || 'web-video',
-                channelTitle: item.contentTitleNative,
-              }),
+              channelId: item.channelId || 'web-video',
+              channelTitle: item.contentTitleNative,
+            }),
       };
 
       /* Enrich video channel metadata before sending */

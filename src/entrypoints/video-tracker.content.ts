@@ -36,17 +36,26 @@ if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
 // Stores bound video contexts to avoid duplicate event listener registration
 const boundVideos = new WeakSet<HTMLVideoElement>();
 
-let _jpCacheUrl = '';
-let _jpCacheResult = false;
-function isLikelyJapaneseCached(): boolean {
-  const url = window.location.href;
-  if (url !== _jpCacheUrl) {
-    _jpCacheResult = isLikelyJapanese();
-    _jpCacheUrl = url;
-  }
-  return _jpCacheResult;
+// Cached page-level classification to prevent high-frequency DOM reflows
+let isMusicVideoCached = false;
+let isJapaneseVideoCached = false;
+let metadataResolved = false;
+let lastAnalyzedUrl = '';
+
+function resolvePageLanguageAndType() {
+  const currentUrl = window.location.href;
+  if (currentUrl === lastAnalyzedUrl && metadataResolved) return;
+
+  isMusicVideoCached = isMusic();
+  isJapaneseVideoCached = isLikelyJapanese();
+  lastAnalyzedUrl = currentUrl;
+  metadataResolved = true;
+
+  addDebugLog('INFO', 'VideoTracker', 'Resolved video classification metadata', {
+    isMusic: isMusicVideoCached,
+    isJapanese: isJapaneseVideoCached
+  });
 }
-function invalidateJpCache() { _jpCacheUrl = ''; _jpCacheResult = false; }
 
 /** Detect if an ad is currently playing on the video player */
 function isAdPlaying(): boolean {
@@ -72,7 +81,7 @@ async function upsertQueueLive(secs: number, videoTitle: string, channelName: st
   const finalTitle = stripVideoTitle(videoTitle);
 
   let validChannelName = channelName;
-  if (validChannelName === finalTitle || !validChannelName) {
+  if (!validChannelName || validChannelName === finalTitle) {
     validChannelName = await getChannelNameFallback();
   }
 
@@ -180,7 +189,9 @@ function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFall
 }
 
 function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: { hasTriggered: boolean; isManualLogging: boolean }, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
-  const shouldHide = shouldHideBadge(cfg, isLikelyJapaneseCached(), isMusic()) || isAdPlaying();
+  resolvePageLanguageAndType();
+
+  const shouldHide = shouldHideBadge(cfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
   let el = document.getElementById('nt-status-badge') as HTMLElement | null;
   if (shouldHide) { el?.remove(); return; }
 
@@ -304,6 +315,7 @@ export default defineContentScript({
     let trackedVideo: HTMLVideoElement | null = null;
     let currentUrl = '', channelId: string | null = null, cachedChannelName = '';
     let playClockStart = -1;
+    let pollIntervalId: any = null;
 
     function flushPlayClock(discard = false) {
       if (playClockStart < 0) return;
@@ -344,8 +356,13 @@ export default defineContentScript({
       trackedVideo = vid; currentUrl = cleanedHref; watchedSecs = 0; playClockStart = -1;
       lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false; state.isManualLogging = false;
       channelId = null; cachedChannelName = ''; completedSessionSecs = 0;
-      currentSessionId = crypto.randomUUID(); invalidateJpCache(); _lastCounterPaint = 0;
+      currentSessionId = crypto.randomUUID(); metadataResolved = false; _lastCounterPaint = 0;
       document.getElementById('nt-status-badge')?.remove();
+
+      if (pollIntervalId) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
 
       const tryChannel = async () => {
         const foundId = await getYouTubeChannelId();
@@ -364,9 +381,12 @@ export default defineContentScript({
 
       tryChannel();
       let pollCount = 0;
-      const poll = setInterval(async () => {
+      pollIntervalId = setInterval(async () => {
         await tryChannel();
-        if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
+        if ((channelId && cachedChannelName) || pollCount++ > 20) {
+          clearInterval(pollIntervalId);
+          pollIntervalId = null;
+        }
       }, 500);
 
       (async () => {
@@ -416,7 +436,7 @@ export default defineContentScript({
 
         if (!autoOn && reachedQueueThreshold(cfg, liveSecs, vid) && (liveSecs - lastSyncSecs) >= 10) {
           lastSyncSecs = liveSecs;
-          if (isLikelyJapaneseCached() && !isMusic()) {
+          if (isJapaneseVideoCached && !isMusicVideoCached) {
             const chName = cachedChannelName || await getChannelNameFallback();
             await upsertQueueLive(liveSecs, document.title, chName, currentUrl, channelId, currentSessionId);
           }
@@ -424,7 +444,7 @@ export default defineContentScript({
 
         if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
           lastAutoCheckSecs = liveSecs;
-          if (isLikelyJapaneseCached() && !isMusic()) {
+          if (isJapaneseVideoCached && !isMusicVideoCached) {
             const threshType = cfg.thresholdType ?? 'percent';
             const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
             const triggered = threshType === 'percent' ? (vid.currentTime / vid.duration) * 100 >= threshValue : (liveSecs / 60) >= threshValue;
@@ -453,7 +473,7 @@ export default defineContentScript({
         if (state.hasTriggered) return;
         const cfg = cachedConfig;
         const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-        if (!autoOn && isLikelyJapaneseCached() && !isMusic() && reachedQueueThreshold(cfg, watchedSecs, vid)) {
+        if (!autoOn && isJapaneseVideoCached && !isMusicVideoCached && reachedQueueThreshold(cfg, watchedSecs, vid)) {
           await finalizeSession(watchedSecs, currentUrl, currentSessionId);
           completedSessionSecs += watchedSecs; watchedSecs = 0; currentSessionId = crypto.randomUUID();
         }
@@ -463,7 +483,9 @@ export default defineContentScript({
         flushPlayClock();
         const urlNow = cleanUrl(window.location.href);
         if (urlNow !== currentUrl) {
-          if (!state.hasTriggered && watchedSecs >= 1 && isLikelyJapaneseCached() && !isMusic()) await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+          if (!state.hasTriggered && watchedSecs >= 1 && isJapaneseVideoCached && !isMusicVideoCached) {
+            await finalizeSession(watchedSecs, currentUrl, currentSessionId);
+          }
           watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
           document.getElementById('nt-status-badge')?.remove();
         }
@@ -479,7 +501,7 @@ export default defineContentScript({
 
             const badge = document.getElementById('nt-status-badge');
             if (badge) {
-              const shouldHide = shouldHideBadge(c, isLikelyJapaneseCached(), isMusic()) || isAdPlaying();
+              const shouldHide = shouldHideBadge(c, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
               if (shouldHide) {
                 badge.remove();
               } else {
@@ -504,71 +526,39 @@ export default defineContentScript({
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;
+    let isInjecting = false;
 
     const runInjectionCycle = () => {
-      console.log('[NihongoAutoTracker Debug] runInjectionCycle triggered. Current URL:', window.location.href);
+      if (isInjecting) return;
+      isInjecting = true;
 
-      const vid = document.querySelector<HTMLVideoElement>('video');
-      console.log('[NihongoAutoTracker Debug] Video element search result:', vid ? 'Found' : 'Not Found');
-      if (vid) {
-        try {
-          attach(vid);
-        } catch (err) {
-          console.error('[NihongoAutoTracker Debug] Error attaching video listeners:', err);
+      try {
+        const vid = document.querySelector<HTMLVideoElement>('video');
+        if (vid) {
+          try {
+            attach(vid);
+          } catch (err) { }
         }
-      }
 
-      console.log('[NihongoAutoTracker Debug] Config loaded state:', {
-        hasConfig: !!cachedConfig,
-        enablePlaylistLogger: cachedConfig?.enablePlaylistLogger
-      });
+        if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
+          const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+          const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+          const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
 
-      if (cachedConfig && cachedConfig.enablePlaylistLogger !== false) {
-        const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-        // Scoped header selectors: forces matching only inside header elements, completely avoiding video row menus
-        const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-        const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
+          const classicContainer = document.querySelector(classicSel);
+          const modernContainer = document.querySelector(modernHeaderSel);
+          const panelContainer = document.querySelector(panelSel);
 
-        const classicMatches = Array.from(document.querySelectorAll(classicSel));
-        const modernMatches = Array.from(document.querySelectorAll(modernHeaderSel));
-        const panelMatches = Array.from(document.querySelectorAll(panelSel));
+          const targetContainer = classicContainer || modernContainer || panelContainer;
 
-        console.log('[NihongoAutoTracker Debug] Scoped DOM matches resolved:', {
-          classicCount: classicMatches.length,
-          modernCount: modernMatches.length,
-          panelCount: panelMatches.length
-        });
+          if (targetContainer instanceof HTMLElement) {
+            const alreadyHasLogger = !!targetContainer.querySelector('.nt-playlist-logger');
 
-        const allMatches = [...classicMatches, ...modernMatches, ...panelMatches] as HTMLElement[];
-
-        // Filter matched elements to find active visible targets
-        const containers = allMatches.filter(el => {
-          return el && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
-        });
-
-        console.log('[NihongoAutoTracker Debug] Valid active VISIBLE containers found on page:', containers.length);
-
-        containers.forEach((container, idx) => {
-          // Resolve target container directly to place the badge within the horizontal flex list of buttons
-          const targetContainer = container;
-
-          if (!targetContainer) return;
-
-          const alreadyHasLogger = !!targetContainer.querySelector('.nt-playlist-logger');
-          console.log(`[NihongoAutoTracker Debug] Container [${idx}] info:`, {
-            tagName: container.tagName,
-            targetTagName: targetContainer.tagName,
-            alreadyHasLogger
-          });
-
-          if (!alreadyHasLogger) {
-            try {
+            if (!alreadyHasLogger) {
               const btn = document.createElement('button');
               btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-
               btn.innerHTML = `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`;
 
-              // Adjusted styles to match YouTube's native action buttons (transparent background, correct dimensions)
               Object.assign(btn.style, {
                 background: 'transparent',
                 border: 'none',
@@ -590,26 +580,23 @@ export default defineContentScript({
               btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
               btn.onclick = (e) => {
                 e.stopPropagation();
-                showPlaylistSelectorModal(btn, container.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
+                showPlaylistSelectorModal(btn, targetContainer.closest('ytd-playlist-panel-renderer') !== null, cachedConfig.theme);
               };
 
-              // Safely insert button inside the horizontal action menu container
               const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
               if (overflowNode && overflowNode.parentElement === targetContainer) {
                 targetContainer.insertBefore(btn, overflowNode);
               } else {
                 targetContainer.appendChild(btn);
               }
-              console.log('[NihongoAutoTracker Debug] Button successfully injected into target container:', targetContainer);
-            } catch (err) {
-              console.error('[NihongoAutoTracker Debug] Failed to perform button DOM injection:', err);
             }
           }
-        });
+        }
+      } finally {
+        isInjecting = false;
       }
     };
 
-    // Lightweight observer focused strictly on primary page layout transitions
     const startTargetedObserver = () => {
       if (pageObserver) {
         pageObserver.disconnect();
@@ -620,26 +607,19 @@ export default defineContentScript({
         pageObserverTimeout = null;
       }
 
-      console.log('[NihongoAutoTracker Debug] Initializing targeted self-disconnecting page observer.');
-
-      // Check immediately if the element is already present
       runInjectionCycle();
 
-      const hasLogger = document.querySelector('.nt-playlist-logger');
-      if (hasLogger) {
-        console.log('[NihongoAutoTracker Debug] Logger already injected immediately. Observation skipped.');
+      if (document.querySelector('.nt-playlist-logger')) {
         return;
       }
 
       const target = document.querySelector('ytd-page-manager') || document.body;
 
-      pageObserver = new MutationObserver((mutations, obs) => {
+      pageObserver = new MutationObserver(() => {
         runInjectionCycle();
 
-        // Disconnect immediately once logger elements are verified to be in the DOM
         if (document.querySelector('.nt-playlist-logger')) {
-          console.log('[NihongoAutoTracker Debug] Injected target found. Self-disconnecting observer.');
-          obs.disconnect();
+          pageObserver?.disconnect();
           pageObserver = null;
           if (pageObserverTimeout) {
             clearTimeout(pageObserverTimeout);
@@ -650,17 +630,14 @@ export default defineContentScript({
 
       pageObserver.observe(target, { childList: true, subtree: true });
 
-      // Safety timeout net: terminates monitoring after 8 seconds if no collections are loaded
       pageObserverTimeout = window.setTimeout(() => {
         if (pageObserver) {
-          console.log('[NihongoAutoTracker Debug] Target not found within 8s timeout. Disconnecting observer.');
           pageObserver.disconnect();
           pageObserver = null;
         }
       }, 8000);
     };
 
-    // Capture play event globally for immediate element interception
     window.addEventListener('play', (e) => {
       const target = e.target as HTMLVideoElement;
       if (target && target.tagName === 'VIDEO') {
@@ -668,10 +645,8 @@ export default defineContentScript({
       }
     }, true);
 
-    // Initial load execution
     startTargetedObserver();
 
-    // Event hooks on routing transitions
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {

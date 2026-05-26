@@ -1,5 +1,4 @@
-import type { TrackerConfig } from '../../types';
-import type { ReaderAdapter } from './types';
+import type { TrackerConfig, ReaderAdapter } from '@/lib/types';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
 export const ttuAdapter: ReaderAdapter = {
@@ -18,12 +17,11 @@ export const ttuAdapter: ReaderAdapter = {
 
   extractCharCount(): number | null {
     const advancedCount = extractAdvancedCharCount();
-    if (advancedCount !== null) return advancedCount;
+    if (advancedCount !== null) return advancedCount.current;
 
-    // Fallback: TTU displays "X / Y" characters in footer stats area
-    const statsEls = document.querySelectorAll('.book-stats span, .explorable-container .footer-stat');
-    for (const el of statsEls) {
-      const text = (el as HTMLElement).innerText || '';
+    const statsElements = document.querySelectorAll('.book-stats span, .explorable-container .footer-stat');
+    for (const element of statsElements) {
+      const text = (element as HTMLElement).innerText || '';
       const match = text.match(/([\d,]+)\s*\/\s*([\d,]+)/);
       if (match) {
         const current = parseInt(match[1].replace(/,/g, ''), 10);
