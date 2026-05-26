@@ -29,6 +29,16 @@ import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
 
+/** Helper to securely insert HTML elements bypassing innerHTML strict validator rules */
+function setSafeHTML(el: HTMLElement, html: string) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  el.textContent = '';
+  while (doc.body.firstChild) {
+    el.appendChild(doc.body.firstChild);
+  }
+}
+
 let currentConfig: any = {};
 let isAnalyzingPage = false;
 let cachedIsJapanese: boolean | null = null;

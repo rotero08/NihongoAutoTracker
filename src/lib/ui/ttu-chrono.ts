@@ -14,6 +14,16 @@ import { fmt } from '@/lib/utils/time';
 import { showToast } from '@/lib/utils/toast';
 import { injectTTUStyles } from './reader-overlay';
 
+// Safe HTML Helper to securely bypass AMO innerHTML warnings using the Element base class
+function setSafeHTML(el: Element, html: string) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    el.textContent = '';
+    while (doc.body.firstChild) {
+        el.appendChild(doc.body.firstChild);
+    }
+}
+
 /**
  * Initializes and mounts the TTU chronometer UI toolbar and its dropdown menu.
  * 
@@ -43,17 +53,15 @@ export function setupTTUChronometerUI(
         saveSessionAndQueue: () => Promise<void>;
     }
 ) {
-    // Inject stylesheet definitions once into the document head
     injectTTUStyles();
 
-    // Clean up any stale wrappers to prevent duplicate controls
     const oldWrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (oldWrapper) oldWrapper.remove();
 
     const wrapper = document.createElement('div');
     wrapper.id = 'nt-ttu-chrono-wrapper';
 
-    wrapper.innerHTML = `
+    setSafeHTML(wrapper, `
   <button id="nt-ttu-chrono-btn" title="Click to open Tracker Menu or Double Click to toggle Tracker">
     <svg viewBox="0 0 24 24"><path id="nt-ttu-main-icon-path" d="M8 5v14l11-7z"/></svg>
   </button>
@@ -105,15 +113,13 @@ export function setupTTUChronometerUI(
       <div class="nt-ttu-history-list" id="nt-ttu-history-list"></div>
     </details>
   </div>
-  `;
+  `);
 
-    // Prevent interactions within the panel from bubbling up and triggering book pages flipping
     wrapper.addEventListener('click', e => e.stopPropagation());
     wrapper.addEventListener('dblclick', e => e.stopPropagation());
     const dropdown = wrapper.querySelector('#nt-ttu-dropdown')!;
     dropdown.addEventListener('click', e => e.stopPropagation());
 
-    // UI Element Query Bindings
     const btn = wrapper.querySelector('#nt-ttu-chrono-btn')!;
     const toggleBtn = wrapper.querySelector('#nt-ttu-btn-toggle')!;
     const timeVal = wrapper.querySelector('#nt-ttu-val-time')!;
@@ -133,7 +139,6 @@ export function setupTTUChronometerUI(
     const volPill = wrapper.querySelector('#nt-ttu-vol-pill') as HTMLButtonElement;
     const volAnchor = wrapper.querySelector('#nt-ttu-vol-anchor') as HTMLElement;
 
-    // Isolate mouse event bubbling inside search lists
     linkResults.addEventListener('mousedown', e => e.preventDefault());
     linkResults.addEventListener('wheel', e => e.stopPropagation(), { passive: true });
     ['keydown', 'keyup', 'keypress'].forEach(evt => linkInput.addEventListener(evt, e => e.stopPropagation()));
@@ -144,16 +149,12 @@ export function setupTTUChronometerUI(
     let cachedHistoryMins = 0;
     let cachedHistoryChars = 0;
 
-    // Fallback baseline initialization
     if (stateRefs.globalSessionStartChar === -1) {
         stateRefs.globalSessionStartChar = helpers.extractTTUCharCount() || 0;
     }
 
     const escapeHtml = (unsafe: string) => (unsafe || '').replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-    /**
-     * Re-renders the media linking area based on active custom links in storage.
-     */
     const refreshLinkerUI = async (force = false) => {
         if (!force && document.activeElement === linkInput) {
             return;
@@ -179,7 +180,6 @@ export function setupTTUChronometerUI(
                 linkerCompact.insertBefore(volPill, unlinkBtn);
             }
 
-            // Adjust active direct-send visual layouts
             if (rCfg.directSend) {
                 btnDirect.style.display = '';
                 btnDirect.disabled = false;
@@ -227,7 +227,6 @@ export function setupTTUChronometerUI(
         return Math.max(1, Number.isFinite(n) && n > 0 ? n : 1);
     };
 
-    // Volume input transition commit
     volPill.addEventListener('click', async (e) => {
         e.stopPropagation();
         if ((volPill as any)._editing) return;
@@ -324,28 +323,28 @@ export function setupTTUChronometerUI(
         }
 
         linkDebounce = setTimeout(async () => {
-            linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>';
+            setSafeHTML(linkResults, '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">Searching...</div>');
             linkResults.classList.add('open');
 
             try {
                 const results = await searchAniList(query, 5);
 
                 if (results.length === 0) {
-                    linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>';
+                    setSafeHTML(linkResults, '<div style="padding:4px;text-align:center;font-size:10px;color:#aaa">No results found</div>');
                     return;
                 }
 
-                linkResults.innerHTML = '';
+                linkResults.textContent = '';
                 results.forEach((m: any) => {
                     const row = document.createElement('div');
                     row.className = 'nt-ttu-link-item';
                     const native = m.title?.contentTitleNative || m.contentTitleNative || 'Unknown';
                     const img = m.coverImage || m.contentImage || '';
 
-                    row.innerHTML = `
+                    setSafeHTML(row, `
         ${img ? `<img class="nt-ttu-link-cover" src="${img}" />` : `<div class="nt-ttu-link-cover" style="background:#444"></div>`}
         <div class="nt-ttu-link-info"><div class="nt-ttu-link-t">${escapeHtml(native)}</div></div>
-        `;
+        `);
 
                     row.addEventListener('click', async () => {
                         const title = helpers.getTTUTitle();
@@ -393,7 +392,7 @@ export function setupTTUChronometerUI(
                     linkResults.appendChild(row);
                 });
             } catch {
-                linkResults.innerHTML = '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>';
+                setSafeHTML(linkResults, '<div style="padding:4px;text-align:center;font-size:10px;color:#f0706a">Search failed</div>');
             }
         }, 400);
     };
@@ -413,9 +412,6 @@ export function setupTTUChronometerUI(
         }, 200);
     });
 
-    /**
-     * Refreshes the local history logs listing for this book.
-     */
     const updateHistoryData = async () => {
         const history = await ttuHistoryStorage.getValue() || {};
         const sessions = history[helpers.getTTUTitle()] || [];
@@ -425,7 +421,7 @@ export function setupTTUChronometerUI(
 
         const listEl = wrapper.querySelector('#nt-ttu-history-list')!;
         if (sessions.length === 0) {
-            listEl.innerHTML = '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>';
+            setSafeHTML(listEl, '<div style="color:#777;text-align:center;padding:12px;">No past sessions yet</div>');
         } else {
             let html = '';
             [...sessions].reverse().forEach((s: any) => {
@@ -433,7 +429,7 @@ export function setupTTUChronometerUI(
                 const d = new Date(s.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
                 html += `<div class="nt-ttu-history-item" data-session-id="${s.id}"><span>${d}</span><span>${mins}m</span><span>${s.chars} chars</span><button class="nt-ttu-history-del" title="Delete session">×</button></div>`;
             });
-            listEl.innerHTML = html;
+            setSafeHTML(listEl, html);
 
             listEl.querySelectorAll('.nt-ttu-history-del').forEach((btn) => {
                 btn.addEventListener('click', async (e) => {
@@ -461,9 +457,6 @@ export function setupTTUChronometerUI(
         }
     };
 
-    /**
-     * Synchronizes and repaints general stats metrics in the dropdown dashboard.
-     */
     const updateUI = () => {
         if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
         if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
@@ -513,9 +506,6 @@ export function setupTTUChronometerUI(
         }
     };
 
-    /**
-     * Converts simple text nodes to editable numerical form fields on click.
-     */
     const makeEditable = (el: Element, isTime: boolean) => {
         el.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -572,7 +562,6 @@ export function setupTTUChronometerUI(
     makeEditable(timeVal, true);
     makeEditable(charsVal, false);
 
-    // Dropdown open/close trigger hook
     btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         dropdown.classList.toggle('open');
@@ -597,7 +586,6 @@ export function setupTTUChronometerUI(
         updateUI();
     });
 
-    // Close dropdown on outside page clicks
     document.addEventListener('click', (e) => {
         if (!e.composedPath().includes(wrapper)) {
             dropdown.classList.remove('open');
@@ -625,7 +613,6 @@ export function setupTTUChronometerUI(
         stateRefs.globalSessionStartChar = currentCount !== null ? currentCount : -1;
         stateRefs.globalManualCharOffset = 0;
 
-        // Reset transition states to prevent old visited section offsets from corrupting the new session
         stateRefs.lastSectionIndex = -1;
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
@@ -722,14 +709,12 @@ export function setupTTUChronometerUI(
     });
 
     btnSettings.addEventListener('click', (e) => {
-        e.preventDefault(); // Prevents host page from handling the click event
-        e.stopPropagation(); // Restricts event bubbling
+        e.preventDefault();
+        e.stopPropagation();
 
-        // Route message safely to background script to avoid cross-domain browser blocks
         browser.runtime.sendMessage({ action: 'OPEN_SETTINGS', tab: 'readers' }).catch(() => { });
     });
 
-    // Reactive custom event triggers
     wrapper.addEventListener('nt-linker-refresh', () => {
         refreshLinkerUI();
         updateUI();

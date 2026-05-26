@@ -144,18 +144,38 @@ export function showToast(title: string, msg: string, err = false): void {
     (document.head || document.documentElement).appendChild(style);
   }
 
-  /* Create the toast element */
+  /* Create the toast element programmatically to avoid innerHTML warnings */
   const toast = document.createElement('div');
   toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
   toast.setAttribute('data-key', escapedKey); // Tag the DOM element for cross-sandbox discovery
-  toast.innerHTML = `
-  <div class="nt-toast-content">
-  ${title ? `<span class="nt-toast-title">${title}</span>` : ''}
-  ${msg ? `<span class="nt-toast-msg">${msg}</span>` : ''}
-  </div>
-  <button class="nt-toast-close">×</button>
-  <div class="nt-toast-bar"></div>
-  `;
+
+  const content = document.createElement('div');
+  content.className = 'nt-toast-content';
+
+  if (title) {
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'nt-toast-title';
+    titleSpan.textContent = title;
+    content.appendChild(titleSpan);
+  }
+
+  if (msg) {
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'nt-toast-msg';
+    msgSpan.textContent = msg;
+    content.appendChild(msgSpan);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'nt-toast-close';
+  closeBtn.textContent = '×';
+
+  const bar = document.createElement('div');
+  bar.className = 'nt-toast-bar';
+
+  toast.appendChild(content);
+  toast.appendChild(closeBtn);
+  toast.appendChild(bar);
   container.appendChild(toast);
 
   let isPaused = false;
@@ -194,11 +214,11 @@ export function showToast(title: string, msg: string, err = false): void {
     toast.classList.remove('paused');
 
     // Force CSS reflow to cleanly restart the visual depletion bar keyframe
-    const bar = toast.querySelector('.nt-toast-bar') as HTMLElement;
-    if (bar) {
-      bar.style.animation = 'none';
-      void bar.offsetHeight; // Reflow
-      bar.style.animation = ''; // Restarts standard keyframe depletion
+    const barElement = toast.querySelector('.nt-toast-bar') as HTMLElement;
+    if (barElement) {
+      barElement.style.animation = 'none';
+      void barElement.offsetHeight; // Reflow
+      barElement.style.animation = ''; // Restarts standard keyframe depletion
     }
 
     startTimer();
@@ -230,7 +250,7 @@ export function showToast(title: string, msg: string, err = false): void {
   startTimer();
 
   /* Manual close button */
-  toast.querySelector('.nt-toast-close')!.addEventListener('click', (e) => {
+  closeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeToast();
   });
