@@ -555,9 +555,13 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     _mutationMicrotaskScheduled = false;
     invalidateReadingViewCache();
 
+    const isLoaderActive = isChapterLoading();
+
     // Prevent corrupting session references when Svelte is displaying a transition loading spinner
-    if (isReadingViewActive() && isChapterLoading()) {
-      _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window on load
+    if (isReadingViewActive() && isLoaderActive) {
+      if (lastLoggedPaginatedMode === false) {
+        _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window only on continuous loads
+      }
       return;
     }
 
@@ -608,7 +612,9 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
           ttuState.timeMs = 0;
           stateRefs.globalLastTick = Date.now();
           lastLoggedPaginatedMode = isPaginated;
-          _transitionGraceUntil = Date.now() + 400; // Trigger grace window on mode switch
+          if (!isPaginated) {
+            _transitionGraceUntil = Date.now() + 400; // Trigger grace window on continuous view switches
+          }
           recalculateChars();
           return;
         }
@@ -659,7 +665,6 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
-            _transitionGraceUntil = Date.now() + 400; // Trigger grace window on transitions
             recalculateChars();
           }
         } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
