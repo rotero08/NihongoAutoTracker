@@ -158,15 +158,6 @@ export function extractAdvancedCharCount(
 
         const sectionIndex = getSectionIndex(activeContainer);
 
-        console.log('[TextTracker-Diag] extractAdvancedCharCount() Structural Diagnostics:', {
-            pTagsCount: pTags.length,
-            hasImages: !!readerContainer.querySelector('img, svg, .ttu-illustration-container, .ttu-img-container'),
-            cachedIsPaginated,
-            cachedIsVertical,
-            sectionIndex,
-            currentContainerId
-        });
-
         if (pTags.length === 0) {
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
@@ -176,7 +167,6 @@ export function extractAdvancedCharCount(
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            console.log('[TextTracker-Diag] Deferring extraction: Paragraph layout width/height is 0 (Uncomputed state)');
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
