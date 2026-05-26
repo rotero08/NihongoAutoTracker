@@ -18,6 +18,7 @@
     FONT_OPTIONS,
     DYNAMIC_LOGO_SVG,
   } from "@/lib/ui/themes";
+  import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
 
   /* ── Reactive state ── */
@@ -64,9 +65,6 @@
     ...customThemes.map((t) => ({ value: t.id, label: t.name })),
   ]);
 
-  /**
-   * Helper function to apply the theme config settings without re-fetching storage.
-   */
   function applyInitialTheme(
     cfg: any,
     activeUrl: string = "",
@@ -74,9 +72,9 @@
   ) {
     let themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
     const fontVal = cfg?.font ?? "sans";
+    const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     let matchedColors: any = null;
 
-    // Check if theme sync is on (enabled by default) and apply reader's design palette
     if (cfg?.syncPopupWithReaderTheme !== false && activeUrl) {
       let activeReaderTheme = "global";
       let readerKey = "";
@@ -96,10 +94,9 @@
         if (activeReaderTheme === "match-reader") {
           themeVal = `match-reader-${readerKey}`;
           if (detectedColors) {
-            // Apply the actual, computed colors cached from the active reader tab
             matchedColors = detectedColors;
           } else {
-            // Static fallbacks in case the tab has not loaded yet
+            // Default static fallbacks for offline states
             if (readerKey === "ttu") {
               matchedColors = {
                 background: "#121820",
@@ -142,27 +139,41 @@
             }
           }
         } else {
-          // If the reader is using a specific preset or custom theme, inherit it directly
           themeVal = activeReaderTheme;
         }
       }
     }
 
     if (matchedColors) {
-      applyThemeToDocument("dark-amber", fontVal, matchedColors);
+      applyThemeToDocument("dark-amber", fontVal, matchedColors, {
+        useStaticInPageLogo,
+      });
+      applyCustomTheme(matchedColors);
     } else if (isCustomThemeId(themeVal)) {
       const activeThemeObj = (cfg?.customThemes ?? []).find(
         (t: any) => t.id === themeVal,
       );
       if (activeThemeObj) {
-        applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors);
+        applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors, {
+          useStaticInPageLogo,
+        });
+        applyCustomTheme(activeThemeObj.colors);
       } else if (cfg?.customColors) {
-        applyThemeToDocument("dark-amber", fontVal, cfg.customColors);
+        applyThemeToDocument("dark-amber", fontVal, cfg.customColors, {
+          useStaticInPageLogo,
+        });
+        applyCustomTheme(cfg.customColors);
       } else {
-        applyThemeToDocument("dark-amber", fontVal);
+        clearCustomTheme();
+        applyThemeToDocument("dark-amber", fontVal, undefined, {
+          useStaticInPageLogo,
+        });
       }
     } else {
-      applyThemeToDocument(themeVal, fontVal);
+      clearCustomTheme();
+      applyThemeToDocument(themeVal, fontVal, undefined, {
+        useStaticInPageLogo,
+      });
     }
   }
 
@@ -195,10 +206,14 @@
     let detectedColors = null;
     if (host) {
       try {
-        const localStore = await browser.storage.local.get(
-          `readerColors:${host}`,
-        );
-        detectedColors = localStore[`readerColors:${host}`];
+        // Fall back gracefully between WXT's local prefix and standard browser.storage keys
+        detectedColors = await storage.getItem(`local:readerColors:${host}`);
+        if (!detectedColors) {
+          const localStore = await browser.storage.local.get(
+            `readerColors:${host}`,
+          );
+          detectedColors = localStore[`readerColors:${host}`];
+        }
       } catch (e) {}
     }
 
@@ -212,6 +227,80 @@
     syncPopupWithReaderTheme = cfg?.syncPopupWithReaderTheme !== false;
 
     applyInitialTheme(cfg, activeUrl, detectedColors);
+  }
+
+  function applyCustomTheme(colors: any) {
+    if (!colors) return;
+    const root = document.documentElement;
+    const defaultColors = {
+      background: "#07070e",
+      surface: "#0d0d1c",
+      surfaceAlt: "#10101f",
+      border: "#1a2235",
+      borderHover: "#222d42",
+      text: "#dde4f0",
+      textMuted: "#7a8ca5",
+      accent: "#f0b429",
+      accentHover: "#ffd060",
+      success: "#3ddc84",
+    };
+
+    root.style.setProperty(
+      "--color-background",
+      colors.background || defaultColors.background,
+    );
+    root.style.setProperty(
+      "--color-surface",
+      colors.surface || defaultColors.surface,
+    );
+    root.style.setProperty(
+      "--color-surface-alt",
+      colors.surfaceAlt || colors.surface || defaultColors.surfaceAlt,
+    );
+    root.style.setProperty(
+      "--color-border",
+      colors.border || defaultColors.border,
+    );
+    root.style.setProperty(
+      "--color-border-hover",
+      colors.borderHover || colors.border || defaultColors.borderHover,
+    );
+    root.style.setProperty("--color-text", colors.text || defaultColors.text);
+    root.style.setProperty(
+      "--color-text-muted",
+      colors.textMuted || defaultColors.textMuted,
+    );
+    root.style.setProperty(
+      "--color-text-dimmed",
+      colors.textMuted || defaultColors.textMuted,
+    );
+    root.style.setProperty(
+      "--color-accent",
+      colors.accent || defaultColors.accent,
+    );
+    root.style.setProperty(
+      "--color-accent-hover",
+      colors.accentHover || colors.accent || defaultColors.accentHover,
+    );
+    root.style.setProperty(
+      "--color-success",
+      colors.success || defaultColors.success,
+    );
+  }
+
+  function clearCustomTheme() {
+    const root = document.documentElement;
+    root.style.removeProperty("--color-background");
+    root.style.removeProperty("--color-surface");
+    root.style.removeProperty("--color-surface-alt");
+    root.style.removeProperty("--color-border");
+    root.style.removeProperty("--color-border-hover");
+    root.style.removeProperty("--color-text");
+    root.style.removeProperty("--color-text-muted");
+    root.style.removeProperty("--color-text-dimmed");
+    root.style.removeProperty("--color-accent");
+    root.style.removeProperty("--color-accent-hover");
+    root.style.removeProperty("--color-success");
   }
 
   function decorateDropdownOptions() {
@@ -276,10 +365,9 @@
     });
   }
 
-  // Invoke loadData immediately on script evaluation to unblock the initial paint lifecycle
-  loadData();
-
   onMount(() => {
+    loadData();
+
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
@@ -302,19 +390,33 @@
         selectedFont = nextFont;
         syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
 
-        if (isCustomThemeId(nextTheme)) {
-          const activeThemeObj = (val?.customThemes ?? []).find(
-            (t: any) => t.id === nextTheme,
-          );
-          if (activeThemeObj) {
-            applyThemeToDocument("dark-amber", nextFont, activeThemeObj.colors);
-          } else if (val?.customColors) {
-            applyThemeToDocument("dark-amber", nextFont, val.customColors);
-          } else {
-            applyThemeToDocument("dark-amber", nextFont);
-          }
+        let host = "";
+        try {
+          if (activeUrl) host = new URL(activeUrl).hostname;
+        } catch (e) {}
+
+        let detectedColors = null;
+        if (host) {
+          storage
+            .getItem(`local:readerColors:${host}`)
+            .then((colors) => {
+              detectedColors = colors;
+              if (!detectedColors) {
+                browser.storage.local
+                  .get(`readerColors:${host}`)
+                  .then((localStore) => {
+                    detectedColors = localStore[`readerColors:${host}`];
+                    applyInitialTheme(val, activeUrl, detectedColors);
+                  });
+              } else {
+                applyInitialTheme(val, activeUrl, detectedColors);
+              }
+            })
+            .catch(() => {
+              applyInitialTheme(val, activeUrl, null);
+            });
         } else {
-          applyThemeToDocument(nextTheme, nextFont);
+          applyInitialTheme(val, activeUrl, null);
         }
       }
     };
@@ -403,6 +505,7 @@
         cfg.selectedThemeId = undefined;
         cfg.customColors = undefined;
         selectedTheme = "dark-amber";
+        clearCustomTheme();
         applyThemeToDocument("dark-amber", selectedFont);
       }
       await configStorage.setValue(cfg);
@@ -411,6 +514,7 @@
     }
 
     selectedTheme = val;
+    const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     if (isCustomThemeId(val)) {
       cfg.theme = val;
       cfg.selectedThemeId = val;
@@ -422,27 +526,43 @@
       }
       await configStorage.setValue(cfg);
       // Base themes are set first, then our custom theme overrides them correctly
-      applyThemeToDocument("dark-amber", selectedFont, activeThemeObj?.colors);
+      applyThemeToDocument("dark-amber", selectedFont, activeThemeObj?.colors, {
+        useStaticInPageLogo,
+      });
+      if (activeThemeObj) {
+        applyCustomTheme(activeThemeObj.colors);
+      }
     } else {
       cfg.theme = val;
       cfg.selectedThemeId = undefined;
       cfg.customColors = undefined;
       await configStorage.setValue(cfg);
-      applyThemeToDocument(val, selectedFont);
+      clearCustomTheme();
+      applyThemeToDocument(val, selectedFont, undefined, {
+        useStaticInPageLogo,
+      });
     }
   }
 
   async function handleQuickFont(val: string) {
     selectedFont = val;
     const cfg = (await configStorage.getValue()) as any;
+    const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     await configStorage.setValue({ ...cfg, font: val });
     if (isCustomThemeId(selectedTheme)) {
       const activeThemeObj = (cfg.customThemes ?? []).find(
         (t: any) => t.id === selectedTheme,
       );
-      applyThemeToDocument("dark-amber", val, activeThemeObj?.colors);
+      applyThemeToDocument("dark-amber", val, activeThemeObj?.colors, {
+        useStaticInPageLogo,
+      });
+      if (activeThemeObj) {
+        applyCustomTheme(activeThemeObj.colors);
+      }
     } else {
-      applyThemeToDocument(selectedTheme, val);
+      applyThemeToDocument(selectedTheme, val, undefined, {
+        useStaticInPageLogo,
+      });
     }
   }
 
@@ -699,7 +819,10 @@
 <!-- ── Header ── -->
 <header class="header">
   <div class="brand">
-    <div class="brand-mark">
+    <div
+      class="brand-mark"
+      style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: transparent;"
+    >
       {@html DYNAMIC_LOGO_SVG}
     </div>
     <div class="brand-text">
@@ -879,23 +1002,11 @@
     background: var(--color-background);
     color: var(--color-text);
     width: 380px;
-    min-height: 350px; /* Setup a stable static height to accommodate open dropdowns */
     font-size: 13px;
     overflow: hidden;
     margin: 0;
     padding: 0;
-    display: flex;
-    flex-direction: column;
   }
-
-  /* Ensure Svelte application root container occupies the full vertical viewport space */
-  :global(#app) {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 350px;
-  }
-
   :global(*, *::before, *::after) {
     box-sizing: border-box;
     margin: 0;
@@ -944,49 +1055,40 @@
     border-radius: 8px;
   }
   .pill-ok {
-    color: var(--color-api-green) !important;
-    border: 1px solid
-      color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
-    background: color-mix(
-      in srgb,
-      var(--color-api-green) 8%,
-      transparent
-    ) !important;
+    color: #3ddc84 !important;
+    border: 1px solid rgba(61, 220, 132, 0.25) !important;
+    background: rgba(61, 220, 132, 0.07) !important;
   }
   .pill-off {
     color: var(--color-error);
     border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
     background: color-mix(in srgb, var(--color-error) 7%, transparent);
   }
-
-  /* Transparent, borderless header options buttons with hover transitions */
   .icon-btn {
-    width: 24px;
-    height: 24px;
-    background: transparent !important;
-    border: none !important;
-    outline: none !important;
-    box-shadow: none !important;
+    width: 26px;
+    height: 26px;
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
     color: var(--color-text-muted);
+    font-size: 13px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: color 0.15s;
-    padding: 0;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
   }
   .icon-btn:hover {
-    color: var(--color-accent) !important;
+    color: var(--color-text);
+    border-color: var(--color-border-hover);
   }
 
-  /* Force system theme-adaptive green on all matched list checkmarks and popup items globally */
+  /* Force system success green on all matched list checkmarks and popup items globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
-    color: var(--color-api-green) !important;
-    border-color: color-mix(
-      in srgb,
-      var(--color-api-green) 25%,
-      transparent
-    ) !important;
+    color: #3ddc84 !important;
+    border-color: rgba(61, 220, 132, 0.25) !important;
   }
 
   /* ── Separator ── */
@@ -1026,6 +1128,19 @@
     display: flex;
     gap: 6px;
   }
+  .badge {
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: bold;
+  }
+  .queue-bulk {
+    display: flex;
+    gap: 6px;
+  }
   .bulk-btn {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -1041,7 +1156,7 @@
   }
   .bulk-btn.amber {
     background: var(--color-accent);
-    color: var(--color-accent-text);
+    color: var(--color-background);
     border-color: var(--color-accent);
   }
   .bulk-btn.ghost {
@@ -1086,7 +1201,6 @@
   .footer {
     padding: 9px 12px 12px;
   }
-
   .open-btn {
     width: 100%;
     background: none;

@@ -344,6 +344,7 @@ export default defineContentScript({
     const applyCachedTheme = (c: any) => {
       const theme = c.theme ?? 'nihongo';
       const font = c.font ?? 'sans';
+      const useStaticInPageLogo = c.useStaticInPageLogo === true;
       let customColors: any = null;
       if (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom') {
         const themeId = theme.replace('custom_', '').replace('custom-', '');
@@ -354,7 +355,7 @@ export default defineContentScript({
           customColors = c.customColors;
         }
       }
-      applyThemeToDocument(theme, font, customColors);
+      applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
       const activeTheme = getTheme(theme);
       injectModalStyles(activeTheme);
     };

@@ -1,5 +1,6 @@
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
+import { applyThemeToDocument } from '@/lib/ui/themes';
 
 export function getActiveThemeName(cfg: any): string {
   const adapter = getActiveReaderAdapter();
@@ -10,7 +11,7 @@ export function getActiveThemeName(cfg: any): string {
     } else if (adapter.hostname === 'app.yatsu.moe') {
       override = cfg.yatsuThemeOverride;
     } else if (adapter.hostname === 'manga.manabe.es') {
-      override = cfg.yomiyasuThemeOverride;
+      override = cfg.yomiyasuThemeOverride || cfg.manabeThemeOverride;
     }
     if (override && override !== 'global') return override;
   }
@@ -70,7 +71,7 @@ export function rgbToHsl(r: number, g: number, b: number) {
     switch (max) {
       case r: h = (g - b) / d + (g < b ? 6 : 0); break;
       case g: h = (b - r) / d + 2; break;
-      case b: h = (b - r) / d + 4; break;
+      case b: h = (r - g) / d + 4; break;
     }
     h /= 6;
   }
@@ -108,85 +109,54 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
 export function detectReaderThemeColors(): any {
   try {
     const bodyStyle = window.getComputedStyle(document.body);
-    let backgroundColor = bodyStyle.backgroundColor;
+    let bgColor = bodyStyle.backgroundColor;
 
-    if (!backgroundColor || backgroundColor === 'rgba(0, 0, 0, 0)' || backgroundColor === 'transparent') {
+    let textColor = bodyStyle.color;
+    const contentEl = document.querySelector('.book-content, .book-content-container, .reader-container, .text-container, p, span, h1, div[class*="content"]');
+    if (contentEl) {
+      textColor = window.getComputedStyle(contentEl).color;
+    }
+
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
       const container = document.querySelector(
         '.book-content-container, .book-content, [data-ref="container"], .reader-container, #ttu-page-footer, #root, #app'
       );
       if (container) {
-        backgroundColor = window.getComputedStyle(container).backgroundColor;
+        const containerStyle = window.getComputedStyle(container);
+        bgColor = containerStyle.backgroundColor;
       }
     }
 
-    const parsedBackground = parseColorToRgb(backgroundColor || '#07070e');
-    const hslBackground = rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b);
-    const isDark = hslBackground.l < 50;
+    const parsedBg = parseColorToRgb(bgColor || '#07070e');
+    const parsedText = parseColorToRgb(textColor || '#dde4f0');
 
-    // 1. Establish clean background saturation and lightness ceilings to prevent neon/muddy backdrops
-    const backgroundS = Math.max(4, Math.min(22, hslBackground.s));
-    const backgroundL = isDark ? Math.max(4, Math.min(18, hslBackground.l)) : Math.max(88, Math.min(96, hslBackground.l));
-    const backgroundRgb = hslToRgb(hslBackground.h, backgroundS, backgroundL);
-    const background = `rgb(${backgroundRgb.r}, ${backgroundRgb.g}, ${backgroundRgb.b})`;
+    const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
+    const isDark = hslBg.l < 50;
 
-    let surface: string;
-    let surfaceAlt: string;
-    let border: string;
-    let borderHover: string;
-    let text: string;
-    let textMuted: string;
-    let accent: string;
-    let accentHover: string;
-    let success: string;
-    let error: string;
+    const shiftedBgHsl = {
+      h: (hslBg.h + 12) % 360,
+      s: Math.max(10, Math.min(90, isDark ? hslBg.s + 5 : hslBg.s - 5)),
+      l: isDark ? Math.min(95, hslBg.l + 4) : Math.max(5, hslBg.l - 4)
+    };
+    const shiftedBg = hslToRgb(shiftedBgHsl.h, shiftedBgHsl.s, shiftedBgHsl.l);
 
-    if (isDark) {
-      // --- DARK MODE CONFIGURATION ---
-      // Surfaces step upwards (lighter) to construct distinct card layers
-      const surfRgb = hslToRgb(hslBackground.h, backgroundS + 2, backgroundL + 5);
-      const surfAltRgb = hslToRgb(hslBackground.h, backgroundS + 4, backgroundL + 10);
-      surface = `rgb(${surfRgb.r}, ${surfRgb.g}, ${surfRgb.b})`;
-      surfaceAlt = `rgb(${surfAltRgb.r}, ${surfAltRgb.g}, ${surfAltRgb.b})`;
+    let background = `rgb(${shiftedBg.r}, ${shiftedBg.g}, ${shiftedBg.b})`;
+    let surface = isDark ? adjustLightness(shiftedBg, 6) : adjustLightness(shiftedBg, -6);
+    let surfaceAlt = isDark ? adjustLightness(shiftedBg, 12) : adjustLightness(shiftedBg, -12);
+    let border = isDark ? adjustLightness(shiftedBg, 22) : adjustLightness(shiftedBg, -22);
+    let borderHover = isDark ? adjustLightness(shiftedBg, 32) : adjustLightness(shiftedBg, -32);
+    let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
-      // Borders (thin, clean luminous offsets)
-      const borderRgb = hslToRgb(hslBackground.h, backgroundS + 5, backgroundL + 16);
-      const borderHovRgb = hslToRgb(hslBackground.h, backgroundS + 8, backgroundL + 25);
-      border = `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`;
-      borderHover = `rgb(${borderHovRgb.r}, ${borderHovRgb.g}, ${borderHovRgb.b})`;
+    let accent = isDark ? 'var(--color-accent, #f0b429)' : 'var(--color-accent, #b45309)';
+    let accentHover = isDark ? 'var(--color-accent-hover, #ffd060)' : 'var(--color-accent-hover, #78350f)';
 
-      // Text (crisp white with minimal tinting)
-      text = '#dde4f0';
-      textMuted = '#8295b1';
-
-      // Accents & States (vibrant, modern dark-mode colors)
-      accent = '#f0b429';       // Luminous amber
-      accentHover = '#ffd060';
-      success = '#3ddc84';      // Mint green
-      error = '#f0706a';        // Rose red
-    } else {
-      // --- LIGHT MODE CONFIGURATION ---
-      // Surfaces step downwards (darker) to create card separation on bright panels
-      const surfRgb = hslToRgb(hslBackground.h, Math.max(4, backgroundS - 2), backgroundL - 6);
-      const surfAltRgb = hslToRgb(hslBackground.h, Math.max(4, backgroundS - 4), backgroundL - 12);
-      surface = `rgb(${surfRgb.r}, ${surfRgb.g}, ${surfRgb.b})`;
-      surfaceAlt = `rgb(${surfAltRgb.r}, ${surfAltRgb.g}, ${surfAltRgb.b})`;
-
-      // Borders (deep, clearly legible outlines)
-      const borderRgb = hslToRgb(hslBackground.h, backgroundS + 6, backgroundL - 25);
-      const borderHovRgb = hslToRgb(hslBackground.h, backgroundS + 10, backgroundL - 38);
-      border = `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`;
-      borderHover = `rgb(${borderHovRgb.r}, ${borderHovRgb.g}, ${borderHovRgb.b})`;
-
-      // Text (rich dark navy charcoal for comfortable long-form reading)
-      text = '#131b26';
-      textMuted = '#526075';
-
-      // Accents & States (highly saturated values for optimal legibility)
-      accent = '#b45309';       // Rich deep ochre
-      accentHover = '#78350f';
-      success = '#166534';      // Deep forest green
-      error = '#991b1b';        // Rich cardinal red
-    }
+    const greenHsl = {
+      h: 135,
+      s: isDark ? 65 : 75,
+      l: isDark ? 55 : 35
+    };
+    const successGreen = hslToRgb(greenHsl.h, greenHsl.s, greenHsl.l);
+    const success = `rgb(${successGreen.r}, ${successGreen.g}, ${successGreen.b})`;
 
     return {
       background,
@@ -194,12 +164,11 @@ export function detectReaderThemeColors(): any {
       surfaceAlt,
       border,
       borderHover,
-      text,
+      text: textColor,
       textMuted,
       accent,
       accentHover,
-      success,
-      error
+      success
     };
   } catch (e) {
     return null;
@@ -207,29 +176,39 @@ export function detectReaderThemeColors(): any {
 }
 
 export function updateActiveThemeStyles(themeName: string, cfg: any) {
+  const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
   if (themeName === 'match-reader') {
     const detectedColors = detectReaderThemeColors();
     if (detectedColors) {
-      applyCustomThemeToDoc(detectedColors);
-      injectThemeStyles('custom', cfg.font ?? 'sans');
-      // Cache the detected colors locally so the popup can synchronize with them
+      // Cache the detected colors in storage so the popup can sync with them
       const host = window.location.hostname;
-      browser.storage.local.set({ [`readerColors:${host}`]: detectedColors });
+      browser.storage.local.set({
+        [`local:readerColors:${host}`]: detectedColors,
+        [`readerColors:${host}`]: detectedColors
+      }).catch(() => { });
+
+      applyCustomThemeToDoc(detectedColors);
+      applyThemeToDocument("dark-amber", cfg.font ?? "sans", detectedColors, { useStaticInPageLogo });
+      injectThemeStyles('custom', cfg.font ?? 'sans');
     } else {
       clearCustomThemeFromDoc();
+      applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
       injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
     }
   } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
     const colors = getCustomColorsForSite(cfg);
     if (colors) {
       applyCustomThemeToDoc(colors);
+      applyThemeToDocument("dark-amber", cfg.font ?? "sans", colors, { useStaticInPageLogo });
       injectThemeStyles('custom', cfg.font ?? 'sans');
     } else {
       clearCustomThemeFromDoc();
+      applyThemeToDocument('dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
       injectThemeStyles('dark-amber', cfg.font ?? 'sans');
     }
   } else {
     clearCustomThemeFromDoc();
+    applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
     injectThemeStyles(themeName, cfg.font ?? 'sans');
   }
 }
@@ -249,6 +228,19 @@ export function applyCustomThemeToDoc(customColors: any) {
     "--color-accent": customColors.accent,
     "--color-accent-hover": customColors.accentHover || customColors.accent,
     "--color-success": customColors.success || customColors.accent,
+
+    // Also map to reader-overlay specific namespaces so floating dashboards align
+    "--nt-background": customColors.background,
+    "--nt-surface": customColors.surface,
+    "--nt-surface-alt": customColors.surfaceAlt || customColors.surface,
+    "--nt-border": customColors.border,
+    "--nt-border-hover": customColors.borderHover || customColors.border,
+    "--nt-text": customColors.text,
+    "--nt-text-muted": customColors.textMuted,
+    "--nt-text-dimmed": customColors.textMuted,
+    "--nt-accent": customColors.accent,
+    "--nt-accent-hover": customColors.accentHover || customColors.accent,
+    "--nt-success": customColors.success || customColors.accent,
   };
   for (const [prop, val] of Object.entries(mapping)) {
     if (val) root.style.setProperty(prop, val, 'important');
@@ -268,7 +260,18 @@ export function clearCustomThemeFromDoc() {
     "--color-text-dimmed",
     "--color-accent",
     "--color-accent-hover",
-    "--color-success"
+    "--color-success",
+    "--nt-background",
+    "--nt-surface",
+    "--nt-surface-alt",
+    "--nt-border",
+    "--nt-border-hover",
+    "--nt-text",
+    "--nt-text-muted",
+    "--nt-text-dimmed",
+    "--nt-accent",
+    "--nt-accent-hover",
+    "--nt-success"
   ];
   for (const prop of props) {
     root.style.removeProperty(prop);
@@ -279,11 +282,10 @@ export function getReaderConfig(cfg: any) {
   const adapter = getActiveReaderAdapter();
   const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
   const directSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
-  const hideUnavailableActions = cfg.hideUnavailableActions ?? false;
 
   let enabled = cfg.ttuEnabled ?? true;
   if (adapter) {
     enabled = adapter.isEnabled(cfg);
   }
-  return { enabled, autoSave, directSend, hideUnavailableActions };
+  return { enabled, autoSave, directSend };
 }

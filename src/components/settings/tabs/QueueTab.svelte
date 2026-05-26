@@ -348,7 +348,7 @@
         onchange={toggleEOD}
       />
       <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      Automatically send today's queued logs at end of day (23:45)
+      Automatically send today's queued logs at end of day (23:59)
     </label>
     <span class="tooltip">This will also submit unmatched media</span>
   </div>

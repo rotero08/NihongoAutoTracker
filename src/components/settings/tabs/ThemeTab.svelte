@@ -41,6 +41,10 @@
     let selectedFont = $state("sans");
     let lastActivePresetTheme = $state("dark-amber");
 
+    // Dynamic brand preferences
+    let useStaticToolbarIcon = $state(false);
+    let useStaticInPageLogo = $state(false);
+
     // Toggle controlling whether the popup inherits reader themes when browsing reader sites
     let syncPopupWithReaderTheme = $state(true);
 
@@ -339,7 +343,12 @@
         ) {
             selectedTheme = lastActivePresetTheme;
             clearCustomTheme();
-            applyThemeToDocument(lastActivePresetTheme, selectedFont);
+            applyThemeToDocument(
+                lastActivePresetTheme,
+                selectedFont,
+                undefined,
+                { useStaticInPageLogo },
+            );
         }
         if (
             isCustomThemeId(ttuThemeOverride) &&
@@ -596,7 +605,9 @@
 
         // ALWAYS apply base stylesheet attributes BEFORE custom theme variables to prevent browser wiping values
         if (selectedTheme === themeId) {
-            applyThemeToDocument("dark-amber", selectedFont, draftColors);
+            applyThemeToDocument("dark-amber", selectedFont, draftColors, {
+                useStaticInPageLogo,
+            });
         }
 
         // Collapse to minuscule header after saving
@@ -626,7 +637,12 @@
             if (selectedTheme === themeId) {
                 selectedTheme = lastActivePresetTheme;
                 clearCustomTheme();
-                applyThemeToDocument(lastActivePresetTheme, selectedFont);
+                applyThemeToDocument(
+                    lastActivePresetTheme,
+                    selectedFont,
+                    undefined,
+                    { useStaticInPageLogo },
+                );
             }
             if (ttuThemeOverride === themeId)
                 ttuThemeOverride = lastActiveTtuOverride;
@@ -671,7 +687,9 @@
             cfg.selectedThemeId = undefined;
             cfg.customColors = undefined;
             clearCustomTheme();
-            applyThemeToDocument("dark-amber", selectedFont);
+            applyThemeToDocument("dark-amber", selectedFont, undefined, {
+                useStaticInPageLogo,
+            });
         }
         if (ttuThemeOverride === themeId) {
             ttuThemeOverride = "global";
@@ -726,6 +744,10 @@
             "global";
         selectedTheme = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
         selectedFont = cfg.font ?? "sans";
+
+        // Read brand options
+        useStaticToolbarIcon = cfg.useStaticToolbarIcon === true;
+        useStaticInPageLogo = cfg.useStaticInPageLogo === true;
 
         // Read popup theme syncing option from storage configuration (defaulting to true)
         syncPopupWithReaderTheme = cfg.syncPopupWithReaderTheme !== false;
@@ -840,13 +862,21 @@
                     "dark-amber",
                     selectedFont,
                     activeCustomTheme.colors,
+                    { useStaticInPageLogo },
                 );
             } else {
-                applyThemeToDocument(lastActivePresetTheme, selectedFont);
+                applyThemeToDocument(
+                    lastActivePresetTheme,
+                    selectedFont,
+                    undefined,
+                    { useStaticInPageLogo },
+                );
             }
         } else {
             clearCustomTheme();
-            applyThemeToDocument(selectedTheme, selectedFont);
+            applyThemeToDocument(selectedTheme, selectedFont, undefined, {
+                useStaticInPageLogo,
+            });
         }
     }
 
@@ -893,10 +923,16 @@
                     "dark-amber",
                     selectedFont,
                     currentTheme.colors,
+                    { useStaticInPageLogo },
                 );
             } else {
                 // Keep draft strictly local in Svelte state to prevent global applicator from reverting layout
-                applyThemeToDocument(lastActivePresetTheme, selectedFont);
+                applyThemeToDocument(
+                    lastActivePresetTheme,
+                    selectedFont,
+                    undefined,
+                    { useStaticInPageLogo },
+                );
                 onStatus("Custom draft active. Save inside preview to apply.");
             }
         } else {
@@ -908,7 +944,9 @@
             await configStorage.setValue(cfg);
             lastActivePresetTheme = themeName;
             clearCustomTheme();
-            applyThemeToDocument(themeName, selectedFont);
+            applyThemeToDocument(themeName, selectedFont, undefined, {
+                useStaticInPageLogo,
+            });
             onStatus("✓ Theme Saved");
         }
     }
@@ -927,12 +965,20 @@
                     "dark-amber",
                     fontName,
                     activeCustomTheme.colors,
+                    { useStaticInPageLogo },
                 );
             } else {
-                applyThemeToDocument(lastActivePresetTheme, fontName);
+                applyThemeToDocument(
+                    lastActivePresetTheme,
+                    fontName,
+                    undefined,
+                    { useStaticInPageLogo },
+                );
             }
         } else {
-            applyThemeToDocument(selectedTheme, fontName);
+            applyThemeToDocument(selectedTheme, fontName, undefined, {
+                useStaticInPageLogo,
+            });
         }
         onStatus("✓ Font Saved");
     }
@@ -1031,6 +1077,8 @@
         lastActiveYatsuOverride = "global";
         yomiyasuThemeOverride = "global";
         lastActiveYomiyasuOverride = "global";
+        useStaticToolbarIcon = false;
+        useStaticInPageLogo = false;
         syncPopupWithReaderTheme = true;
 
         const cfg = (await configStorage.getValue()) as any;
@@ -1050,9 +1098,13 @@
             yatsuCustomColors: undefined,
             yomiyasuCustomColors: undefined,
             syncPopupWithReaderTheme: undefined,
+            useStaticToolbarIcon: undefined,
+            useStaticInPageLogo: undefined,
         });
         clearCustomTheme();
-        applyThemeToDocument("dark-amber", "sans");
+        applyThemeToDocument("dark-amber", "sans", undefined, {
+            useStaticInPageLogo: false,
+        });
         onStatus("✓ Appearance Defaults Restored");
     }
 
@@ -1120,6 +1172,40 @@
         );
     }
 
+    async function handleToolbarIconPref(val: boolean) {
+        useStaticToolbarIcon = val;
+        const cfg = (await configStorage.getValue()) as any;
+        cfg.useStaticToolbarIcon = val;
+        await configStorage.setValue(cfg);
+        onStatus(
+            val
+                ? "✓ Classic toolbar icon applied"
+                : "✓ Theme-matching toolbar icon applied",
+        );
+    }
+
+    async function handleInPageLogoPref(val: boolean) {
+        useStaticInPageLogo = val;
+        const cfg = (await configStorage.getValue()) as any;
+        cfg.useStaticInPageLogo = val;
+        await configStorage.setValue(cfg);
+
+        // Reapply theme to immediately update the visual look of current logos
+        const currentColors = getThemeColors(selectedTheme);
+        applyThemeToDocument(
+            isCustomThemeId(selectedTheme) ? "dark-amber" : selectedTheme,
+            selectedFont,
+            isCustomThemeId(selectedTheme) ? currentColors : undefined,
+            { useStaticInPageLogo: val },
+        );
+
+        onStatus(
+            val
+                ? "✓ Classic brand logo applied in-app"
+                : "✓ Adaptive brand logo applied in-app",
+        );
+    }
+
     onMount(() => {
         load();
         window.addEventListener("beforeunload", onBeforeUnload);
@@ -1145,6 +1231,9 @@
                         val.yomiyasuThemeOverride ??
                         "global";
                     const nextFont = val.font ?? "sans";
+
+                    useStaticToolbarIcon = val.useStaticToolbarIcon === true;
+                    useStaticInPageLogo = val.useStaticInPageLogo === true;
 
                     if (val.customThemes) {
                         customThemes = val.customThemes;
@@ -1235,16 +1324,33 @@
                                 "dark-amber",
                                 selectedFont,
                                 activeCustomTheme.colors,
+                                {
+                                    useStaticInPageLogo:
+                                        val.useStaticInPageLogo === true,
+                                },
                             );
                         } else {
                             applyThemeToDocument(
                                 lastActivePresetTheme,
                                 selectedFont,
+                                undefined,
+                                {
+                                    useStaticInPageLogo:
+                                        val.useStaticInPageLogo === true,
+                                },
                             );
                         }
                     } else {
                         clearCustomTheme();
-                        applyThemeToDocument(nextTheme, selectedFont);
+                        applyThemeToDocument(
+                            nextTheme,
+                            selectedFont,
+                            undefined,
+                            {
+                                useStaticInPageLogo:
+                                    val.useStaticInPageLogo === true,
+                            },
+                        );
                     }
                 }
             }
@@ -1272,7 +1378,7 @@
 <div style="display: flex; gap: 32px; align-items: flex-start; width: 100%;">
     <!-- Left form column (containing configurations locked to 600px maximum width) -->
     <div
-        style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; min-width: 0;"
+        style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding-bottom: 180px;"
     >
         <div class="tab-head" style="margin-bottom: 0px; padding-bottom: 8px;">
             <h2>Appearance</h2>
@@ -1282,6 +1388,93 @@
             Customize the color theme and font layout of the extension Popup,
             Settings page, and video tracking overlays.
         </p>
+
+        <!-- Compact Branding Style Preferences -->
+        <div
+            style="display: flex; flex-direction: column; gap: 8px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; margin-bottom: 0px;"
+        >
+            <div
+                style="display: flex; justify-content: space-between; align-items: center;"
+            >
+                <span
+                    style="font-weight: bold; font-size: 11.5px; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em;"
+                    >Branding Style</span
+                >
+                <span style="font-size: 10px; color: var(--color-text-muted);"
+                    >Configure logo & icon appearance</span
+                >
+            </div>
+            <div
+                style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; border-top: 1px solid var(--color-border); padding-top: 8px;"
+            >
+                <!-- Toolbar Browser Icon -->
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; gap: 8px;"
+                >
+                    <span
+                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold;"
+                        >Browser Icon</span
+                    >
+                    <div
+                        style="display: flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px; width: 120px; height: 24px; align-items: center;"
+                    >
+                        <button
+                            type="button"
+                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {!useStaticToolbarIcon
+                                ? 'var(--color-accent)'
+                                : 'transparent'}; color: {!useStaticToolbarIcon
+                                ? 'var(--color-accent-text)'
+                                : 'var(--color-text-muted)'}; padding: 0;"
+                            onclick={() => handleToolbarIconPref(false)}
+                            >Dynamic</button
+                        >
+                        <button
+                            type="button"
+                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {useStaticToolbarIcon
+                                ? 'var(--color-accent)'
+                                : 'transparent'}; color: {useStaticToolbarIcon
+                                ? 'var(--color-accent-text)'
+                                : 'var(--color-text-muted)'}; padding: 0;"
+                            onclick={() => handleToolbarIconPref(true)}
+                            >Classic</button
+                        >
+                    </div>
+                </div>
+                <!-- In-Page Logo Branding -->
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; gap: 8px;"
+                >
+                    <span
+                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold;"
+                        >App Logos</span
+                    >
+                    <div
+                        style="display: flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px; width: 120px; height: 24px; align-items: center;"
+                    >
+                        <button
+                            type="button"
+                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {!useStaticInPageLogo
+                                ? 'var(--color-accent)'
+                                : 'transparent'}; color: {!useStaticInPageLogo
+                                ? 'var(--color-accent-text)'
+                                : 'var(--color-text-muted)'}; padding: 0;"
+                            onclick={() => handleInPageLogoPref(false)}
+                            >Adaptive</button
+                        >
+                        <button
+                            type="button"
+                            style="flex: 1; border: none; border-radius: 4px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {useStaticInPageLogo
+                                ? 'var(--color-accent)'
+                                : 'transparent'}; color: {useStaticInPageLogo
+                                ? 'var(--color-accent-text)'
+                                : 'var(--color-text-muted)'}; padding: 0;"
+                            onclick={() => handleInPageLogoPref(true)}
+                            >Classic</button
+                        >
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div style="display: flex; flex-direction: column; gap: 6px;">
             <CustomSelect
@@ -1721,5 +1914,74 @@
         justify-content: space-between !important;
         width: 100%;
         position: relative;
+    }
+
+    /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */
+    :global(
+            .select-dropdown,
+            .dropdown-menu,
+            [class*="select-dropdown"],
+            [class*="dropdown-menu"],
+            [class*="select-options"],
+            [class*="options-container"]
+        ) {
+        max-height: 160px !important;
+        overflow-y: auto !important;
+    }
+
+    /* Modern sleek minimalist scrollbar styles across settings dropdown menu options list */
+    :global(
+            .select-dropdown::-webkit-scrollbar,
+            .dropdown-menu::-webkit-scrollbar,
+            [class*="select-dropdown"]::-webkit-scrollbar,
+            [class*="dropdown-menu"]::-webkit-scrollbar,
+            [class*="select-options"]::-webkit-scrollbar,
+            [class*="options-container"]::-webkit-scrollbar
+        ) {
+        width: 6px !important;
+        height: 6px !important;
+    }
+    :global(
+            .select-dropdown::-webkit-scrollbar-track,
+            .dropdown-menu::-webkit-scrollbar-track,
+            [class*="select-dropdown"]::-webkit-scrollbar-track,
+            [class*="dropdown-menu"]::-webkit-scrollbar-track,
+            [class*="select-options"]::-webkit-scrollbar-track,
+            [class*="options-container"]::-webkit-scrollbar-track
+        ) {
+        background: transparent !important;
+    }
+    :global(
+            .select-dropdown::-webkit-scrollbar-thumb,
+            .dropdown-menu::-webkit-scrollbar-thumb,
+            [class*="select-dropdown"]::-webkit-scrollbar-thumb,
+            [class*="dropdown-menu"]::-webkit-scrollbar-thumb,
+            [class*="select-options"]::-webkit-scrollbar-thumb,
+            [class*="options-container"]::-webkit-scrollbar-thumb
+        ) {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-radius: 10px !important;
+    }
+    :global(
+            .select-dropdown::-webkit-scrollbar-thumb:hover,
+            .dropdown-menu::-webkit-scrollbar-thumb:hover,
+            [class*="select-dropdown"]::-webkit-scrollbar-thumb:hover,
+            [class*="dropdown-menu"]::-webkit-scrollbar-thumb:hover,
+            [class*="select-options"]::-webkit-scrollbar-thumb:hover,
+            [class*="options-container"]::-webkit-scrollbar-thumb:hover
+        ) {
+        background: rgba(255, 255, 255, 0.25) !important;
+    }
+    /* Firefox Scrollbar support specifically for custom dropdown containers */
+    :global(
+            .select-dropdown,
+            .dropdown-menu,
+            [class*="select-dropdown"],
+            [class*="dropdown-menu"],
+            [class*="select-options"],
+            [class*="options-container"]
+        ) {
+        scrollbar-width: thin !important;
+        scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;
     }
 </style>

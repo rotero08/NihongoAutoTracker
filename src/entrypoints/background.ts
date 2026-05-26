@@ -211,7 +211,8 @@ export default defineBackground(() => {
   /* ── End-of-Day Queue Flush ─────────────────────────────────────────────── */
 
   if (browser.alarms) {
-    browser.alarms.create('flushDaily', { periodInMinutes: 15 });
+    // Set check period to 1 minute to guarantee we hit the 23:59 local time window deterministically
+    browser.alarms.create('flushDaily', { periodInMinutes: 1 });
 
     browser.alarms.onAlarm.addListener(async (alarm) => {
       if (alarm.name !== 'flushDaily') return;
@@ -220,7 +221,8 @@ export default defineBackground(() => {
       if (!cfg.autoSendEndOfDay) return;
 
       const now = new Date();
-      if (now.getHours() === 23 && now.getMinutes() >= 45) {
+      // Execute exactly at 23:59 of local time
+      if (now.getHours() === 23 && now.getMinutes() === 59) {
         const lastFlushDate = await storage.getItem('local:lastFlushDate');
         const todayStr = now.toLocaleDateString();
         if (lastFlushDate === todayStr) return;
@@ -400,7 +402,7 @@ export default defineBackground(() => {
         grad.addColorStop(1, accentHoverColor);
 
         // Vector Path 1 (Left Wing)
-        const p1 = new Path2D("M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z");
+        const p1 = new Path2D("M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z");
         ctx.fillStyle = grad;
         ctx.fill(p1);
 
@@ -467,6 +469,14 @@ export default defineBackground(() => {
   }
 
   async function updateIconForConfig(config: any) {
+    if (config?.useStaticToolbarIcon === true) {
+      console.log("[NTA Icon Diagnostic] useStaticToolbarIcon is enabled. Setting default static brand icon.");
+      const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
+      const path = isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png';
+      actionAPI.setIcon({ path }).catch(() => { });
+      return;
+    }
+
     const themeName = config?.selectedThemeId ?? config?.theme ?? 'dark-amber';
     let colors: any = null;
     let isBackgroundDark = true;

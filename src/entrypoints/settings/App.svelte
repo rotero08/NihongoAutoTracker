@@ -122,6 +122,7 @@
       const applyTheme = (c: any) => {
         const theme = c?.theme ?? "nihongo";
         const font = c?.font ?? "sans";
+        const useStaticInPageLogo = c?.useStaticInPageLogo === true;
         if (
           theme.startsWith("custom_") ||
           theme.startsWith("custom-") ||
@@ -137,12 +138,16 @@
               t.id === "custom-" + themeId,
           );
           if (targetTheme) {
-            applyThemeToDocument("dark-amber", font, targetTheme.colors);
+            applyThemeToDocument("dark-amber", font, targetTheme.colors, {
+              useStaticInPageLogo,
+            });
           } else {
-            applyThemeToDocument("dark-amber", font);
+            applyThemeToDocument("dark-amber", font, undefined, {
+              useStaticInPageLogo,
+            });
           }
         } else {
-          applyThemeToDocument(theme, font);
+          applyThemeToDocument(theme, font, undefined, { useStaticInPageLogo });
         }
       };
 
@@ -166,6 +171,7 @@
         const val = changes["config"].newValue as any;
         const nextTheme = val?.theme ?? "nihongo";
         const nextFont = val?.font ?? "sans";
+        const useStaticInPageLogo = val?.useStaticInPageLogo === true;
         if (
           nextTheme.startsWith("custom_") ||
           nextTheme.startsWith("custom-") ||
@@ -179,12 +185,18 @@
             (t: any) => t.id === themeId || t.id === nextTheme,
           );
           if (targetTheme) {
-            applyThemeToDocument("dark-amber", nextFont, targetTheme.colors);
+            applyThemeToDocument("dark-amber", nextFont, targetTheme.colors, {
+              useStaticInPageLogo,
+            });
           } else {
-            applyThemeToDocument("dark-amber", nextFont);
+            applyThemeToDocument("dark-amber", nextFont, undefined, {
+              useStaticInPageLogo,
+            });
           }
         } else {
-          applyThemeToDocument(nextTheme, nextFont);
+          applyThemeToDocument(nextTheme, nextFont, undefined, {
+            useStaticInPageLogo,
+          });
         }
       }
     };
