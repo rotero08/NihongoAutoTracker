@@ -38,6 +38,17 @@ let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
 
+// ── Performance caches ──────────────────────────────────────────────────────
+let _readingViewCache: boolean | null = null;
+let _readingViewCacheTime = 0;
+const READING_VIEW_CACHE_TTL = 500; // ms
+
+let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
+
+let _mutationRAF: number | null = null;
+let _lastSectionCheckTime = 0;
+let _lastThemeCheckTime = 0;
+
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
 
@@ -145,19 +156,27 @@ function getReaderName() {
 }
 
 function isReadingViewActive(): boolean {
+  const now = Date.now();
+  if (_readingViewCache !== null && (now - _readingViewCacheTime) < READING_VIEW_CACHE_TTL) {
+    return _readingViewCache;
+  }
   const path = window.location.pathname;
   if (path.includes('/settings') || path === '/' || path === '') {
+    _readingViewCache = false;
+    _readingViewCacheTime = now;
     return false;
   }
-  const hasContainer = !!(
-    document.querySelector('.book-content-container') ||
-    document.querySelector('.book-content') ||
-    document.querySelector('[data-ref="container"]') ||
-    document.querySelector('.reader-container') ||
-    document.querySelector('#reader-container') ||
-    document.querySelector('.reader-wrapper')
+  const hasContainer = !!document.querySelector(
+    '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper'
   );
+  _readingViewCache = hasContainer;
+  _readingViewCacheTime = now;
   return hasContainer;
+}
+
+/** Invalidate the reading view cache when we know the DOM has meaningfully changed */
+function invalidateReadingViewCache() {
+  _readingViewCache = null;
 }
 
 async function liveSyncQueue() {
@@ -268,76 +287,36 @@ async function saveSessionAndQueue() {
 function findTTUInsertPoint(): { el: Element, pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
+  // Return cached result if the target element is still in the DOM
+  if (_insertPointCache && _insertPointCache.el.isConnected) {
+    return _insertPointCache;
+  }
+
   const footer = document.getElementById('ttu-page-footer');
   if (footer) {
     const flexGroups = Array.from(footer.children).filter(el =>
       el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
-    if (flexGroups.length > 0) return { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' };
-    return { el: footer, pos: 'afterbegin' };
+    if (flexGroups.length > 0) { _insertPointCache = { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' }; return _insertPointCache; }
+    _insertPointCache = { el: footer, pos: 'afterbegin' };
+    return _insertPointCache;
   }
 
   const progressDiv = document.querySelector('div[title="Click to copy Progress"]');
   if (progressDiv && progressDiv.parentElement) {
     const container = progressDiv.parentElement;
     const leftGroup = Array.from(container.children).find(el => el.classList.contains('flex') && el.classList.contains('h-full') && el.id !== 'nt-ttu-chrono-wrapper');
-    if (leftGroup) return { el: leftGroup, pos: 'beforeend' };
-    return { el: container, pos: 'afterbegin' };
+    if (leftGroup) { _insertPointCache = { el: leftGroup, pos: 'beforeend' }; return _insertPointCache; }
+    _insertPointCache = { el: container, pos: 'afterbegin' };
+    return _insertPointCache;
   }
 
   const adapter = getActiveReaderAdapter();
   if (adapter) {
     const pt = adapter.findInsertPoint();
-    if (pt) return pt;
+    if (pt) { _insertPointCache = pt; return _insertPointCache; }
   }
 
-  return null;
-}
-
-function getTtuNativeProgressFromDom(): { current: number; total: number } | null {
-  try {
-    const copyDivs = Array.from(document.querySelectorAll('div[title="Click to copy Progress"]'));
-    const visibleCopyDiv = copyDivs.find(el => {
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return rect.width > 0 &&
-        rect.height > 0 &&
-        style.visibility !== 'hidden' &&
-        style.display !== 'none' &&
-        style.opacity !== '0';
-    });
-
-    if (visibleCopyDiv && visibleCopyDiv.textContent) {
-      const text = visibleCopyDiv.textContent;
-      const match = text.replace(/,/g, '').match(/(\d+)\s*\/\s*(\d+)/);
-      if (match) {
-        return { current: parseInt(match[1], 10), total: parseInt(match[2], 10) };
-      }
-    }
-
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = walker.nextNode())) {
-      const parent = n.parentElement;
-      if (!parent) continue;
-
-      const val = (n.nodeValue || '').trim();
-      if (val.includes('/') && !parent.closest('#nt-ttu-chrono-wrapper, #nt-overlay, script, style')) {
-        const rect = parent.getBoundingClientRect();
-        const style = getComputedStyle(parent);
-        if (rect.width > 0 &&
-          rect.height > 0 &&
-          style.visibility !== 'hidden' &&
-          style.display !== 'none' &&
-          style.opacity !== '0') {
-          const text = val.replace(/,/g, '');
-          const match = text.match(/^(\d+)\s*\/\s*(\d+)/);
-          if (match) {
-            return { current: parseInt(match[1], 10), total: parseInt(match[2], 10) };
-          }
-        }
-      }
-    }
-  } catch (e) { }
+  _insertPointCache = null;
   return null;
 }
 
@@ -464,28 +443,12 @@ async function setupTTUChronometer() {
 
           if (stateRefs.globalSessionStartChar === -1) {
             stateRefs.globalSessionStartChar = current;
-            addDebugLog('INFO', 'TextTracker', 'Set session starting baseline', { baseline: current });
           }
 
           let diff = current - stateRefs.globalSessionStartChar;
           if (diff < 0) diff = 0;
 
-          let calculatedChars = diff + stateRefs.globalManualCharOffset;
-
-          const nativeTtuProgress = getTtuNativeProgressFromDom();
-
-          ttuState.chars = calculatedChars;
-
-          addDebugLog('INFO', 'TextTracker', 'Chronometer Tick Progress', {
-            calculatedCurrentInActiveSection: current,
-            startingSessionBaseline: stateRefs.globalSessionStartChar,
-            diffReadThisSession: diff,
-            manualOffsetCalculated: stateRefs.globalManualCharOffset,
-            finalCalculatedChars: ttuState.chars,
-            activeSection: stateRefs.lastSectionIndex,
-            nativeTtuProgressCurrent: nativeTtuProgress ? nativeTtuProgress.current : 'not found',
-            nativeTtuProgressTotal: nativeTtuProgress ? nativeTtuProgress.total : 'not found'
-          });
+          ttuState.chars = diff + stateRefs.globalManualCharOffset;
         }
         stateRefs.globalLastTick = now;
 
@@ -530,11 +493,14 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
-  const observer = new MutationObserver(() => {
+  const handleMutations = () => {
+    _mutationRAF = null;
+    invalidateReadingViewCache();
+
     // 1. TTU Chrono insert check
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    const target = findTTUInsertPoint();
     if (isReadingViewActive()) {
+      const target = findTTUInsertPoint();
       if (target) {
         const readerCfg = getReaderConfig(currentConfig);
         if (readerCfg.enabled !== false) {
@@ -544,88 +510,82 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
             const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
             if (wrapper.parentElement !== expectedParent) {
               target.el.insertAdjacentElement(target.pos, wrapper);
-              addDebugLog('INFO', 'TextTracker', 'Moved chrono wrapper to correct insert point');
             }
           }
         }
       }
     } else {
-      if (wrapper) {
-        wrapper.remove();
-        addDebugLog('INFO', 'TextTracker', 'Removed chrono wrapper as reading view is inactive');
-      }
+      if (wrapper) wrapper.remove();
     }
 
     if (ttuState.running && isReadingViewActive()) {
       setupProgressObserver();
     }
 
-    // 2. High-Performance Container Transition detector.
-    const charData = extractAdvancedCharCount();
-    if (charData !== null) {
-      const { total, sectionIndex, isPaginated } = charData;
-      const activeSection = sectionIndex !== null ? sectionIndex : -1;
+    // 2. Section transition detector (throttled to max once per 300ms)
+    const now = Date.now();
+    if ((now - _lastSectionCheckTime) >= 300) {
+      _lastSectionCheckTime = now;
+      const charData = extractAdvancedCharCount();
+      if (charData !== null) {
+        const { total, sectionIndex, isPaginated } = charData;
+        const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-      if (stateRefs.lastSectionIndex !== activeSection) {
-        // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
-        if (activeSection === -1) {
-          if (!isReadingViewActive()) {
-            stateRefs.lastSectionIndex = -1;
-            stateRefs.globalManualCharOffset = 0;
-            stateRefs.visitedSections.clear();
-            addDebugLog('INFO', 'TextTracker', 'Reset dynamic tracking baseline to 0. Cleared visitedSections cache.');
-            recalculateChars();
+        if (stateRefs.lastSectionIndex !== activeSection) {
+          // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
+          if (activeSection === -1) {
+            if (!isReadingViewActive()) {
+              stateRefs.lastSectionIndex = -1;
+              stateRefs.globalManualCharOffset = 0;
+              stateRefs.visitedSections.clear();
+              recalculateChars();
+            }
           } else {
-            addDebugLog('INFO', 'TextTracker', 'Temporary non-text page encountered within active session. Preserving state.');
-          }
-        } else {
-          addDebugLog('INFO', 'TextTracker', 'Section transition detected', {
-            from: stateRefs.lastSectionIndex,
-            to: activeSection
-          });
-
-          if (isPaginated) {
-            stateRefs.globalSessionStartChar = 0;
-            addDebugLog('INFO', 'TextTracker', 'Paginated transition. Initialized baseline to 0.');
-          } else {
-            stateRefs.globalSessionStartChar = -1;
-          }
-
-          if (stateRefs.lastSectionIndex === -1) {
-            stateRefs.lastSectionIndex = activeSection;
-            stateRefs.lastSectionTotal = total;
-            stateRefs.visitedSections.set(activeSection, 0);
-          }
-
-          if (stateRefs.lastSectionIndex !== activeSection) {
-            if (activeSection > stateRefs.lastSectionIndex) {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-              } else {
-                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-              }
+            if (isPaginated) {
+              stateRefs.globalSessionStartChar = 0;
             } else {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+              stateRefs.globalSessionStartChar = -1;
+            }
+
+            if (stateRefs.lastSectionIndex === -1) {
+              stateRefs.lastSectionIndex = activeSection;
+              stateRefs.lastSectionTotal = total;
+              stateRefs.visitedSections.set(activeSection, 0);
+            }
+
+            if (stateRefs.lastSectionIndex !== activeSection) {
+              if (activeSection > stateRefs.lastSectionIndex) {
+                if (stateRefs.visitedSections.has(activeSection)) {
+                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                } else {
+                  stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                }
               } else {
-                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                if (stateRefs.visitedSections.has(activeSection)) {
+                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                } else {
+                  stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                }
               }
             }
-          }
 
-          stateRefs.lastSectionIndex = activeSection;
-          stateRefs.lastSectionTotal = total;
-          recalculateChars();
+            stateRefs.lastSectionIndex = activeSection;
+            stateRefs.lastSectionTotal = total;
+            recalculateChars();
+          }
         }
       }
     }
 
-    // 3. Real-time background color theme change tracking.
-    const activeTheme = getActiveThemeName(currentConfig);
-    if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
-      updateActiveThemeStyles(activeTheme, currentConfig);
+    // 3. Theme change tracking (throttled to max once per 2s)
+    if ((now - _lastThemeCheckTime) >= 2000) {
+      _lastThemeCheckTime = now;
+      const activeTheme = getActiveThemeName(currentConfig);
+      if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
+        updateActiveThemeStyles(activeTheme, currentConfig);
+      }
     }
 
     // 4. Non-reader Overlay recovery check
@@ -634,10 +594,16 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
         const overlay = document.getElementById('nt-overlay');
         if (!overlay) {
-          addDebugLog('INFO', 'TextTracker', 'Overlay removed by host page DOM changes. Rebuilding overlay...');
           checkAndRunOverlay(currentConfig);
         }
       }
+    }
+  };
+
+  const observer = new MutationObserver(() => {
+    // Debounce: coalesce all mutations in a single animation frame
+    if (_mutationRAF === null) {
+      _mutationRAF = requestAnimationFrame(handleMutations);
     }
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });

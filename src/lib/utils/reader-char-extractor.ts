@@ -19,6 +19,14 @@ interface GeometryCache {
 }
 const paragraphGeometryCache = new WeakMap<Element, GeometryCache>();
 
+// Cache for layout properties that rarely change during a reading session
+let _layoutCacheElement: Element | null = null;
+let _layoutCacheTime = 0;
+let _layoutCacheWritingMode = '';
+let _layoutCacheColumnWidth = '';
+let _layoutCacheColumnCount = '';
+const LAYOUT_CACHE_TTL = 1000; // ms
+
 export interface AdvancedCharData {
     current: number;
     total: number;
@@ -79,6 +87,24 @@ function getSectionIndex(container: Element): number | null {
 }
 
 /**
+ * Returns cached layout properties for a content container.
+ * Avoids calling getComputedStyle on every tick.
+ */
+function getCachedLayoutProperties(contentContainer: Element): { writingMode: string; columnWidth: string; columnCount: string } {
+    const now = Date.now();
+    if (_layoutCacheElement === contentContainer && (now - _layoutCacheTime) < LAYOUT_CACHE_TTL) {
+        return { writingMode: _layoutCacheWritingMode, columnWidth: _layoutCacheColumnWidth, columnCount: _layoutCacheColumnCount };
+    }
+    const computedStyle = getComputedStyle(contentContainer);
+    _layoutCacheElement = contentContainer;
+    _layoutCacheTime = now;
+    _layoutCacheWritingMode = computedStyle.writingMode;
+    _layoutCacheColumnWidth = computedStyle.columnWidth || '';
+    _layoutCacheColumnCount = computedStyle.columnCount || '';
+    return { writingMode: _layoutCacheWritingMode, columnWidth: _layoutCacheColumnWidth, columnCount: _layoutCacheColumnCount };
+}
+
+/**
  * Extracts character counts performantly using binary search, element caching,
  * and layout-thrashing guards.
  */
@@ -96,16 +122,13 @@ export function extractAdvancedCharCount(
         }) as Element[];
 
         const contentContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
-        const computedStyle = getComputedStyle(contentContainer);
-        const writingMode = computedStyle.writingMode;
+        const { writingMode, columnWidth, columnCount } = getCachedLayoutProperties(contentContainer);
 
         const isVerticalText =
             writingMode === 'vertical-rl' ||
             writingMode === 'vertical-lr' ||
             readerContainer.classList.contains('book-content--writing-vertical-rl');
 
-        const columnWidth = computedStyle.columnWidth || '';
-        const columnCount = computedStyle.columnCount || '';
         const isPaginated =
             (columnWidth !== 'auto' && columnWidth !== 'none' && columnWidth !== '') ||
             (columnCount !== 'auto' && columnCount !== 'none' && columnCount !== '') ||
