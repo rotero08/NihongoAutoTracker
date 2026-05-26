@@ -14,7 +14,11 @@ import App from './App.svelte';
 
 /* ── Dev-mode mock data injection ─────────────────────────────────────────── */
 async function injectMockData() {
-  if (import.meta.env.DEV && import.meta.env.VITE_MOCK_DATA === 'true') {
+  const isDev = typeof import.meta.env !== 'undefined' && import.meta.env.DEV;
+  const mockDataEnabled = typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MOCK_DATA === 'true';
+  const ntApiKey = typeof import.meta.env !== 'undefined' ? import.meta.env.VITE_NT_API_KEY : undefined;
+
+  if (isDev && mockDataEnabled) {
     // Read both queues in parallel to save storage IPC round-trip latency
     const [existingVideo, existingReading] = await Promise.all([
       videoQueueStorage.getValue(),
@@ -35,10 +39,10 @@ async function injectMockData() {
   }
 
   /* Pre-populate API key from env if not set */
-  if (import.meta.env.DEV && import.meta.env.VITE_NT_API_KEY) {
+  if (isDev && ntApiKey) {
     const cfg = await configStorage.getValue();
     if (!cfg?.apiKey) {
-      await configStorage.setValue({ ...cfg, apiKey: import.meta.env.VITE_NT_API_KEY });
+      await configStorage.setValue({ ...cfg, apiKey: ntApiKey });
       console.log('[DEV] API key pre-populated from .env');
     }
   }
@@ -49,7 +53,8 @@ async function injectMockData() {
 mount(App, { target: document.getElementById('app')! });
 
 // Run development mock data injection asynchronously so it doesn't block the critical mounting path
-if (import.meta.env.DEV) {
+const isDev = typeof import.meta.env !== 'undefined' && import.meta.env.DEV;
+if (isDev) {
   injectMockData().catch((err) => {
     console.error('[DEV] Failed to inject mock data:', err);
   });

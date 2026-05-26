@@ -21,6 +21,14 @@
   import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
 
+  // Ensure browser API is always safely defined across different extension environments
+  const browser: any =
+    typeof (globalThis as any).browser !== "undefined"
+      ? (globalThis as any).browser
+      : typeof (globalThis as any).chrome !== "undefined"
+        ? (globalThis as any).chrome
+        : undefined;
+
   /* ── Reactive state ── */
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
@@ -222,9 +230,11 @@
   /* ── Data loading ── */
   async function loadData() {
     // Execute critical tab query and primary storage queries concurrently to prevent waterfall delay
-    const tabPromise = browser.tabs
-      .query({ active: true, currentWindow: true })
-      .catch(() => []);
+    const tabPromise = (
+      browser?.tabs?.query
+        ? browser.tabs.query({ active: true, currentWindow: true })
+        : Promise.resolve([])
+    ).catch(() => []);
     const vQueuePromise = videoQueueStorage.getValue().catch(() => []);
     const rQueuePromise = readingQueueStorage.getValue().catch(() => []);
     const cfgPromise = (configStorage.getValue() as Promise<any>).catch(
@@ -250,7 +260,7 @@
       try {
         // Fall back gracefully between WXT's local prefix and standard browser.storage keys
         detectedColors = await storage.getItem(`local:readerColors:${host}`);
-        if (!detectedColors) {
+        if (!detectedColors && browser?.storage?.local) {
           const localStore = await browser.storage.local.get(
             `readerColors:${host}`,
           );
@@ -495,12 +505,19 @@
             .then((colors) => {
               detectedColors = colors;
               if (!detectedColors) {
-                browser.storage.local
-                  .get(`readerColors:${host}`)
-                  .then((localStore) => {
-                    detectedColors = localStore[`readerColors:${host}`];
-                    applyInitialTheme(val, activeUrl, detectedColors);
-                  });
+                if (browser?.storage?.local) {
+                  browser.storage.local
+                    .get(`readerColors:${host}`)
+                    .then((localStore: any) => {
+                      detectedColors = localStore[`readerColors:${host}`];
+                      applyInitialTheme(val, activeUrl, detectedColors);
+                    })
+                    .catch(() => {
+                      applyInitialTheme(val, activeUrl, null);
+                    });
+                } else {
+                  applyInitialTheme(val, activeUrl, null);
+                }
               } else {
                 applyInitialTheme(val, activeUrl, detectedColors);
               }
@@ -513,7 +530,10 @@
         }
       }
     };
-    browser.storage.onChanged.addListener(storageListener);
+
+    if (browser?.storage?.onChanged) {
+      browser.storage.onChanged.addListener(storageListener);
+    }
 
     const clickOutsideOrDelete = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -560,7 +580,9 @@
 
     return () => {
       window.removeEventListener("click", clickOutsideOrDelete, true);
-      browser.storage.onChanged.removeListener(storageListener);
+      if (browser?.storage?.onChanged) {
+        browser.storage.onChanged.removeListener(storageListener);
+      }
     };
   });
 
@@ -672,7 +694,9 @@
   async function openSettings() {
     // Delegate tab search and switching to background thread to prevent UI freezing.
     // We let the native browser focus transition close the popup naturally to prevent visual flicker.
-    browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
+    if (browser?.runtime?.sendMessage) {
+      browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
+    }
   }
 
   function showStatus(msg: string, err = false) {
