@@ -54,11 +54,11 @@ if (typeof window !== 'undefined') {
  * - \u25CF (● - Black Circle placeholder)
  * - \u25A0 (■ - Black Square placeholder)
  * - \u25A1 (□ - White Square placeholder)
- * - \u00D7 (× - Multiplication sign censor mark)
- * - \u2715 (✕ - Multiplication X censor mark)
- * - \uFF0A (＊ - Fullwidth Asterisk scene break/placeholder)
+ * 
+ * Note: Multiplication and cross-style censor markers (such as \u00D7 (×), \u2715 (✕), or \uFF0A (＊)) 
+ * are intentionally excluded to keep them from inflating reading statistics.
  */
-const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1\u00D7\u2715\uFF0A]/gu;
+const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
 
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.

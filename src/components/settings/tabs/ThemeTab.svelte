@@ -41,7 +41,7 @@
     let selectedFont = $state("sans");
     let lastActivePresetTheme = $state("dark-amber");
 
-    // Dynamic brand preferences
+    // Adaptive brand preferences
     let useStaticToolbarIcon = $state(false);
     let useStaticInPageLogo = $state(false);
 
@@ -1378,7 +1378,7 @@
 <div style="display: flex; gap: 32px; align-items: flex-start; width: 100%;">
     <!-- Left form column (containing configurations locked to 600px maximum width) -->
     <div
-        style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding-bottom: 180px;"
+        style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding-bottom: 24px;"
     >
         <div class="tab-head" style="margin-bottom: 0px; padding-bottom: 8px;">
             <h2>Appearance</h2>
@@ -1426,7 +1426,7 @@
                                 ? 'var(--color-accent-text)'
                                 : 'var(--color-text-muted)'}; padding: 0;"
                             onclick={() => handleToolbarIconPref(false)}
-                            >Dynamic</button
+                            >Adaptive</button
                         >
                         <button
                             type="button"
@@ -1696,7 +1696,7 @@
                             >app.yatsu.moe</span
                         >
                     </div>
-                    <div style="width: 200px;">
+                    <div style="width: 200px;" class="dropup-select">
                         <CustomSelect
                             options={readerThemeOptionsDerived}
                             value={yatsuThemeOverrideToShow}
@@ -1783,7 +1783,7 @@
                             >YomiYasu Reader</span
                         >
                     </div>
-                    <div style="width: 200px;">
+                    <div style="width: 200px;" class="dropup-select">
                         <CustomSelect
                             options={readerThemeOptionsDerived}
                             value={yomiyasuThemeOverrideToShow}
@@ -1914,6 +1914,17 @@
         justify-content: space-between !important;
         width: 100%;
         position: relative;
+    }
+
+    /* Redirect select containers marked with .dropup-select to expand upwards */
+    :global(.dropup-select .select-dropdown),
+    :global(.dropup-select .dropdown-menu),
+    :global(.dropup-select [class*="select-dropdown"]),
+    :global(.dropup-select [class*="dropdown-menu"]),
+    :global(.dropup-select [class*="select-options"]),
+    :global(.dropup-select [class*="options-container"]) {
+        top: auto !important;
+        bottom: calc(100% + 4px) !important;
     }
 
     /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */

@@ -769,10 +769,8 @@
             ? item.mediaId || "web-reading"
             : item.mediaData?.channelId || item.channelId || "web-video",
           mediaData: item.mediaData || {},
+          volume: isRead ? Math.max(1, Number(item.volume || 1)) : undefined,
         };
-        if (isRead) {
-          payload.volume = Math.max(1, Number(item.volume || 1));
-        }
         return [payload];
       }
     }
@@ -961,7 +959,7 @@
     {#if showCompactMenu}
       <div
         class="compact-popover"
-        style="position: absolute; top: calc(100% + 6px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 10px; width: 160px; z-index: 10000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;"
+        style="position: absolute; top: calc(100% + 6px); right: 32px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 10px; width: 160px; z-index: 10000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;"
       >
         <span
           style="font-size: 9px; font-weight: bold; color: var(--color-text); text-transform: uppercase; display: block; border-bottom: 1px solid var(--color-border); padding-bottom: 4px;"
@@ -1067,15 +1065,17 @@
   {/each}
 </div>
 
-<!-- ── Queue list ── -->
-<QueueList
-  {videoQueue}
-  {readingQueue}
-  {currentFilter}
-  onStatusMessage={showStatus}
-  onConfirm={handleConfirm}
-  onRefresh={loadData}
-/>
+<!-- ── Queue list container ── -->
+<div class="queue-container">
+  <QueueList
+    {videoQueue}
+    {readingQueue}
+    {currentFilter}
+    onStatusMessage={showStatus}
+    onConfirm={handleConfirm}
+    onRefresh={loadData}
+  />
+</div>
 
 <div class="sep"></div>
 
@@ -1089,15 +1089,29 @@
 
 <style>
   /* ── Root ── */
+  :global(html) {
+    height: 100%;
+  }
   :global(body) {
     font-family: var(--font-mono);
     background: var(--color-background);
     color: var(--color-text);
     width: 380px;
+    min-height: 340px; /* Reduced minimum height boundary for more compact dimensions */
+    max-height: 600px;
     font-size: 13px;
     overflow: hidden;
     margin: 0;
     padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  :global(#app) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
   }
   :global(*, *::before, *::after) {
     box-sizing: border-box;
@@ -1111,6 +1125,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 14px;
+    flex-shrink: 0;
   }
   .brand {
     display: flex;
@@ -1184,6 +1199,7 @@
   .sep {
     height: 1px;
     background: var(--color-border);
+    flex-shrink: 0;
   }
 
   /* ── Queue header & tabs (Contrast Mapped) ── */
@@ -1192,6 +1208,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 9px 14px 6px;
+    flex-shrink: 0;
   }
   .queue-header-left {
     display: flex;
@@ -1203,19 +1220,6 @@
     font-weight: bold;
     color: var(--color-text-dimmed);
     letter-spacing: 0.1em;
-  }
-  .badge {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-accent);
-    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
-    border-radius: 8px;
-    padding: 1px 6px;
-    font-size: 10px;
-    font-weight: bold;
-  }
-  .queue-bulk {
-    display: flex;
-    gap: 6px;
   }
   .badge {
     background: color-mix(in srgb, var(--color-accent) 10%, transparent);
@@ -1263,6 +1267,7 @@
     gap: 8px;
     padding: 0 14px 8px;
     border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
   }
   .q-tab {
     background: transparent;
@@ -1286,9 +1291,37 @@
     border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
 
+  /* ── Queue container ── */
+  .queue-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* Force centered alignments for any empty queue placeholders rendered by QueueList */
+  .queue-container :global(.empty-state),
+  .queue-container :global(.empty-message),
+  .queue-container :global(.queue-empty),
+  .queue-container :global(.empty),
+  .queue-container :global([class*="empty"]),
+  .queue-container :global(.empty-msg) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    margin: auto !important;
+    flex: 1 !important;
+    height: 100% !important;
+    color: var(--color-text-muted) !important;
+  }
+
   /* ── Footer ── */
   .footer {
     padding: 9px 12px 12px;
+    flex-shrink: 0;
   }
   .open-btn {
     width: 100%;

@@ -295,7 +295,9 @@
 
             {#if templateDropdownOpen}
                 <div
-                    style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                    style="position: absolute; {compact
+                        ? 'bottom: calc(100% + 4px);'
+                        : 'top: calc(100% + 4px);'} right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
                 >
                     {#each Object.entries(THEMES) as [key, value]}
                         {@const themeObj = value as any}
