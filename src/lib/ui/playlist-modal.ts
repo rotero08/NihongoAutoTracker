@@ -1,16 +1,15 @@
 /**
  * ── Playlist Modal Interface Renderer ───────────────────────────────────────
  */
-import { getTheme } from './themes';
-import type { UITheme } from '@/lib/types';
-import { configStorage } from '@/lib/storage/config';
-import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
-import { stripVideoTitle } from '@/lib/utils/text-parsing';
+import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { JP_RE } from '@/lib/constants';
+import { configStorage } from '@/lib/storage/config';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
+import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
+import { getTheme } from './themes';
 import { injectModalStyles } from './video-modal';
-import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 
 // Loads authentic branding asset cleanly without drop shadows
 const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');

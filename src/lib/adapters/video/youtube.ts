@@ -1,6 +1,6 @@
 import type { TrackerConfig, VideoSiteAdapter } from '@/lib/types';
-import { getYouTubeChannelId, getChannelNameFallback } from '@/lib/utils/youtube-extraction';
 import { isLikelyJapanese, isMusic } from '@/lib/utils/japanese';
+import { getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 
 export const youtubeAdapter: VideoSiteAdapter = {
   name: 'YouTube',

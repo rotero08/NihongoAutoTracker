@@ -12,7 +12,7 @@ justify-content: center !important;
 height: 100% !important;
 cursor: pointer;
 vertical-align: middle !important;
-position: relative; /* Necessary for the pseudo-element hover */
+position: relative;
 }
 
 .nt-pill-visual-wrapper {
@@ -41,7 +41,7 @@ position: relative; /* Necessary for the pseudo-element hover */
   border-radius: 12px;
   background-color: transparent;
   transition: background-color 0.1s;
-  z-index: -1; /* Sits behind the text but above the main pill bg */
+  z-index: -1;
 }
 
 #nt-status-badge:hover .nt-pill-visual-wrapper::before {

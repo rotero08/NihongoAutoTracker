@@ -2,32 +2,31 @@
  * ── Text Tracker Content Script ──────────────────────────────────────────────
  */
 import { defineContentScript } from '#imports';
+import '@/assets/text-tracker.css';
+import { getActiveReaderAdapter } from '@/lib/adapters/readers';
+import { JP_DOMAINS_DEFAULT, JP_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
+import { addDebugLog } from '@/lib/storage/debug';
 import { readingQueueStorage } from '@/lib/storage/queues';
 import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
-import { addDebugLog } from '@/lib/storage/debug';
-import { JP_DOMAINS_DEFAULT, JP_RE } from '@/lib/constants';
-import { parseTitle } from '@/lib/utils/text-parsing';
-import { showToast } from '@/lib/utils/toast';
-import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
-import { fmt } from '@/lib/utils/time';
-import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
 import {
-  getActiveThemeName,
-  updateActiveThemeStyles,
-  getReaderConfig
-} from '@/lib/ui/text-tracker-theme-manager';
-import {
-  runOverlaySetup,
-  updatePauseIconState,
   applyOverlayPosition,
   enforceOverlayLayout,
-  injectOverlayCustomOverrides,
   getOverlayDismissed,
-  isWebsiteOverlaySkipped
+  injectOverlayCustomOverrides,
+  isWebsiteOverlaySkipped,
+  runOverlaySetup,
+  updatePauseIconState
 } from '@/lib/ui/reader-overlay';
-import '@/assets/overlay.css';
+import {
+  getActiveThemeName,
+  getReaderConfig,
+  updateActiveThemeStyles
+} from '@/lib/ui/text-tracker-theme-manager';
+import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
+import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { parseTitle } from '@/lib/utils/text-parsing';
+import { showToast } from '@/lib/utils/toast';
 
 let currentConfig: any = {};
 let isAnalyzingPage = false;
@@ -141,8 +140,9 @@ function getTTUTitle() {
       title = window.top.document.title || title;
     }
   } catch (e) { }
-  title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '');
+  title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|YomiYasu Reader)\s*/i, '');
   title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
+  title = title.replace(/^YomiYasu\s*-\s*/i, '');
   return title.trim() || document.title;
 }
 
@@ -373,7 +373,7 @@ async function checkAndRunOverlay(cfg: any) {
   if (window.self !== window.top) return;
   if (isWebsiteOverlaySkipped(cfg)) return;
 
-  // Explicitly skip on Manabe Reader's top-level domain to avoid generic overlay injection
+  // Explicitly skip on YomiYasu Reader's top-level domain to avoid generic overlay injection
   if (window.location.hostname.includes('manga.manabe.es')) return;
 
   if (isAnalyzingPage) return;

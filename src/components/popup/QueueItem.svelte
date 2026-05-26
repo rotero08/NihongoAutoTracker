@@ -6,17 +6,12 @@
 -->
 <script lang="ts">
   import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
-  import { configStorage } from "@/lib/storage/config";
   import {
     resolveVideoChannelMedia,
     submitLog,
   } from "@/lib/api/nihongotracker";
-  import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
-  import {
-    stripVideoTitle,
-    parseTitleForUI,
-    escapeHtml,
-  } from "@/lib/utils/text-parsing";
+  import { type AniListSearchResult } from "@/lib/api/anilist";
+  import { stripVideoTitle, parseTitleForUI } from "@/lib/utils/text-parsing";
   import { toLocalDT } from "@/lib/utils/time";
   import QueueItemSessions from "./QueueItemSessions.svelte";
   import SearchDropdown from "./SearchDropdown.svelte";
@@ -452,7 +447,9 @@
           onclick={handleUnlink}
           onmouseenter={() => (isUnlinkHovered = true)}
           onmouseleave={() => (isUnlinkHovered = false)}
-          style={isUnlinkHovered ? "color: var(--color-error)" : "color: var(--color-success)"}
+          style={isUnlinkHovered
+            ? "color: var(--color-error)"
+            : "color: var(--color-success)"}
         >
           {isUnlinkHovered ? "✗" : "✓"}
         </button>

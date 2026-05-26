@@ -12,13 +12,13 @@
  */
 
 import { defineBackground } from '#imports';
-import { storage } from 'wxt/utils/storage';
 import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
 import { notify } from '@/lib/api/youtube';
-import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';
+import { JP_ALL_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
-import { JP_ALL_RE } from '@/lib/constants';
+import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
+import { storage } from 'wxt/utils/storage';
 
 export default defineBackground(() => {
   /* ── Context Menu Creation ──────────────────────────────────────────────── */

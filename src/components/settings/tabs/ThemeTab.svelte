@@ -41,10 +41,13 @@
     let selectedFont = $state("sans");
     let lastActivePresetTheme = $state("dark-amber");
 
+    // Toggle controlling whether the popup inherits reader themes when browsing reader sites
+    let syncPopupWithReaderTheme = $state(true);
+
     // Fallbacks to keep showing the last valid selection while editing unnamed themes
     let lastActiveTtuOverride = $state("global");
     let lastActiveYatsuOverride = $state("global");
-    let lastActiveManabeOverride = $state("global");
+    let lastActiveYomiyasuOverride = $state("global");
 
     // Live custom themes storage
     let customThemes = $state<CustomTheme[]>([]);
@@ -59,18 +62,18 @@
         global: true,
         ttu: true,
         yatsu: true,
-        manabe: true,
+        yomiyasu: true,
     });
 
     let ttuThemeOverride = $state("global");
     let yatsuThemeOverride = $state("global");
-    let manabeThemeOverride = $state("global");
+    let yomiyasuThemeOverride = $state("global");
 
     // Preview & Dropdown Visibility States
     let templateDropdownOpen = $state(false);
     let ttuTemplateDropdownOpen = $state(false);
     let yatsuTemplateDropdownOpen = $state(false);
-    let manabeTemplateDropdownOpen = $state(false);
+    let yomiyasuTemplateDropdownOpen = $state(false);
 
     // Navigation lock state
     let isProceeding = false;
@@ -121,11 +124,11 @@
             : yatsuThemeOverride,
     );
 
-    const manabeThemeOverrideToShow = $derived(
-        isCustomThemeId(manabeThemeOverride) &&
-            !customThemes.find((t) => t.id === manabeThemeOverride)?.name
-            ? lastActiveManabeOverride
-            : manabeThemeOverride,
+    const yomiyasuThemeOverrideToShow = $derived(
+        isCustomThemeId(yomiyasuThemeOverride) &&
+            !customThemes.find((t) => t.id === yomiyasuThemeOverride)?.name
+            ? lastActiveYomiyasuOverride
+            : yomiyasuThemeOverride,
     );
 
     // Determine target fallback values for previews based strictly on currently open editor
@@ -136,8 +139,9 @@
               ? ttuThemeOverride
               : !isCollapsed["yatsu"] && isCustomThemeId(yatsuThemeOverride)
                 ? yatsuThemeOverride
-                : !isCollapsed["manabe"] && isCustomThemeId(manabeThemeOverride)
-                  ? manabeThemeOverride
+                : !isCollapsed["yomiyasu"] &&
+                    isCustomThemeId(yomiyasuThemeOverride)
+                  ? yomiyasuThemeOverride
                   : "",
     );
 
@@ -258,7 +262,7 @@
         });
     }
 
-    // Dynically style and decorate custom options inside dropdown with extreme right deletion cross
+    // Dynamically style and decorate custom options inside dropdown with extreme right deletion cross
     function decorateDropdownOptions() {
         const options = document.querySelectorAll(
             ".select-option, .option, [class*='option']",
@@ -350,10 +354,10 @@
             yatsuThemeOverride = lastActiveYatsuOverride;
         }
         if (
-            isCustomThemeId(manabeThemeOverride) &&
-            !customThemes.some((t) => t.id === manabeThemeOverride)
+            isCustomThemeId(yomiyasuThemeOverride) &&
+            !customThemes.some((t) => t.id === yomiyasuThemeOverride)
         ) {
-            manabeThemeOverride = lastActiveManabeOverride;
+            yomiyasuThemeOverride = lastActiveYomiyasuOverride;
         }
     }
 
@@ -366,7 +370,7 @@
             templateDropdownOpen = false;
             ttuTemplateDropdownOpen = false;
             yatsuTemplateDropdownOpen = false;
-            manabeTemplateDropdownOpen = false;
+            yomiyasuTemplateDropdownOpen = false;
         }
 
         // 1. Intercept Sidebar tab switching if there are unsaved changes
@@ -453,9 +457,9 @@
             (isCustomThemeId(yatsuThemeOverride) &&
                 !customThemes.some((t) => t.id === yatsuThemeOverride) &&
                 isThemeModified(yatsuThemeOverride)) ||
-            (isCustomThemeId(manabeThemeOverride) &&
-                !customThemes.some((t) => t.id === manabeThemeOverride) &&
-                isThemeModified(manabeThemeOverride)),
+            (isCustomThemeId(yomiyasuThemeOverride) &&
+                !customThemes.some((t) => t.id === yomiyasuThemeOverride) &&
+                isThemeModified(yomiyasuThemeOverride)),
     );
 
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -573,10 +577,10 @@
             cfg.yatsuThemeOverrideId = themeId;
             cfg.yatsuCustomColors = { ...draftColors };
         }
-        if (manabeThemeOverride === themeId) {
-            cfg.manabeThemeOverride = themeId;
-            cfg.manabeThemeOverrideId = themeId;
-            cfg.manabeCustomColors = { ...draftColors };
+        if (yomiyasuThemeOverride === themeId) {
+            cfg.yomiyasuThemeOverride = themeId;
+            cfg.yomiyasuThemeOverrideId = themeId;
+            cfg.yomiyasuCustomColors = { ...draftColors };
         }
 
         await configStorage.setValue(cfg);
@@ -587,7 +591,8 @@
         }
         if (ttuThemeOverride === themeId) lastActiveTtuOverride = themeId;
         if (yatsuThemeOverride === themeId) lastActiveYatsuOverride = themeId;
-        if (manabeThemeOverride === themeId) lastActiveManabeOverride = themeId;
+        if (yomiyasuThemeOverride === themeId)
+            lastActiveYomiyasuOverride = themeId;
 
         // ALWAYS apply base stylesheet attributes BEFORE custom theme variables to prevent browser wiping values
         if (selectedTheme === themeId) {
@@ -627,8 +632,8 @@
                 ttuThemeOverride = lastActiveTtuOverride;
             if (yatsuThemeOverride === themeId)
                 yatsuThemeOverride = lastActiveYatsuOverride;
-            if (manabeThemeOverride === themeId)
-                manabeThemeOverride = lastActiveManabeOverride;
+            if (yomiyasuThemeOverride === themeId)
+                yomiyasuThemeOverride = lastActiveYomiyasuOverride;
 
             delete themeDraftColors[themeId];
             delete themeDraftNames[themeId];
@@ -682,12 +687,12 @@
             cfg.yatsuThemeOverrideId = undefined;
             cfg.yatsuCustomColors = undefined;
         }
-        if (manabeThemeOverride === themeId) {
-            manabeThemeOverride = "global";
-            lastActiveManabeOverride = "global";
-            cfg.manabeThemeOverride = "global";
-            cfg.manabeThemeOverrideId = undefined;
-            cfg.manabeCustomColors = undefined;
+        if (yomiyasuThemeOverride === themeId) {
+            yomiyasuThemeOverride = "global";
+            lastActiveYomiyasuOverride = "global";
+            cfg.yomiyasuThemeOverride = "global";
+            cfg.yomiyasuThemeOverrideId = undefined;
+            cfg.yomiyasuCustomColors = undefined;
         }
 
         cfg.customThemes = $state.snapshot(customThemes);
@@ -715,10 +720,15 @@
             cfg.ttuThemeOverrideId ?? cfg.ttuThemeOverride ?? "global";
         yatsuThemeOverride =
             cfg.yatsuThemeOverrideId ?? cfg.yatsuThemeOverride ?? "global";
-        manabeThemeOverride =
-            cfg.manabeThemeOverrideId ?? cfg.manabeThemeOverride ?? "global";
+        yomiyasuThemeOverride =
+            cfg.yomiyasuThemeOverrideId ??
+            cfg.yomiyasuThemeOverride ??
+            "global";
         selectedTheme = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
         selectedFont = cfg.font ?? "sans";
+
+        // Read popup theme syncing option from storage configuration (defaulting to true)
+        syncPopupWithReaderTheme = cfg.syncPopupWithReaderTheme !== false;
 
         // Cache last active presets and override fallback points
         if (!isCustomThemeId(selectedTheme)) {
@@ -751,14 +761,14 @@
             lastActiveYatsuOverride = yatsuThemeOverride;
         }
 
-        if (!isCustomThemeId(manabeThemeOverride)) {
-            lastActiveManabeOverride = manabeThemeOverride;
+        if (!isCustomThemeId(yomiyasuThemeOverride)) {
+            lastActiveYomiyasuOverride = yomiyasuThemeOverride;
         } else if (
             customThemes.some(
-                (t) => t.id === manabeThemeOverride && t.name.trim() !== "",
+                (t) => t.id === yomiyasuThemeOverride && t.name.trim() !== "",
             )
         ) {
-            lastActiveManabeOverride = manabeThemeOverride;
+            lastActiveYomiyasuOverride = yomiyasuThemeOverride;
         }
 
         // RECOVER UNCOMMITTED TRANSIENT DRAFTS IF PREVIOUSLY CREATED BUT NEVER SAVED TO STORAGE
@@ -802,16 +812,17 @@
             }
         }
         if (
-            isCustomThemeId(manabeThemeOverride) &&
-            !customThemes.some((t) => t.id === manabeThemeOverride)
+            isCustomThemeId(yomiyasuThemeOverride) &&
+            !customThemes.some((t) => t.id === yomiyasuThemeOverride)
         ) {
-            if (!themeDraftColors[manabeThemeOverride]) {
-                themeDraftColors[manabeThemeOverride] = cfg.manabeCustomColors
-                    ? { ...cfg.manabeCustomColors }
-                    : getThemeColors(lastActiveManabeOverride);
+            if (!themeDraftColors[yomiyasuThemeOverride]) {
+                themeDraftColors[yomiyasuThemeOverride] =
+                    cfg.yomiyasuCustomColors
+                        ? { ...cfg.yomiyasuCustomColors }
+                        : getThemeColors(lastActiveYomiyasuOverride);
             }
-            if (themeDraftNames[manabeThemeOverride] === undefined) {
-                themeDraftNames[manabeThemeOverride] = "";
+            if (themeDraftNames[yomiyasuThemeOverride] === undefined) {
+                themeDraftNames[yomiyasuThemeOverride] = "";
             }
         }
 
@@ -936,7 +947,7 @@
                 ? ttuThemeOverride
                 : reader === "yatsu"
                   ? yatsuThemeOverride
-                  : manabeThemeOverride;
+                  : yomiyasuThemeOverride;
 
         // Intercept reader dropdown transitions and warn if there are unsaved override draft edits
         if (
@@ -961,19 +972,20 @@
 
         if (reader === "ttu") ttuThemeOverride = themeName;
         if (reader === "yatsu") yatsuThemeOverride = themeName;
-        if (reader === "manabe") manabeThemeOverride = themeName;
+        if (reader === "yomiyasu") yomiyasuThemeOverride = themeName;
 
         // Track fallback override points for dropdown label display
         if (!isCustomThemeId(themeName)) {
             if (reader === "ttu") lastActiveTtuOverride = themeName;
             if (reader === "yatsu") lastActiveYatsuOverride = themeName;
-            if (reader === "manabe") lastActiveManabeOverride = themeName;
+            if (reader === "yomiyasu") lastActiveYomiyasuOverride = themeName;
         } else {
             const existing = customThemes.find((t) => t.id === themeName);
             if (existing && existing.name.trim() !== "") {
                 if (reader === "ttu") lastActiveTtuOverride = themeName;
                 if (reader === "yatsu") lastActiveYatsuOverride = themeName;
-                if (reader === "manabe") lastActiveManabeOverride = themeName;
+                if (reader === "yomiyasu")
+                    lastActiveYomiyasuOverride = themeName;
             }
         }
 
@@ -1017,8 +1029,9 @@
         lastActiveTtuOverride = "global";
         yatsuThemeOverride = "global";
         lastActiveYatsuOverride = "global";
-        manabeThemeOverride = "global";
-        lastActiveManabeOverride = "global";
+        yomiyasuThemeOverride = "global";
+        lastActiveYomiyasuOverride = "global";
+        syncPopupWithReaderTheme = true;
 
         const cfg = (await configStorage.getValue()) as any;
         await configStorage.setValue({
@@ -1031,11 +1044,12 @@
             ttuThemeOverrideId: undefined,
             yatsuThemeOverride: undefined,
             yatsuThemeOverrideId: undefined,
-            manabeThemeOverride: undefined,
-            manabeThemeOverrideId: undefined,
+            yomiyasuThemeOverride: undefined,
+            yomiyasuThemeOverrideId: undefined,
             ttuCustomColors: undefined,
             yatsuCustomColors: undefined,
-            manabeCustomColors: undefined,
+            yomiyasuCustomColors: undefined,
+            syncPopupWithReaderTheme: undefined,
         });
         clearCustomTheme();
         applyThemeToDocument("dark-amber", "sans");
@@ -1063,7 +1077,7 @@
                   ? ttuThemeOverride
                   : context === "yatsu"
                     ? yatsuThemeOverride
-                    : manabeThemeOverride;
+                    : yomiyasuThemeOverride;
 
         if (
             isCustomThemeId(currentActiveTheme) &&
@@ -1095,6 +1109,17 @@
         isCollapsed[context] = false;
     }
 
+    async function toggleSyncPopupTheme() {
+        const cfg = (await configStorage.getValue()) as any;
+        cfg.syncPopupWithReaderTheme = syncPopupWithReaderTheme;
+        await configStorage.setValue(cfg);
+        onStatus(
+            syncPopupWithReaderTheme
+                ? "✓ Theme Sync with Popup enabled"
+                : "✓ Theme Sync with Popup disabled",
+        );
+    }
+
     onMount(() => {
         load();
         window.addEventListener("beforeunload", onBeforeUnload);
@@ -1115,9 +1140,9 @@
                         val.yatsuThemeOverrideId ??
                         val.yatsuThemeOverride ??
                         "global";
-                    const nextManabe =
-                        val.manabeThemeOverrideId ??
-                        val.manabeThemeOverride ??
+                    const nextYomiyasu =
+                        val.yomiyasuThemeOverrideId ??
+                        val.yomiyasuThemeOverride ??
                         "global";
                     const nextFont = val.font ?? "sans";
 
@@ -1136,8 +1161,10 @@
                     selectedTheme = nextTheme;
                     ttuThemeOverride = nextTtu;
                     yatsuThemeOverride = nextYatsu;
-                    manabeThemeOverride = nextManabe;
+                    yomiyasuThemeOverride = nextYomiyasu;
                     selectedFont = nextFont;
+                    syncPopupWithReaderTheme =
+                        val.syncPopupWithReaderTheme !== false;
 
                     if (!isCustomThemeId(selectedTheme)) {
                         lastActivePresetTheme = selectedTheme;
@@ -1174,16 +1201,16 @@
                         lastActiveYatsuOverride = yatsuThemeOverride;
                     }
 
-                    if (!isCustomThemeId(manabeThemeOverride)) {
-                        lastActiveManabeOverride = manabeThemeOverride;
+                    if (!isCustomThemeId(yomiyasuThemeOverride)) {
+                        lastActiveYomiyasuOverride = yomiyasuThemeOverride;
                     } else if (
                         customThemes.some(
                             (t) =>
-                                t.id === manabeThemeOverride &&
+                                t.id === yomiyasuThemeOverride &&
                                 t.name.trim() !== "",
                         )
                     ) {
-                        lastActiveManabeOverride = manabeThemeOverride;
+                        lastActiveYomiyasuOverride = yomiyasuThemeOverride;
                     }
 
                     // Keep local draft configurations loaded reactively if storage change triggered updates
@@ -1233,7 +1260,7 @@
         return () => {
             window.removeEventListener("beforeunload", onBeforeUnload);
             window.removeEventListener("click", handleGlobalClick, true);
-            browser.storage.onChanged.removeListener(storageListener);
+            browser.storage.onChanged.addListener(storageListener);
             if (mainContainer) {
                 mainContainer.style.removeProperty("max-width");
             }
@@ -1348,6 +1375,23 @@
             exclusively to this reader site.
         </p>
 
+        <!-- Reader Theme Synchronization Toggle -->
+        <div class="field" style="margin-top: -4px; margin-bottom: 16px;">
+            <label class="toggle">
+                <input
+                    type="checkbox"
+                    id="sync-popup-theme"
+                    class="toggle-chk"
+                    bind:checked={syncPopupWithReaderTheme}
+                    onchange={toggleSyncPopupTheme}
+                />
+                <span class="toggle-track"
+                    ><span class="toggle-thumb"></span></span
+                >
+                Sync reader's theme to popup when browsing a reader
+            </label>
+        </div>
+
         <div
             style="display: flex; flex-direction: column; gap: 12px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px;"
         >
@@ -1429,7 +1473,9 @@
                             {themeId}
                             bind:themeColors={themeDraftColors[themeId]}
                             bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={triedSavingEmptyName[themeId]}
+                            bind:triedSavingEmptyName={
+                                triedSavingEmptyName[themeId]
+                            }
                             {customThemes}
                             compact={true}
                             onSave={saveCustomThemeChanges}
@@ -1519,7 +1565,9 @@
                             {themeId}
                             bind:themeColors={themeDraftColors[themeId]}
                             bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={triedSavingEmptyName[themeId]}
+                            bind:triedSavingEmptyName={
+                                triedSavingEmptyName[themeId]
+                            }
                             {customThemes}
                             compact={true}
                             onSave={saveCustomThemeChanges}
@@ -1531,7 +1579,7 @@
                 {/if}
             </div>
 
-            <!-- Manabe Reader Override -->
+            <!-- YomiYasu Reader Override -->
             <div style="display: flex; flex-direction: column; gap: 4px;">
                 <div
                     style="display: flex; justify-content: space-between; align-items: center; gap: 16px;"
@@ -1539,24 +1587,21 @@
                     <div style="display: flex; flex-direction: column;">
                         <span
                             style="font-weight: 600; font-size: 12.5px; color: var(--color-text);"
-                            >Manabe Reader</span
-                        >
-                        <span class="hint" style="margin: 0; font-size: 11px;"
-                            >manga.manabe.es</span
+                            >YomiYasu Reader</span
                         >
                     </div>
                     <div style="width: 200px;">
                         <CustomSelect
                             options={readerThemeOptionsDerived}
-                            value={manabeThemeOverrideToShow}
-                            onChange={(v) => saveReaderOverride("manabe", v)}
+                            value={yomiyasuThemeOverrideToShow}
+                            onChange={(v) => saveReaderOverride("yomiyasu", v)}
                             label="Override Theme"
                             compact={false}
                         />
                     </div>
                 </div>
-                {#if isCustomThemeId(manabeThemeOverride)}
-                    {@const themeId = manabeThemeOverride}
+                {#if isCustomThemeId(yomiyasuThemeOverride)}
+                    {@const themeId = yomiyasuThemeOverride}
 
                     <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
                     {@const activeAccentColor =
@@ -1569,11 +1614,11 @@
                     {@const activeBgColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
-                    {#if isCollapsed["manabe"]}
+                    {#if isCollapsed["yomiyasu"]}
                         <button
                             class="btn btn-ghost"
                             style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse("manabe")}
+                            onclick={() => handleUncollapse("yomiyasu")}
                         >
                             <span
                                 style="display: flex; align-items: center; gap: 2px;"
@@ -1607,13 +1652,15 @@
                             {themeId}
                             bind:themeColors={themeDraftColors[themeId]}
                             bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={triedSavingEmptyName[themeId]}
+                            bind:triedSavingEmptyName={
+                                triedSavingEmptyName[themeId]
+                            }
                             {customThemes}
                             compact={true}
                             onSave={saveCustomThemeChanges}
                             onRevert={confirmRevertThemeDraft}
                             onDelete={confirmDeleteTheme}
-                            onCollapse={() => handleCollapse("manabe")}
+                            onCollapse={() => handleCollapse("yomiyasu")}
                         />
                     {/if}
                 {/if}

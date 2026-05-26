@@ -1,6 +1,6 @@
-import { defineConfig } from 'wxt';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+import { defineConfig } from 'wxt';
 
 // Safely load the .env file before WXT processes the configuration
 try {

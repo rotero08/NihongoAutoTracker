@@ -47,7 +47,8 @@ Never forget to log a video again. The extension integrates smoothly into your v
 ### Reading & Context Menu Logging
 Track your reading progress actively and seamlessly sync with popular web readers. 
 
-* **Reader Integration:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Manabe Reader in the background.
+* **Reader Integrated Dashboard:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Yomiyasu Reader in the background.
+* **Cohesive Design:** Match the visual appearance of your dashboard and popup directly to your reader's design for a unified workspace.
 * **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time on non-reader websites (e.g. Wikipedia, Asahi Shinbun). Can be customized.
 * **Integrated Matching Logic:** Match your reading material inside the reader before sending it to the queue, ensuring every send is correctly matched.
 
@@ -70,11 +71,12 @@ Track your reading progress actively and seamlessly sync with popular web reader
   <img width="600" alt="Context menu logging showing 'Log to NihongoTracker" src="https://github.com/user-attachments/assets/229c4c16-6fe4-4b70-8923-edb5da4342ee" />
 </p>
 
-### Configurable
+### Configurable & Customizable
+* **Theme Management:** Choose from multiple pre-built themes, or create, import, and share your own custom designs.
 * **Site Filters:** Maintain Allow/Skip lists for the reading overlay to control exactly where tracking occurs.
 * **Flexible Logic:** Toggle time tracking, switch between auto and manual modes, and set playlist-specific Japanese content filters.
-* **Toggable Options:** Various toggable options to personalize your viewing and reading experience.
-* **Regex Engine:** Power users can define custom regex rules for strict control over automatic title and volume detection.
+* **Togglable Options:** Various options to personalize your viewing and reading experience.
+* **Regex Engine:** Define custom regex rules for control over automatic title and volume detection.
 * And more
 
 ## 🛠️ Installation for Development 

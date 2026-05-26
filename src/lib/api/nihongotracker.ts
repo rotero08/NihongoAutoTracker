@@ -9,8 +9,8 @@
  *          video-tracker (auto-send), text-tracker (direct-send).
  */
 
-import { addDebugLog } from '../storage/debug';
 import { configStorage } from '../storage/config';
+import { addDebugLog } from '../storage/debug';
 import { notify } from './youtube';
 
 /** Base URL for the NihongoTracker API */

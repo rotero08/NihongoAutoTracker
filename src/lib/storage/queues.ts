@@ -10,7 +10,7 @@
  */
 
 import { storage } from 'wxt/utils/storage';
-import type { QueuedVideoLog, QueuedReadingLog } from '../types';
+import type { QueuedReadingLog, QueuedVideoLog } from '../types';
 
 /**
  * Video queue — stores videos tracked by the video tracker that haven't

@@ -66,12 +66,14 @@
 <style>
   .queue-list {
     padding: 7px 10px 10px;
+    flex: 1;
     max-height: 400px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
+
   .queue-list::-webkit-scrollbar {
     width: 3px;
   }
@@ -84,5 +86,6 @@
     color: var(--color-text-dimmed, #3a4a60);
     font-size: 11px;
     padding: 22px 0;
+    margin: auto;
   }
 </style>

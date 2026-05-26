@@ -80,11 +80,13 @@
   }
 
   async function updateQueueCount() {
-    const video = await videoQueueStorage.getValue();
-    const reading = await readingQueueStorage.getValue();
+    // Parallelize queue array fetches to eliminate serial storage IPC latency
+    const [video, reading] = await Promise.all([
+      videoQueueStorage.getValue(),
+      readingQueueStorage.getValue(),
+    ]);
     queueCount = (video?.length || 0) + (reading?.length || 0);
   }
-
   function applyCustomTheme(colors: any) {
     if (!colors) return;
     const root = document.documentElement;
@@ -132,20 +134,30 @@
       activeTab = savedTab;
     }
 
-    // Load configuration values asynchronously
+    // Load configuration values concurrently in parallel
     const loadConfigAndTheme = async () => {
-      const cfg = (await configStorage.getValue()) as any;
+      const [cfg, video, reading] = await Promise.all([
+        configStorage.getValue() as Promise<any>,
+        videoQueueStorage.getValue(),
+        readingQueueStorage.getValue(),
+      ]);
+
       debugMode = cfg.debugMode ?? false;
+      queueCount = (video?.length || 0) + (reading?.length || 0);
 
       const applyTheme = (c: any) => {
         const theme = c?.theme ?? "nihongo";
         const font = c?.font ?? "sans";
-        if (theme.startsWith("custom_")) {
-          const themeId = theme.replace("custom_", "");
+        if (theme.startsWith("custom_") || theme.startsWith("custom-")) {
+          const themeId = theme.replace("custom_", "").replace("custom-", "");
           const customThemes = c?.customThemes || [];
-          // Robust custom theme matching supporting both raw and prefixed IDs
+          // Robust custom theme matching supporting both raw, underscore, and dash-prefixed IDs
           const targetTheme = customThemes.find(
-            (t: any) => t.id === themeId || t.id === theme,
+            (t: any) =>
+              t.id === themeId ||
+              t.id === theme ||
+              t.id === "custom_" + themeId ||
+              t.id === "custom-" + themeId,
           );
           if (targetTheme) {
             applyThemeToDocument("dark-amber", font, targetTheme.colors);
@@ -161,7 +173,6 @@
       };
 
       applyTheme(cfg);
-      await updateQueueCount();
 
       /* Watch storage changes dynamically */
       browser.storage.onChanged.addListener(storageListener);

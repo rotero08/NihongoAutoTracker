@@ -1,13 +1,13 @@
 /**
  * ── TTU Reader Chronometer UI Controller ─────────────────────────────────────
  */
-import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
-import { readingQueueStorage } from '@/lib/storage/queues';
-import { submitLog } from '@/lib/api/nihongotracker';
-import { showToast } from '@/lib/utils/toast';
-import { fmt } from '@/lib/utils/time';
-import { injectTTUStyles } from './reader-overlay';
 import { searchAniList } from '@/lib/api/anilist';
+import { submitLog } from '@/lib/api/nihongotracker';
+import { readingQueueStorage } from '@/lib/storage/queues';
+import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
+import { fmt } from '@/lib/utils/time';
+import { showToast } from '@/lib/utils/toast';
+import { injectTTUStyles } from './reader-overlay';
 
 export function setupTTUChronometerUI(
     pt: { el: Element; pos: InsertPosition },

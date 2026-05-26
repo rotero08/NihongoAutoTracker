@@ -16,7 +16,7 @@
   let readerDirectSend = $state(false);
   let ttuEnabled = $state(true);
   let yatsuEnabled = $state(true);
-  let manabeEnabled = $state(true);
+  let yomiyasuEnabled = $state(true);
   let regexes: Array<{ desc: string; re: string }> = $state([]);
   let newDesc = $state("");
   let newRe = $state("");
@@ -28,7 +28,7 @@
     readerDirectSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
     ttuEnabled = cfg.ttuEnabled ?? true;
     yatsuEnabled = cfg.yatsuEnabled ?? true;
-    manabeEnabled = cfg.manabeEnabled ?? true;
+    yomiyasuEnabled = cfg.yomiyasuEnabled ?? true;
     regexes = cfg.titleRegexes ?? [...DEFAULT_TITLE_REGEXES];
   }
 
@@ -104,7 +104,7 @@
       readerDirectSend: false,
       ttuEnabled: true,
       yatsuEnabled: true,
-      manabeEnabled: true,
+      yomiyasuEnabled: true,
       titleRegexes: [...DEFAULT_TITLE_REGEXES],
     });
     await load();
@@ -114,7 +114,7 @@
   function getReaderChecked(id: string) {
     if (id === "ttu") return ttuEnabled;
     if (id === "yatsu") return yatsuEnabled;
-    return manabeEnabled;
+    return yomiyasuEnabled;
   }
   function setReaderChecked(id: string, v: boolean) {
     if (id === "ttu") {
@@ -124,11 +124,11 @@
       yatsuEnabled = v;
       saveToggle("yatsuEnabled", v, v ? "✓ Yatsu enabled" : "✓ Yatsu disabled");
     } else {
-      manabeEnabled = v;
+      yomiyasuEnabled = v;
       saveToggle(
-        "manabeEnabled",
+        "yomiyasuEnabled",
         v,
-        v ? "✓ Manabe enabled" : "✓ Manabe disabled",
+        v ? "✓ YomiYasu enabled" : "✓ YomiYasu disabled",
       );
     }
   }
@@ -220,20 +220,19 @@
   </label>
 </div>
 
-<!-- Manabe -->
+<!-- YomiYasu -->
 <div class="reader-card" style="margin-bottom: 0;">
   <div class="reader-card-left">
-    <span class="reader-card-name">Manabe Reader</span>
-    <span class="reader-card-url">manga.manabe.es</span>
+    <span class="reader-card-name">YomiYasu Reader</span>
   </div>
   <label class="toggle">
     <input
       type="checkbox"
-      id="manabe-enabled"
+      id="yomiyasu-enabled"
       class="toggle-chk"
-      checked={getReaderChecked("manabe")}
+      checked={getReaderChecked("yomiyasu")}
       onchange={(e) =>
-        setReaderChecked("manabe", (e.target as HTMLInputElement).checked)}
+        setReaderChecked("yomiyasu", (e.target as HTMLInputElement).checked)}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
   </label>
@@ -259,11 +258,12 @@
   {#if regexOpen}
     <div class="sites-body open" id="regex-body" style="padding: 12px;">
       <p class="hint" style="margin-top:0; margin-bottom:12px;">
-        <strong style="color:var(--color-text)">Order Matters!</strong> Rules are
-        evaluated from top to bottom. The first regex that successfully matches
-        will be used. Put highly specific edge cases at the top, and broad
-        generic cases at the bottom. Use capture group 1 <code>(.*?)</code> to
-        extract the Title, and group 2 <code>(\d+)</code> to extract the Volume.
+        <strong style="color:var(--color-text)">Order Matters!</strong> Rules
+        are evaluated from top to bottom. The first regex that successfully
+        matches will be used. Put highly specific edge cases at the top, and
+        broad generic cases at the bottom. Use capture group 1
+        <code>(.*?)</code>
+        to extract the Title, and group 2 <code>(\d+)</code> to extract the Volume.
       </p>
       <div
         class="site-list"

@@ -41,12 +41,16 @@
   const total = $derived(videoQueue.length + readingQueue.length);
 
   export async function load() {
-    console.log("[load] Loading queues from storage...");
-    videoQueue = await videoQueueStorage.getValue();
-    readingQueue = await readingQueueStorage.getValue();
-    console.log("[load] Loaded readingQueue:", readingQueue);
-    console.log("[load] Loaded videoQueue:", videoQueue);
-    const cfg = (await configStorage.getValue()) as any;
+    console.log("[load] Loading queues concurrently from storage...");
+    // Run all storage queries concurrently to speed up tab load times
+    const [video, reading, cfg] = await Promise.all([
+      videoQueueStorage.getValue(),
+      readingQueueStorage.getValue(),
+      configStorage.getValue() as Promise<any>,
+    ]);
+
+    videoQueue = video;
+    readingQueue = reading;
     autoSendEOD = cfg.autoSendEndOfDay ?? false;
     onQueueCountChange(total);
   }

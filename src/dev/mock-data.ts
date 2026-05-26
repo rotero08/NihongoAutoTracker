@@ -1,22 +1,18 @@
 /**
+ * ── Development Mock Data ────────────────────────────────────────────────────
+ * Test data for popup/settings UI development. Injected only when
+ * VITE_MOCK_DATA=true in .env. Provides realistic queue items so you
+ * can iterate on the UI without needing real browsing sessions.
+ */
 
-    ── Development Mock Data ────────────────────────────────────────────────────
-
-    Test data for popup/settings UI development. Injected only when
-
-    VITE_MOCK_DATA=true in .env. Provides realistic queue items so you
-
-    can iterate on the UI without needing real browsing sessions.
-    */
-
-import type { QueuedVideoLog, QueuedReadingLog } from '../lib/types';
+import type { QueuedReadingLog, QueuedVideoLog } from '../lib/types';
 
 /** Sample video queue items for dev testing */
 export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
   {
     id: "mock-video-1",
     contentTitleNative: "テスト日本語チャンネル",
-    contentTitleEnglish: "",
+    contentTitleEnglish: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     time: 45,
     date: "2026-05-24T06:24:17.252Z",
     description: "【日本語】テスト動画タイトル - Episode 5",
@@ -43,7 +39,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
   {
     id: "mock-video-2",
     contentTitleNative: "ゲーム実況チャンネル",
-    contentTitleEnglish: "",
+    contentTitleEnglish: "https://www.youtube.com/watch?v=mcraft012",
     time: 22,
     date: "2026-05-23T06:24:17.252Z",
     description: "マインクラフト実況 #12 - YouTube",
@@ -58,7 +54,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
   {
     id: "db3a496f-7af0-4cdd-9a72-d8a1316ebd35",
     contentTitleNative: "Kuzuha Channel",
-    contentTitleEnglish: "",
+    contentTitleEnglish: "https://www.youtube.com/watch?v=jNVxpEiJIR4",
     time: 6,
     date: "2026-05-24T16:04:36.531Z",
     private: false,
@@ -88,7 +84,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
   {
     id: "660426ba-bfe2-4dc9-ad7d-2f8e0735bb47",
     contentTitleNative: "Teppei",
-    contentTitleEnglish: "",
+    contentTitleEnglish: "https://www.youtube.com/watch?v=JPcsLaGA7fI",
     time: 2,
     date: "2026-05-24T16:25:17.090Z",
     private: false,
@@ -188,7 +184,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     type: "reading",
     contentTitleNative: "無職転生 ～異世界行ったら本気だす～",
     contentTitleEnglish: "Mushoku Tensei: Jobless Reincarnation",
-    originalTitle: "YomiYasu - 無職転生 ～異世界行ったら本気だす～ 19",
+    originalTitle: "無職転生 ～異世界行ったら本気だす～ 19",
     description: "無職転生 ～異世界行ったら本気だす～",
     chars: 2400,
     time: 12,
@@ -216,7 +212,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
         date: "2026-05-24T08:59:46.149Z"
       }
     ],
-    readerName: "Manabe Reader",
+    readerName: "YomiYasu Reader",
     mediaId: "85470",
     mediaData: {
       contentId: "85470",

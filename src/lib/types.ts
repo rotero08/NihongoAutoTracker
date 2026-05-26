@@ -38,7 +38,7 @@ export interface TrackerConfig {
   ttuDirectSend?: boolean;
   ttuEnabled?: boolean;
   yatsuEnabled?: boolean;
-  manabeEnabled?: boolean;
+  yomiyasuEnabled?: boolean;
   titleRegexes?: Array<{ desc: string; re: string }>;
 
   /* ── Auto-Send Queue Settings ── */
@@ -56,9 +56,9 @@ export interface TrackerConfig {
   yatsuThemeOverride?: string;
   yatsuThemeOverrideId?: string;
   yatsuCustomColors?: Record<string, string>;
-  manabeThemeOverride?: string;
-  manabeThemeOverrideId?: string;
-  manabeCustomColors?: Record<string, string>;
+  yomiyasuThemeOverride?: string;
+  yomiyasuThemeOverrideId?: string;
+  yomiyasuCustomColors?: Record<string, string>;
 }
 
 /* ── Custom Theme Schemas ── */

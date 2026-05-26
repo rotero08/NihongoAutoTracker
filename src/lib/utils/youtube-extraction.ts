@@ -1,5 +1,5 @@
-import { cleanUrl } from './url';
 import { resolveVideoChannelMedia } from '../api/nihongotracker';
+import { cleanUrl } from './url';
 
 const ytApiCache: Record<string, any> = {};
 const ytApiInFlight: Record<string, Promise<any>> = {};

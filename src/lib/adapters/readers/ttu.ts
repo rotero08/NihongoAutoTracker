@@ -1,4 +1,4 @@
-import type { TrackerConfig, ReaderAdapter } from '@/lib/types';
+import type { ReaderAdapter, TrackerConfig } from '@/lib/types';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
 export const ttuAdapter: ReaderAdapter = {

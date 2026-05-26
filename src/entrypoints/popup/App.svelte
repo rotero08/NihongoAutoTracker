@@ -32,6 +32,24 @@
   let selectedFont = $state("sans");
   let showCompactMenu = $state(false);
   let customThemes = $state<any[]>([]);
+  let syncPopupWithReaderTheme = $state(true);
+  let activeUrl = $state("");
+
+  const isReaderTab = $derived(
+    activeUrl.includes("reader.ttsu.app") ||
+      activeUrl.includes("app.yatsu.moe") ||
+      activeUrl.includes("manga.manabe.es"),
+  );
+
+  async function disableSyncDirectly(e: MouseEvent) {
+    e.stopPropagation();
+    syncPopupWithReaderTheme = false;
+    const cfg = (await configStorage.getValue()) as any;
+    cfg.syncPopupWithReaderTheme = false;
+    await configStorage.setValue(cfg);
+    showStatus("✓ Synced theme unlocked");
+    applyInitialTheme(cfg, activeUrl, null);
+  }
 
   const total = $derived(videoQueue.length + readingQueue.length);
 
@@ -45,16 +63,148 @@
     ...customThemes.map((t) => ({ value: t.id, label: t.name })),
   ]);
 
+  /**
+   * Helper function to apply the theme config settings without re-fetching storage.
+   */
+  function applyInitialTheme(
+    cfg: any,
+    activeUrl: string = "",
+    detectedColors: any = null,
+  ) {
+    let themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
+    const fontVal = cfg?.font ?? "sans";
+    let matchedColors: any = null;
+
+    // Check if theme sync is on (enabled by default) and apply reader's design palette
+    if (cfg?.syncPopupWithReaderTheme !== false && activeUrl) {
+      let activeReaderTheme = "global";
+      let readerKey = "";
+
+      if (activeUrl.includes("reader.ttsu.app")) {
+        activeReaderTheme = cfg?.ttuThemeOverride ?? "global";
+        readerKey = "ttu";
+      } else if (activeUrl.includes("app.yatsu.moe")) {
+        activeReaderTheme = cfg?.yatsuThemeOverride ?? "global";
+        readerKey = "yatsu";
+      } else if (activeUrl.includes("manga.manabe.es")) {
+        activeReaderTheme = cfg?.yomiyasuThemeOverride ?? "global";
+        readerKey = "yomiyasu";
+      }
+
+      if (activeReaderTheme !== "global") {
+        if (activeReaderTheme === "match-reader") {
+          themeVal = `match-reader-${readerKey}`;
+          if (detectedColors) {
+            // Apply the actual, computed colors cached from the active reader tab
+            matchedColors = detectedColors;
+          } else {
+            // Static fallbacks in case the tab has not loaded yet
+            if (readerKey === "ttu") {
+              matchedColors = {
+                background: "#121820",
+                surface: "#1a2330",
+                surfaceAlt: "#141c27",
+                border: "#243245",
+                borderHover: "#30435c",
+                text: "#e2e8f0",
+                textMuted: "#718096",
+                accent: "#ff6b6b",
+                accentHover: "#ff8787",
+                success: "#3ddc84",
+              };
+            } else if (readerKey === "yatsu") {
+              matchedColors = {
+                background: "#16161a",
+                surface: "#242629",
+                surfaceAlt: "#1c1e21",
+                border: "#3a3f44",
+                borderHover: "#4e545b",
+                text: "#fffffe",
+                textMuted: "#94a1b2",
+                accent: "#7f5af0",
+                accentHover: "#9b7eff",
+                success: "#2cb67d",
+              };
+            } else if (readerKey === "yomiyasu") {
+              matchedColors = {
+                background: "#0f0f16",
+                surface: "#151522",
+                surfaceAlt: "#11111c",
+                border: "#202033",
+                borderHover: "#2d2d47",
+                text: "#f5f6f8",
+                textMuted: "#8e90a6",
+                accent: "#3ddc84",
+                accentHover: "#5eeba0",
+                success: "#3ddc84",
+              };
+            }
+          }
+        } else {
+          // If the reader is using a specific preset or custom theme, inherit it directly
+          themeVal = activeReaderTheme;
+        }
+      }
+    }
+
+    if (matchedColors) {
+      applyThemeToDocument("dark-amber", fontVal, matchedColors);
+      applyCustomTheme(matchedColors);
+    } else if (isCustomThemeId(themeVal)) {
+      const activeThemeObj = (cfg?.customThemes ?? []).find(
+        (t: any) => t.id === themeVal,
+      );
+      if (activeThemeObj) {
+        applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors);
+        applyCustomTheme(activeThemeObj.colors);
+      } else if (cfg?.customColors) {
+        applyThemeToDocument("dark-amber", fontVal, cfg.customColors);
+        applyCustomTheme(cfg.customColors);
+      } else {
+        clearCustomTheme();
+        applyThemeToDocument("dark-amber", fontVal);
+      }
+    } else {
+      clearCustomTheme();
+      applyThemeToDocument(themeVal, fontVal);
+    }
+  }
+
   /* ── Data loading ── */
   async function loadData() {
-    videoQueue = await videoQueueStorage.getValue();
-    readingQueue = await readingQueueStorage.getValue();
-    const cfg = (await configStorage.getValue()) as any;
+    const activeTabs = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    activeUrl = activeTabs[0]?.url || "";
+    let host = "";
+    try {
+      if (activeUrl) host = new URL(activeUrl).hostname;
+    } catch (e) {}
+
+    // Load queues, config, and any cached reader theme colors for the current host in parallel
+    const [vQueue, rQueue, cfg, localStore] = await Promise.all([
+      videoQueueStorage.getValue(),
+      readingQueueStorage.getValue(),
+      configStorage.getValue() as Promise<any>,
+      host
+        ? browser.storage.local.get(`readerColors:${host}`)
+        : Promise.resolve({} as any),
+    ]);
+
+    videoQueue = vQueue;
+    readingQueue = rQueue;
     hasApiKey = !!cfg?.apiKey;
     customThemes = cfg?.customThemes ?? [];
 
     selectedTheme = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
     selectedFont = cfg?.font ?? "sans";
+    syncPopupWithReaderTheme = cfg?.syncPopupWithReaderTheme !== false;
+
+    const detectedColors = host
+      ? (localStore as any)[`readerColors:${host}`]
+      : null;
+    applyInitialTheme(cfg, activeUrl, detectedColors);
   }
 
   function applyCustomTheme(colors: any) {
@@ -194,32 +344,8 @@
   }
 
   onMount(() => {
+    // Initiate single unified parallel load process
     loadData();
-
-    async function init() {
-      const cfg = (await configStorage.getValue()) as any;
-      const themeVal = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
-      const fontVal = cfg?.font ?? "sans";
-      if (isCustomThemeId(themeVal)) {
-        const activeThemeObj = (cfg?.customThemes ?? []).find(
-          (t: any) => t.id === themeVal,
-        );
-        if (activeThemeObj) {
-          applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors);
-          applyCustomTheme(activeThemeObj.colors);
-        } else if (cfg?.customColors) {
-          applyThemeToDocument("dark-amber", fontVal, cfg.customColors);
-          applyCustomTheme(cfg.customColors);
-        } else {
-          clearCustomTheme();
-          applyThemeToDocument("dark-amber", fontVal);
-        }
-      } else {
-        clearCustomTheme();
-        applyThemeToDocument(themeVal, fontVal);
-      }
-    }
-    init();
 
     const storageListener = (changes: any, area: string) => {
       if (
@@ -241,6 +367,7 @@
 
         selectedTheme = nextTheme;
         selectedFont = nextFont;
+        syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
 
         if (isCustomThemeId(nextTheme)) {
           const activeThemeObj = (val?.customThemes ?? []).find(
@@ -697,21 +824,63 @@
           >Appearance</span
         >
 
-        <CustomSelect
-          options={themeOptions}
-          value={selectedTheme}
-          onChange={handleQuickTheme}
-          label="Theme"
-          compact={true}
-        />
+        {#if isReaderTab && syncPopupWithReaderTheme}
+          <div
+            style="background: color-mix(in srgb, var(--color-accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; line-height: 1.25;"
+          >
+            <span
+              style="font-size: 9.5px; font-weight: bold; color: var(--color-accent); display: flex; align-items: center; gap: 4px;"
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                style="flex-shrink:0;"
+                ><rect x="3" y="11" width="18" height="11" rx="2" ry="2"
+                ></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg
+              >
+              Synced with Reader
+            </span>
+            <button
+              type="button"
+              style="background: none; border: none; color: var(--color-text); text-decoration: underline; font-family: inherit; font-size: 9px; cursor: pointer; text-align: left; padding: 0; font-weight: bold; transition: color 0.15s;"
+              onmouseenter={(e) =>
+                (e.currentTarget.style.color = "var(--color-accent)")}
+              onmouseleave={(e) =>
+                (e.currentTarget.style.color = "var(--color-text)")}
+              onclick={disableSyncDirectly}
+            >
+              Unlock Layout
+            </button>
+          </div>
+        {/if}
 
-        <CustomSelect
-          options={FONT_OPTIONS}
-          value={selectedFont}
-          onChange={handleQuickFont}
-          label="Font"
-          compact={true}
-        />
+        <div
+          style={isReaderTab && syncPopupWithReaderTheme
+            ? "opacity: 0.45; pointer-events: none; cursor: not-allowed; display: flex; flex-direction: column; gap: 10px;"
+            : "display: flex; flex-direction: column; gap: 10px;"}
+        >
+          <CustomSelect
+            options={themeOptions}
+            value={selectedTheme}
+            onChange={handleQuickTheme}
+            label="Theme"
+            compact={true}
+          />
+
+          <CustomSelect
+            options={FONT_OPTIONS}
+            value={selectedFont}
+            onChange={handleQuickFont}
+            label="Font"
+            compact={true}
+          />
+        </div>
       </div>
     {/if}
   </div>
@@ -781,11 +950,23 @@
     background: var(--color-background);
     color: var(--color-text);
     width: 380px;
+    min-height: 350px; /* Setup a stable static height to accommodate open dropdowns */
     font-size: 13px;
     overflow: hidden;
     margin: 0;
     padding: 0;
+    display: flex;
+    flex-direction: column;
   }
+
+  /* Ensure Svelte application root container occupies the full vertical viewport space */
+  :global(#app) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 350px;
+  }
+
   :global(*, *::before, *::after) {
     box-sizing: border-box;
     margin: 0;
@@ -981,6 +1162,7 @@
   .footer {
     padding: 9px 12px 12px;
   }
+
   .open-btn {
     width: 100%;
     background: none;

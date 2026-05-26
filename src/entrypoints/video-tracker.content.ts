@@ -2,26 +2,26 @@
  * ── Video Tracker Content Script ─────────────────────────────────────────────
  */
 import { defineContentScript } from '#imports';
-import { configStorage } from '@/lib/storage/config';
-import { videoQueueStorage } from '@/lib/storage/queues';
-import { addDebugLog } from '@/lib/storage/debug';
+import '@/assets/video-tracker.css';
 import { submitLog } from '@/lib/api/nihongotracker';
-import { fmtSecs } from '@/lib/utils/time';
-import { stripVideoTitle } from '@/lib/utils/text-parsing';
-import { cleanUrl } from '@/lib/utils/url';
-import { isMusic, isLikelyJapanese } from '@/lib/utils/japanese';
-import { shouldHideBadge } from '@/lib/ui/video-badge';
-import { showNTEditModal, injectModalStyles } from '@/lib/ui/video-modal';
+import { configStorage } from '@/lib/storage/config';
+import { addDebugLog } from '@/lib/storage/debug';
+import { videoQueueStorage } from '@/lib/storage/queues';
 import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
+import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
+import { shouldHideBadge } from '@/lib/ui/video-badge';
+import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
+import { isLikelyJapanese, isMusic } from '@/lib/utils/japanese';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
+import { fmtSecs } from '@/lib/utils/time';
+import { cleanUrl } from '@/lib/utils/url';
 import {
+  clearExtractionCaches,
   fetchYouTubeVideoData,
-  getYouTubeChannelId,
-  getChannelNameFallback,
   getChannelMediaData,
-  clearExtractionCaches
+  getChannelNameFallback,
+  getYouTubeChannelId
 } from '@/lib/utils/youtube-extraction';
-import { getTheme, applyThemeToDocument } from '@/lib/ui/themes';
-import '@/assets/player.css';
 
 import rawLogoSvg from '../../public/NihongoAutoTracker.svg?raw';
 const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;"');

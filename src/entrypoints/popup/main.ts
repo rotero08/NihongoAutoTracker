@@ -6,24 +6,30 @@
  * real browsing sessions.
  */
 
+import { configStorage } from '@/lib/storage/config';
+import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
 import '@/styles/app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
-import { videoQueueStorage, readingQueueStorage } from '@/lib/storage/queues';
-import { configStorage } from '@/lib/storage/config';
 
 /* ── Dev-mode mock data injection ─────────────────────────────────────────── */
 async function injectMockData() {
   if (import.meta.env.DEV && import.meta.env.VITE_MOCK_DATA === 'true') {
-    const { MOCK_VIDEO_QUEUE, MOCK_READING_QUEUE } = await import('@/dev/mock-data');
+    // Read both queues in parallel to save storage IPC round-trip latency
+    const [existingVideo, existingReading] = await Promise.all([
+      videoQueueStorage.getValue(),
+      readingQueueStorage.getValue()
+    ]);
 
     /* Only inject if queues are empty (don't overwrite real data) */
-    const existingVideo = await videoQueueStorage.getValue();
-    const existingReading = await readingQueueStorage.getValue();
-
     if (existingVideo.length === 0 && existingReading.length === 0) {
-      await videoQueueStorage.setValue(MOCK_VIDEO_QUEUE as any);
-      await readingQueueStorage.setValue(MOCK_READING_QUEUE as any);
+      const { MOCK_VIDEO_QUEUE, MOCK_READING_QUEUE } = await import('@/dev/mock-data');
+
+      // Perform mock data writes in parallel
+      await Promise.all([
+        videoQueueStorage.setValue(MOCK_VIDEO_QUEUE as any),
+        readingQueueStorage.setValue(MOCK_READING_QUEUE as any)
+      ]);
       console.log('[DEV] Mock data injected into queues');
     }
   }

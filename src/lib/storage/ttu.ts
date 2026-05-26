@@ -9,7 +9,7 @@
  */
 
 import { storage } from 'wxt/utils/storage';
-import type { TTULinkedBook, TTUHistorySession } from '../types';
+import type { TTUHistorySession, TTULinkedBook } from '../types';
 
 /**
  * Tracks session history for each book in the TTU reader.

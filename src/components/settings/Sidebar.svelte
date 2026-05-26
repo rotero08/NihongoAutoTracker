@@ -36,7 +36,7 @@
     </div>
     <div>
       <div class="brand-name">NihongoAutoTracker</div>
-      <div class="brand-ver">v3.4.3</div>
+      <div class="brand-ver">v4.0.0</div>
     </div>
   </div>
 

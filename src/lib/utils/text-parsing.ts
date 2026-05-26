@@ -25,6 +25,8 @@ export function parseTitle(
   docTitle: string,
   customRegexes?: Array<{ desc: string; re: string }>,
 ): { query: string; volume: number | undefined } {
+  // Strip leading "YomiYasu - " if present
+  docTitle = docTitle.replace(/^YomiYasu\s*-\s*/i, '');
   let title = docTitle;
   let volume: number | undefined = undefined;
 
@@ -65,7 +67,8 @@ export function parseTitle(
  */
 export function parseTitleForUI(docTitle: string): { query: string; volume: number | undefined } {
   let base = docTitle
-    .replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|Manabe Reader)\s*/i, '')
+    .replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|YomiYasu Reader)\s*/i, '')
+    .replace(/^YomiYasu\s*-\s*/i, '')
     .trim();
   let title = base;
   let volume: number | undefined = undefined;

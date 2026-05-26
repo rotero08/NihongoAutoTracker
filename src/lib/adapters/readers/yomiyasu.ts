@@ -1,12 +1,12 @@
-import type { TrackerConfig, ReaderAdapter } from '@/lib/types';
+import type { ReaderAdapter, TrackerConfig } from '@/lib/types';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 
-export const manabeAdapter: ReaderAdapter = {
-  name: 'Manabe Reader',
+export const yomiyasuAdapter: ReaderAdapter = {
+  name: 'YomiYasu Reader',
   hostname: 'manga.manabe.es',
 
   isEnabled(config: TrackerConfig): boolean {
-    return config.manabeEnabled !== false;
+    return config.yomiyasuEnabled !== false;
   },
 
   findInsertPoint() {
@@ -32,6 +32,6 @@ export const manabeAdapter: ReaderAdapter = {
   },
 
   getTitle(): string {
-    return document.title.replace(/\s*\|\s*Manabe Reader\s*/i, '').trim() || document.title;
+    return document.title.replace(/\s*\|\s*YomiYasu Reader\s*/i, '').trim() || document.title;
   },
 };

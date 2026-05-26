@@ -13,10 +13,10 @@
  * without changing any CSS values or logic.
  */
 
+import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 import type { UITheme } from '@/lib/types';
 import { DEFAULT_THEME } from '@/lib/types';
 import { getTheme } from './themes';
-import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 
 // Restores original brand logo and guarantees it is completely shadow-free
 const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');

@@ -4,10 +4,10 @@
  * Extracted overlay DOM rendering and custom styling rules from text-tracker
  * content script to modularize the codebase and improve readability.
  */
-import { getTheme } from './themes';
-import { fmt } from '../utils/time';
-import { addDebugLog } from '../storage/debug';
 import { SKIP_HOSTS_DEFAULT } from '../constants';
+import { addDebugLog } from '../storage/debug';
+import { fmt } from '../utils/time';
+import { getTheme } from './themes';
 
 let overlayDismissed = false;
 
