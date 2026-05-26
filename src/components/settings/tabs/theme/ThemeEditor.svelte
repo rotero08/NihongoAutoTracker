@@ -8,7 +8,11 @@
         themeColors: Record<string, string>;
         themeName: string;
         triedSavingEmptyName: boolean;
-        customThemes: Array<{ id: string; name: string; colors: Record<string, string> }>;
+        customThemes: Array<{
+            id: string;
+            name: string;
+            colors: Record<string, string>;
+        }>;
         compact?: boolean;
         onSave: (themeId: string) => void;
         onRevert: (themeId: string) => void;
@@ -30,6 +34,81 @@
     }: Props = $props();
 
     let templateDropdownOpen = $state(false);
+    let importInputOpen = $state(false);
+    let importCode = $state("");
+    let exportStatus = $state("Share");
+
+    /**
+     * Serializes the current theme name and color map into a UTF-8 safe base64
+     * string and copies it directly to the system clipboard for easy sharing.
+     */
+    async function handleExport() {
+        try {
+            const compactData = {
+                n: themeName || "Shared Theme",
+                c: themeColors,
+            };
+            const serialized = btoa(
+                unescape(encodeURIComponent(JSON.stringify(compactData))),
+            );
+            await navigator.clipboard.writeText(serialized);
+            exportStatus = "Copied!";
+            setTimeout(() => {
+                exportStatus = "Share";
+            }, 1500);
+        } catch {
+            exportStatus = "Error";
+            setTimeout(() => {
+                exportStatus = "Share";
+            }, 1500);
+        }
+    }
+
+    /**
+     * Decodes a base64 string matching the shared theme format, parses its fields,
+     * and maps them back onto the active theme draft properties.
+     */
+    function handleImport() {
+        if (!importCode.trim()) return;
+        try {
+            const decoded = JSON.parse(
+                decodeURIComponent(escape(atob(importCode.trim()))),
+            );
+            if (decoded && decoded.c) {
+                themeColors = {
+                    background:
+                        decoded.c.background ||
+                        DEFAULT_CUSTOM_COLORS.background,
+                    surface: decoded.c.surface || DEFAULT_CUSTOM_COLORS.surface,
+                    surfaceAlt:
+                        decoded.c.surfaceAlt ||
+                        decoded.c.surface ||
+                        DEFAULT_CUSTOM_COLORS.surfaceAlt,
+                    border: decoded.c.border || DEFAULT_CUSTOM_COLORS.border,
+                    borderHover:
+                        decoded.c.borderHover ||
+                        decoded.c.border ||
+                        DEFAULT_CUSTOM_COLORS.borderHover,
+                    text: decoded.c.text || DEFAULT_CUSTOM_COLORS.text,
+                    textMuted:
+                        decoded.c.textMuted || DEFAULT_CUSTOM_COLORS.textMuted,
+                    accent: decoded.c.accent || DEFAULT_CUSTOM_COLORS.accent,
+                    accentHover:
+                        decoded.c.accentHover ||
+                        decoded.c.accent ||
+                        DEFAULT_CUSTOM_COLORS.accentHover,
+                    success: decoded.c.success || DEFAULT_CUSTOM_COLORS.success,
+                };
+                if (decoded.n) {
+                    themeName = decoded.n;
+                }
+                importCode = "";
+                importInputOpen = false;
+            }
+        } catch {
+            alert("Invalid theme share code.");
+        }
+    }
 
     const DEFAULT_CUSTOM_COLORS: Record<string, string> = {
         background: "#07070e",
@@ -89,7 +168,8 @@
             }
         };
         window.addEventListener("click", handleGlobalClick, true);
-        return () => window.removeEventListener("click", handleGlobalClick, true);
+        return () =>
+            window.removeEventListener("click", handleGlobalClick, true);
     });
 
     // Derived color fields array matching the exact naming and key lookups
@@ -118,7 +198,7 @@
                   { key: "accent", label: "Accent Color" },
                   { key: "accentHover", label: "Accent Hover" },
                   { key: "success", label: "Success Color" },
-              ]
+              ],
     );
 
     // Derived modification status for buttons
@@ -169,7 +249,8 @@
         style="display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px 0;"
     >
         <p class="hint" style="margin: 0; font-size: 11.5px; flex: 1;">
-            Enter hex codes directly or adjust pickers. Live preview shows draft changes on the right.
+            Enter hex codes directly or adjust pickers. Live preview shows draft
+            changes on the right.
         </p>
         <div
             style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
@@ -194,6 +275,24 @@
                 >
             </button>
 
+            <!-- Compact inline trigger for pasting shared codes -->
+            <button
+                type="button"
+                style="background: transparent; border: 1px dashed var(--color-border); color: var(--color-text-muted); font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: color 0.15s, border-color 0.15s;"
+                onmouseenter={(e) => {
+                    e.currentTarget.style.color = "var(--color-text)";
+                    e.currentTarget.style.borderColor =
+                        "var(--color-border-hover)";
+                }}
+                onmouseleave={(e) => {
+                    e.currentTarget.style.color = "var(--color-text-muted)";
+                    e.currentTarget.style.borderColor = "var(--color-border)";
+                }}
+                onclick={() => (importInputOpen = !importInputOpen)}
+            >
+                Import
+            </button>
+
             {#if templateDropdownOpen}
                 <div
                     style="position: absolute; top: calc(100% + 4px); right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
@@ -203,21 +302,32 @@
                         <button
                             type="button"
                             style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
-                            onmouseenter={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)")}
-                            onmouseleave={(e) => (e.currentTarget.style.background = "transparent")}
+                            onmouseenter={(e) =>
+                                (e.currentTarget.style.background =
+                                    "rgba(255, 255, 255, 0.05)")}
+                            onmouseleave={(e) =>
+                                (e.currentTarget.style.background =
+                                    "transparent")}
                             onclick={() => {
                                 const presetTheme = THEMES[key];
                                 themeColors = {
                                     background: presetTheme.colors.bg,
                                     surface: presetTheme.colors.surface,
-                                    surfaceAlt: presetTheme.colors.surfaceAlt || presetTheme.colors.surface,
+                                    surfaceAlt:
+                                        presetTheme.colors.surfaceAlt ||
+                                        presetTheme.colors.surface,
                                     border: presetTheme.colors.border,
-                                    borderHover: presetTheme.colors.borderHover || presetTheme.colors.border,
+                                    borderHover:
+                                        presetTheme.colors.borderHover ||
+                                        presetTheme.colors.border,
                                     text: presetTheme.colors.text,
                                     textMuted: presetTheme.colors.muted,
                                     accent: presetTheme.colors.accent,
-                                    accentHover: presetTheme.colors.accentHover || presetTheme.colors.accent,
-                                    success: presetTheme.colors.success || "#3ddc84",
+                                    accentHover:
+                                        presetTheme.colors.accentHover ||
+                                        presetTheme.colors.accent,
+                                    success:
+                                        presetTheme.colors.success || "#3ddc84",
                                 };
                                 templateDropdownOpen = false;
                             }}
@@ -234,20 +344,34 @@
                             <button
                                 type="button"
                                 style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
-                                onmouseenter={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)")}
-                                onmouseleave={(e) => (e.currentTarget.style.background = "transparent")}
+                                onmouseenter={(e) =>
+                                    (e.currentTarget.style.background =
+                                        "rgba(255, 255, 255, 0.05)")}
+                                onmouseleave={(e) =>
+                                    (e.currentTarget.style.background =
+                                        "transparent")}
                                 onclick={() => {
                                     themeColors = {
-                                        background: customPreset.colors.background,
+                                        background:
+                                            customPreset.colors.background,
                                         surface: customPreset.colors.surface,
-                                        surfaceAlt: customPreset.colors.surfaceAlt || customPreset.colors.surface,
+                                        surfaceAlt:
+                                            customPreset.colors.surfaceAlt ||
+                                            customPreset.colors.surface,
                                         border: customPreset.colors.border,
-                                        borderHover: customPreset.colors.borderHover || customPreset.colors.border,
+                                        borderHover:
+                                            customPreset.colors.borderHover ||
+                                            customPreset.colors.border,
                                         text: customPreset.colors.text,
-                                        textMuted: customPreset.colors.textMuted,
+                                        textMuted:
+                                            customPreset.colors.textMuted,
                                         accent: customPreset.colors.accent,
-                                        accentHover: customPreset.colors.accentHover || customPreset.colors.accent,
-                                        success: customPreset.colors.success || "#3ddc84",
+                                        accentHover:
+                                            customPreset.colors.accentHover ||
+                                            customPreset.colors.accent,
+                                        success:
+                                            customPreset.colors.success ||
+                                            "#3ddc84",
                                     };
                                     templateDropdownOpen = false;
                                 }}
@@ -262,15 +386,19 @@
     </div>
 
     {#if compact}
-        <div style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px;">
-            <span style="font-size: 9.5px; font-weight: bold; color: var(--color-text-muted);"
+        <div
+            style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px;"
+        >
+            <span
+                style="font-size: 9.5px; font-weight: bold; color: var(--color-text-muted);"
                 >Theme Name</span
             >
             <input
                 type="text"
                 class="input"
                 maxlength="16"
-                style="width: 100%; padding: 4px 6px; font-size: 11px; border: 1px solid {triedSavingEmptyName && !themeName.trim()
+                style="width: 100%; padding: 4px 6px; font-size: 11px; border: 1px solid {triedSavingEmptyName &&
+                !themeName.trim()
                     ? 'var(--color-error, #ff4444)'
                     : 'var(--color-border)'}"
                 bind:value={themeName}
@@ -278,14 +406,16 @@
                 oninput={() => (triedSavingEmptyName = false)}
             />
             {#if triedSavingEmptyName && !themeName.trim()}
-                <span style="color: var(--color-error, #ff4444); font-size: 10px; font-weight: bold;"
+                <span
+                    style="color: var(--color-error, #ff4444); font-size: 10px; font-weight: bold;"
                     >Name is required.</span
                 >
             {/if}
         </div>
     {:else}
         <div style="display: flex; flex-direction: column; gap: 4px;">
-            <span style="font-size: 11px; font-weight: bold; color: var(--color-text-muted);"
+            <span
+                style="font-size: 11px; font-weight: bold; color: var(--color-text-muted);"
                 >Theme Name</span
             >
             <input
@@ -293,9 +423,11 @@
                 type="text"
                 class="input"
                 maxlength="16"
-                style="width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid {triedSavingEmptyName && !themeName.trim()
+                style="width: 100%; padding: 6px 8px; font-size: 12px; border: 1px solid {triedSavingEmptyName &&
+                !themeName.trim()
                     ? 'var(--color-error, #ff4444)'
-                    : 'var(--color-border)'}; box-shadow: {triedSavingEmptyName && !themeName.trim()
+                    : 'var(--color-border)'}; box-shadow: {triedSavingEmptyName &&
+                !themeName.trim()
                     ? '0 0 0 2px rgba(239, 68, 68, 0.2)'
                     : 'none'}"
                 bind:value={themeName}
@@ -303,10 +435,49 @@
                 oninput={() => (triedSavingEmptyName = false)}
             />
             {#if triedSavingEmptyName && !themeName.trim()}
-                <span style="color: var(--color-error, #ff4444); font-size: 11px; font-weight: bold;"
+                <span
+                    style="color: var(--color-error, #ff4444); font-size: 11px; font-weight: bold;"
                     >Theme name is required. Please type a name.</span
                 >
             {/if}
+        </div>
+    {/if}
+
+    <!-- Inline import form overlay triggered via the template header option -->
+    {#if importInputOpen}
+        <div
+            style="display: flex; gap: 6px; flex-direction: column; margin-bottom: 6px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 4px; border: 1px solid var(--color-border-hover);"
+        >
+            <span
+                style="font-size: 10px; font-weight: bold; color: var(--color-text-muted);"
+                >Paste Theme Code:</span
+            >
+            <div style="display: flex; gap: 4px;">
+                <input
+                    type="text"
+                    class="input"
+                    style="flex: 1; padding: 4px 6px; font-size: 11px;"
+                    bind:value={importCode}
+                    placeholder="Paste base64 theme code..."
+                />
+                <button
+                    class="btn btn-amber btn-sm"
+                    style="font-size: 10px; padding: 2px 6px;"
+                    onclick={handleImport}
+                >
+                    Apply
+                </button>
+                <button
+                    class="btn btn-ghost btn-sm"
+                    style="font-size: 10px; padding: 2px 6px;"
+                    onclick={() => {
+                        importInputOpen = false;
+                        importCode = "";
+                    }}
+                >
+                    Cancel
+                </button>
+            </div>
         </div>
     {/if}
 
@@ -334,8 +505,14 @@
                 >
                     <div
                         style={compact
-                            ? "width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--color-border); background: " + (themeColors?.[field.key] || DEFAULT_CUSTOM_COLORS[field.key]) + "; position: relative; flex-shrink: 0; cursor: pointer;"
-                            : "width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--color-border); background: " + (themeColors?.[field.key] || DEFAULT_CUSTOM_COLORS[field.key]) + "; cursor: pointer; position: relative;"}
+                            ? "width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--color-border); background: " +
+                              (themeColors?.[field.key] ||
+                                  DEFAULT_CUSTOM_COLORS[field.key]) +
+                              "; position: relative; flex-shrink: 0; cursor: pointer;"
+                            : "width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--color-border); background: " +
+                              (themeColors?.[field.key] ||
+                                  DEFAULT_CUSTOM_COLORS[field.key]) +
+                              "; cursor: pointer; position: relative;"}
                     >
                         <input
                             type="color"
@@ -358,10 +535,16 @@
         {/each}
     </div>
 
-    <div style={compact ? "display: flex; gap: 4px; margin-top: 6px;" : "display: flex; gap: 6px; margin-top: 4px;"}>
+    <div
+        style={compact
+            ? "display: flex; gap: 4px; margin-top: 6px;"
+            : "display: flex; gap: 6px; margin-top: 4px;"}
+    >
         <button
             class="btn btn-amber"
-            style={compact ? "flex: 1; font-size: 9.5px; padding: 4px 8px;" : "flex: 1; font-size: 11.5px; padding: 8px 12px;"}
+            style={compact
+                ? "flex: 1; font-size: 9.5px; padding: 4px 8px;"
+                : "flex: 1; font-size: 11.5px; padding: 8px 12px;"}
             onclick={() => onSave(themeId)}
             disabled={!themeName?.trim()}
         >
@@ -369,11 +552,23 @@
         </button>
         <button
             class="btn btn-ghost"
-            style={compact ? "font-size: 9.5px; padding: 4px 8px;" : "font-size: 11px; padding: 6px 10px;"}
+            style={compact
+                ? "font-size: 9.5px; padding: 4px 8px;"
+                : "font-size: 11px; padding: 6px 10px;"}
             onclick={() => onRevert(themeId)}
             disabled={!isThemeModified()}
         >
             Revert
+        </button>
+        <!-- Share/Export action trigger -->
+        <button
+            class="btn btn-ghost"
+            style={compact
+                ? "font-size: 9.5px; padding: 4px 8px;"
+                : "font-size: 11px; padding: 6px 10px;"}
+            onclick={handleExport}
+        >
+            {exportStatus}
         </button>
         <button
             class="btn btn-ghost"

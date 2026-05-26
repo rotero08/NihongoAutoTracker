@@ -476,7 +476,6 @@
           return;
         }
       }
-      onStatus("✓ Log sent");
       await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
       onRefresh();
     } catch (e: any) {
@@ -590,7 +589,8 @@
             onchange={handleCharsChange}
             aria-label="Character count"
           />
-          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
+          <span
+            style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
             >chars</span
           >
           <div class="qi-spin-nav">
@@ -628,7 +628,8 @@
           onchange={handleMinsChange}
           aria-label="Minutes duration"
         />
-        <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
+        <span
+          style="font-size:10px; color:var(--color-text-muted); padding-right:2px;"
           >min</span
         >
         <div class="qi-spin-nav">
@@ -707,7 +708,9 @@
                     )}
                   aria-label={`Session ${i + 1} characters`}
                 />
-                <span style="font-size:10px; color:var(--color-text-muted);">chars</span>
+                <span style="font-size:10px; color:var(--color-text-muted);"
+                  >chars</span
+                >
               {/if}
 
               <input
@@ -723,7 +726,9 @@
                   )}
                 aria-label={`Session ${i + 1} minutes`}
               />
-              <span style="font-size:10px; color:var(--color-text-muted);">min</span>
+              <span style="font-size:10px; color:var(--color-text-muted);"
+                >min</span
+              >
 
               <input
                 type="datetime-local"
