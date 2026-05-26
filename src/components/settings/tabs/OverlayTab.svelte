@@ -225,9 +225,9 @@
     >It auto-detects japanese characters in a website to force the overlay.</strong
   ><br />
   To control where the overlay appears, click a domain to edit it inline.<br />
-  <strong style="color:var(--color-text)">Note:</strong> Sites in the Allow list force
-  the overlay to appear, bypassing auto-detection. Sites on the Skip list, skips
-  them even if it detects japanese characters.
+  <strong style="color:var(--color-text)">Note:</strong> Sites in the Allow list
+  force the overlay to appear, bypassing auto-detection. Sites on the Skip list,
+  skips them even if it detects japanese characters.
 </p>
 
 <div class="field">

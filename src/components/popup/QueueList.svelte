@@ -4,7 +4,6 @@
   Renders filtered queue items and handles bulk actions.
 -->
 <script lang="ts">
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
   import QueueItem from "./QueueItem.svelte";
 
   interface Props {
