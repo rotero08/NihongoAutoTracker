@@ -59,6 +59,48 @@
     return id === "custom" || id.startsWith("custom_");
   }
 
+  /* ── Synchronous Theme Cache Initialization ── */
+  // Retrieve cached theme settings synchronously from localStorage. This completely
+  // bypasses asynchronous extension storage IPC latency, preventing any layout or color flash
+  // (FOUC) on cold start.
+  const cachedTheme =
+    typeof window !== "undefined"
+      ? localStorage.getItem("nta-theme-cache")
+      : null;
+  const cachedFont =
+    typeof window !== "undefined"
+      ? localStorage.getItem("nta-font-cache")
+      : null;
+  if (cachedTheme || cachedFont) {
+    const themeToApply = cachedTheme || "dark-amber";
+    const fontToApply = cachedFont || "sans";
+    selectedTheme = themeToApply;
+    selectedFont = fontToApply;
+
+    // Apply layout rules to document before Svelte finishes initial paint
+    if (!isCustomThemeId(themeToApply)) {
+      applyThemeToDocument(themeToApply, fontToApply, undefined, {
+        useStaticInPageLogo: false,
+      });
+    } else {
+      try {
+        const cachedColorsStr = localStorage.getItem("nta-custom-colors-cache");
+        if (cachedColorsStr) {
+          const cachedColors = JSON.parse(cachedColorsStr);
+          applyThemeToDocument("dark-amber", fontToApply, cachedColors, {
+            useStaticInPageLogo: false,
+          });
+          applyCustomTheme(cachedColors);
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Start executing the asynchronous data fetches immediately on script evaluation
+  // rather than waiting for onMount. This allows reactive state parameters to populate
+  // as fast as the async storage layer resolves.
+  const initialLoadPromise = loadData();
+
   // Dynamic dropdown list containing saved custom themes
   const themeOptions = $derived([
     ...THEME_OPTIONS,
@@ -226,6 +268,32 @@
     selectedFont = cfg?.font ?? "sans";
     syncPopupWithReaderTheme = cfg?.syncPopupWithReaderTheme !== false;
 
+    // Save configuration settings to synchronous localStorage to prevent cold start flashes
+    if (cfg) {
+      const themeVal = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
+      const fontVal = cfg.font ?? "sans";
+      localStorage.setItem("nta-theme-cache", themeVal);
+      localStorage.setItem("nta-font-cache", fontVal);
+      if (isCustomThemeId(themeVal)) {
+        const activeThemeObj = (cfg.customThemes ?? []).find(
+          (t: any) => t.id === themeVal,
+        );
+        if (activeThemeObj) {
+          localStorage.setItem(
+            "nta-custom-colors-cache",
+            JSON.stringify(activeThemeObj.colors),
+          );
+        } else if (cfg.customColors) {
+          localStorage.setItem(
+            "nta-custom-colors-cache",
+            JSON.stringify(cfg.customColors),
+          );
+        }
+      } else {
+        localStorage.removeItem("nta-custom-colors-cache");
+      }
+    }
+
     applyInitialTheme(cfg, activeUrl, detectedColors);
   }
 
@@ -366,7 +434,8 @@
   }
 
   onMount(() => {
-    loadData();
+    // Rely on the initial evaluation load to prevent redundant queries
+    initialLoadPromise.catch(() => {});
 
     const storageListener = (changes: any, area: string) => {
       if (
@@ -389,6 +458,30 @@
         selectedTheme = nextTheme;
         selectedFont = nextFont;
         syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
+
+        // Save layout adjustments inside local storage to match runtime modifications
+        if (val) {
+          localStorage.setItem("nta-theme-cache", nextTheme);
+          localStorage.setItem("nta-font-cache", nextFont);
+          if (isCustomThemeId(nextTheme)) {
+            const activeThemeObj = (val.customThemes ?? []).find(
+              (t: any) => t.id === nextTheme,
+            );
+            if (activeThemeObj) {
+              localStorage.setItem(
+                "nta-custom-colors-cache",
+                JSON.stringify(activeThemeObj.colors),
+              );
+            } else if (val.customColors) {
+              localStorage.setItem(
+                "nta-custom-colors-cache",
+                JSON.stringify(val.customColors),
+              );
+            }
+          } else {
+            localStorage.removeItem("nta-custom-colors-cache");
+          }
+        }
 
         let host = "";
         try {
@@ -505,6 +598,8 @@
         cfg.selectedThemeId = undefined;
         cfg.customColors = undefined;
         selectedTheme = "dark-amber";
+        localStorage.setItem("nta-theme-cache", "dark-amber");
+        localStorage.removeItem("nta-custom-colors-cache");
         clearCustomTheme();
         applyThemeToDocument("dark-amber", selectedFont);
       }
@@ -514,6 +609,7 @@
     }
 
     selectedTheme = val;
+    localStorage.setItem("nta-theme-cache", val);
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     if (isCustomThemeId(val)) {
       cfg.theme = val;
@@ -523,6 +619,10 @@
       );
       if (activeThemeObj) {
         cfg.customColors = { ...activeThemeObj.colors };
+        localStorage.setItem(
+          "nta-custom-colors-cache",
+          JSON.stringify(activeThemeObj.colors),
+        );
       }
       await configStorage.setValue(cfg);
       // Base themes are set first, then our custom theme overrides them correctly
@@ -536,6 +636,7 @@
       cfg.theme = val;
       cfg.selectedThemeId = undefined;
       cfg.customColors = undefined;
+      localStorage.removeItem("nta-custom-colors-cache");
       await configStorage.setValue(cfg);
       clearCustomTheme();
       applyThemeToDocument(val, selectedFont, undefined, {
@@ -546,6 +647,7 @@
 
   async function handleQuickFont(val: string) {
     selectedFont = val;
+    localStorage.setItem("nta-font-cache", val);
     const cfg = (await configStorage.getValue()) as any;
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     await configStorage.setValue({ ...cfg, font: val });
@@ -568,20 +670,9 @@
 
   /* ── Settings Actions ─────────────────────────────────────────── */
   async function openSettings() {
-    const settingsUrl = browser.runtime.getURL("/settings.html");
-    const tabs = await browser.tabs.query({});
-    const existingTab = tabs.find(
-      (t) => t.url && t.url.startsWith(settingsUrl),
-    );
-    if (existingTab && existingTab.id !== undefined) {
-      await browser.tabs.update(existingTab.id, { active: true });
-      if (existingTab.windowId !== undefined) {
-        await browser.windows.update(existingTab.windowId, { focused: true });
-      }
-    } else {
-      await browser.tabs.create({ url: settingsUrl });
-    }
-    window.close();
+    // Delegate tab search and switching to background thread to prevent UI freezing.
+    // We let the native browser focus transition close the popup naturally to prevent visual flicker.
+    browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
   }
 
   function showStatus(msg: string, err = false) {
@@ -615,6 +706,7 @@
     }
     isSendingAll = true;
 
+    // Helper mappings
     function getItemPayloads(item: any, type: "reading" | "video") {
       const isRead = type === "reading";
       const sessions = item.sessions ?? [];
@@ -1068,7 +1160,7 @@
     width: 26px;
     height: 26px;
     background: none;
-    border: 1px solid var(--color-border);
+    border: none;
     border-radius: 4px;
     color: var(--color-text-muted);
     font-size: 13px;
@@ -1076,13 +1168,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition:
-      color 0.15s,
-      border-color 0.15s;
+    transition: color 0.15s;
   }
   .icon-btn:hover {
     color: var(--color-text);
-    border-color: var(--color-border-hover);
   }
 
   /* Force system success green on all matched list checkmarks and popup items globally */

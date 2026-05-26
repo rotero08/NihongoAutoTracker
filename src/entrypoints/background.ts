@@ -72,10 +72,9 @@ export default defineBackground(() => {
       if (msg.action === 'OPEN_SETTINGS') {
         const settingsUrl = browser.runtime.getURL("/settings.html");
 
-        // Optimize tab query with direct URL matching to avoid full tab tree serialization overhead.
-        // Falls back gracefully to full query if the wildcard match fails.
+        // Query only settings-specific tabs to bypass native URL matching overhead 
+        // and serialization latency across process boundaries.
         browser.tabs.query({ url: settingsUrl + '*' })
-          .catch(() => browser.tabs.query({}))
           .then((tabs) => {
             const existing = tabs.find(t => t.url && t.url.startsWith(settingsUrl));
 
@@ -84,22 +83,27 @@ export default defineBackground(() => {
               const winId = existing.windowId;
 
               if (tabId !== undefined) {
-                browser.tabs.update(tabId, { active: true }).then(() => {
-                  if (winId !== undefined) {
-                    browser.windows.update(winId, { focused: true }).catch(() => null);
-                  }
-                  if (msg.tab) {
-                    browser.tabs.sendMessage(tabId, { action: 'SWITCH_SETTINGS_TAB', tab: msg.tab }).catch(() => null);
-                  }
-                }).catch(() => null);
+                // Execute tab activation first. Only focus the window after tab activation
+                // completes to prevent a visual flash of the window's previously active tab.
+                browser.tabs.update(tabId, { active: true })
+                  .then(() => {
+                    if (winId !== undefined) {
+                      return browser.windows.update(winId, { focused: true });
+                    }
+                  })
+                  .then(() => {
+                    if (msg.tab) {
+                      return browser.tabs.sendMessage(tabId, { action: 'SWITCH_SETTINGS_TAB', tab: msg.tab });
+                    }
+                  })
+                  .catch(() => null);
               }
             } else {
               if (msg.tab) {
-                storage.setItem('local:activeSettingsTab', msg.tab).then(() => {
-                  browser.tabs.create({ url: settingsUrl }).catch(() => null);
-                }).catch(() => {
-                  browser.tabs.create({ url: settingsUrl }).catch(() => null);
-                });
+                // Perform the storage write and tab creation concurrently. Svelte's subsequent mount
+                // phase guarantees the storage write completes before it is retrieved.
+                storage.setItem('local:activeSettingsTab', msg.tab).catch(() => null);
+                browser.tabs.create({ url: settingsUrl }).catch(() => null);
               } else {
                 browser.tabs.create({ url: settingsUrl }).catch(() => null);
               }

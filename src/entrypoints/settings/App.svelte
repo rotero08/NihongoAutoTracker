@@ -31,6 +31,44 @@
   let dontWarnValue = $state(false);
   let modalResolve = $state<((value: boolean) => void) | null>(null);
 
+  function isCustomThemeId(id: string): boolean {
+    return (
+      id === "custom" || id.startsWith("custom_") || id.startsWith("custom-")
+    );
+  }
+
+  /* ── Synchronous Theme Cache Initialization ── */
+  // Retrieve cached theme settings synchronously from localStorage to instantly align
+  // Svelte variables with HTML header values before first document paint.
+  const cachedTheme =
+    typeof window !== "undefined"
+      ? localStorage.getItem("nta-theme-cache")
+      : null;
+  const cachedFont =
+    typeof window !== "undefined"
+      ? localStorage.getItem("nta-font-cache")
+      : null;
+  if (cachedTheme || cachedFont) {
+    const themeToApply = cachedTheme || "dark-amber";
+    const fontToApply = cachedFont || "sans";
+
+    if (!isCustomThemeId(themeToApply)) {
+      applyThemeToDocument(themeToApply, fontToApply, undefined, {
+        useStaticInPageLogo: false,
+      });
+    } else {
+      try {
+        const cachedColorsStr = localStorage.getItem("nta-custom-colors-cache");
+        if (cachedColorsStr) {
+          const cachedColors = JSON.parse(cachedColorsStr);
+          applyThemeToDocument("dark-amber", fontToApply, cachedColors, {
+            useStaticInPageLogo: false,
+          });
+        }
+      } catch (e) {}
+    }
+  }
+
   function showStatus(msg: string, err = false) {
     notify(err ? "Error" : "Success", msg);
   }
@@ -123,11 +161,11 @@
         const theme = c?.theme ?? "nihongo";
         const font = c?.font ?? "sans";
         const useStaticInPageLogo = c?.useStaticInPageLogo === true;
-        if (
-          theme.startsWith("custom_") ||
-          theme.startsWith("custom-") ||
-          theme === "custom"
-        ) {
+
+        localStorage.setItem("nta-theme-cache", theme);
+        localStorage.setItem("nta-font-cache", font);
+
+        if (isCustomThemeId(theme)) {
           const themeId = theme.replace("custom_", "").replace("custom-", "");
           const customThemes = c?.customThemes || [];
           const targetTheme = customThemes.find(
@@ -138,6 +176,10 @@
               t.id === "custom-" + themeId,
           );
           if (targetTheme) {
+            localStorage.setItem(
+              "nta-custom-colors-cache",
+              JSON.stringify(targetTheme.colors),
+            );
             applyThemeToDocument("dark-amber", font, targetTheme.colors, {
               useStaticInPageLogo,
             });
@@ -147,6 +189,7 @@
             });
           }
         } else {
+          localStorage.removeItem("nta-custom-colors-cache");
           applyThemeToDocument(theme, font, undefined, { useStaticInPageLogo });
         }
       };
@@ -172,11 +215,11 @@
         const nextTheme = val?.theme ?? "nihongo";
         const nextFont = val?.font ?? "sans";
         const useStaticInPageLogo = val?.useStaticInPageLogo === true;
-        if (
-          nextTheme.startsWith("custom_") ||
-          nextTheme.startsWith("custom-") ||
-          nextTheme === "custom"
-        ) {
+
+        localStorage.setItem("nta-theme-cache", nextTheme);
+        localStorage.setItem("nta-font-cache", nextFont);
+
+        if (isCustomThemeId(nextTheme)) {
           const themeId = nextTheme
             .replace("custom_", "")
             .replace("custom-", "");
@@ -185,6 +228,10 @@
             (t: any) => t.id === themeId || t.id === nextTheme,
           );
           if (targetTheme) {
+            localStorage.setItem(
+              "nta-custom-colors-cache",
+              JSON.stringify(targetTheme.colors),
+            );
             applyThemeToDocument("dark-amber", nextFont, targetTheme.colors, {
               useStaticInPageLogo,
             });
@@ -194,6 +241,7 @@
             });
           }
         } else {
+          localStorage.removeItem("nta-custom-colors-cache");
           applyThemeToDocument(nextTheme, nextFont, undefined, {
             useStaticInPageLogo,
           });
