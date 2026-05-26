@@ -30,6 +30,22 @@ const currentBrowser = process.env.WXT_BROWSER || 'chrome';
 const isFirefox = currentBrowser === 'firefox';
 const isChromium = ['chrome', 'edge', 'opera'].includes(currentBrowser);
 
+// Profile paths definitions
+const firefoxProfilePath = path.resolve(process.cwd(), '.wxt/firefox-profile');
+const chromiumProfilePath = path.resolve(process.cwd(), `.wxt/${currentBrowser}-profile`);
+
+// Ensure profile directories exist so that web-ext-run does not mistake them for profile names
+try {
+  if (isFirefox && !fs.existsSync(firefoxProfilePath)) {
+    fs.mkdirSync(firefoxProfilePath, { recursive: true });
+  }
+  if (isChromium && !fs.existsSync(chromiumProfilePath)) {
+    fs.mkdirSync(chromiumProfilePath, { recursive: true });
+  }
+} catch (error) {
+  // Fall back silently if directory creation fails
+}
+
 export default defineConfig({
   /* ── Source directory ───────────────────────────────────────── */
   srcDir: 'src',
@@ -40,17 +56,16 @@ export default defineConfig({
   /* ── Svelte integration via WXT module ─────────────────────── */
   modules: ['@wxt-dev/module-svelte'],
 
-  /* ── Runner configuration to lock toolbar layout profiles ─── */
   webExt: {
     // Keep profile changes across restarts for both Firefox and Chromium browsers
     keepProfileChanges: true,
 
     // Tells the runner where to securely store your layout customizations
     ...(isFirefox && {
-      firefoxProfile: path.resolve(process.cwd(), '.wxt/firefox-profile'),
+      firefoxProfile: firefoxProfilePath,
     }),
     ...(isChromium && {
-      chromiumProfile: path.resolve(process.cwd(), `.wxt/${currentBrowser}-profile`),
+      chromiumProfile: chromiumProfilePath,
     }),
 
     startUrls: [
