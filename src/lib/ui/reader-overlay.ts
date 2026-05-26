@@ -27,7 +27,7 @@ export function isWebsiteOverlaySkipped(cfg: any): boolean {
   return false;
 }
 
-export function injectThemeStyles(themeName: string, fontName: string) {
+export function injectThemeStyles(themeName: string, fontName: string, customColors?: Record<string, string>) {
   const theme = getTheme(themeName);
   let style = document.getElementById('nt-theme-styles') as HTMLStyleElement;
   if (!style) {
@@ -37,21 +37,33 @@ export function injectThemeStyles(themeName: string, fontName: string) {
   }
 
   const fontValue = fontName === 'sans' ? "system-ui, -apple-system, sans-serif" : (fontName === 'serif' ? "Georgia, serif" : "'Courier New', monospace");
-  const isCustom = themeName === 'custom';
+
+  // Resolve colors dynamically from the database config fallback
+  const background = customColors?.background || customColors?.background || theme.colors.background;
+  const surface = customColors?.surface || theme.colors.surface;
+  const surfaceAlt = customColors?.surfaceAlt || theme.colors.surfaceAlt || theme.colors.surfaceAlt;
+  const border = customColors?.border || theme.colors.border;
+  const borderHover = customColors?.borderHover || theme.colors.borderHover;
+  const text = customColors?.text || theme.colors.text;
+  const muted = customColors?.textMuted || customColors?.muted || theme.colors.muted;
+  const accent = customColors?.accent || theme.colors.accent;
+  const accentHover = customColors?.accentHover || theme.colors.accentHover;
+  const success = customColors?.success || theme.colors.success;
+  const error = customColors?.error || theme.colors.error;
 
   style.textContent = `
     :root {
-      --nt-bg: ${isCustom ? 'var(--color-background)' : theme.colors.bg};
-      --nt-surface: ${isCustom ? 'var(--color-surface)' : theme.colors.surface};
-      --nt-surfaceAlt: ${isCustom ? 'var(--color-surface-alt)' : theme.colors.surfaceAlt};
-      --nt-border: ${isCustom ? 'var(--color-border)' : theme.colors.border};
-      --nt-borderHover: ${isCustom ? 'var(--color-border-hover)' : theme.colors.borderHover};
-      --nt-text: ${isCustom ? 'var(--color-text)' : theme.colors.text};
-      --nt-muted: ${isCustom ? 'var(--color-text-muted)' : theme.colors.muted};
-      --nt-accent: ${isCustom ? 'var(--color-accent)' : theme.colors.accent};
-      --nt-accentHover: ${isCustom ? 'var(--color-accent-hover)' : theme.colors.accentHover};
-      --nt-success: ${isCustom ? 'var(--color-success)' : theme.colors.success};
-      --nt-error: ${isCustom ? 'var(--color-error)' : theme.colors.error};
+      --nt-background: ${background};
+      --nt-surface: ${surface};
+      --nt-surfaceAlt: ${surfaceAlt};
+      --nt-border: ${border};
+      --nt-borderHover: ${borderHover};
+      --nt-text: ${text};
+      --nt-muted: ${muted};
+      --nt-accent: ${accent};
+      --nt-accentHover: ${accentHover};
+      --nt-success: ${success};
+      --nt-error: ${error};
       --nt-font: ${fontValue};
       --nt-font-mono: ${theme.typography.mono};
       --nt-rounded-box: ${theme.borderRadius}px;

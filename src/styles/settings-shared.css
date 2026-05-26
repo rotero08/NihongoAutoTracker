@@ -234,7 +234,7 @@ body { font-family: var(--font-sans); font-size: 14px; line-height: 1.55; }
 
 /* Buttons */
 .btn { border-radius: 4px; font-family: var(--font-mono); font-size: 12px; font-weight: 700; letter-spacing: .03em; cursor: pointer; padding: 9px 16px; border: none; transition: background .15s, color .15s; }
-.btn-amber { background: var(--color-accent); color: #09090f; }
+.btn-amber { background: var(--color-accent); color: var(--color-accent-text, #09090f) !important; }
 .btn-amber:hover:not(:disabled) { background: var(--color-accent-hover); }
 .btn-amber:disabled { opacity: .45; cursor: not-allowed; }
 .btn-ghost { background: transparent; color: var(--color-text-muted); border: 1px solid var(--color-border); }

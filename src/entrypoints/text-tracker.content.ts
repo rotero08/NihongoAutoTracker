@@ -14,6 +14,7 @@ import {
   enforceOverlayLayout,
   getOverlayDismissed,
   injectOverlayCustomOverrides,
+  injectThemeStyles,
   isWebsiteOverlaySkipped,
   runOverlaySetup,
   updatePauseIconState
@@ -659,7 +660,11 @@ browser.storage.onChanged.addListener((changes, area) => {
     currentConfig = newCfg;
 
     const themeName = getActiveThemeName(newCfg);
-    updateActiveThemeStyles(themeName, newCfg);
+    try {
+      updateActiveThemeStyles(themeName, newCfg);
+    } catch (e) {
+      // Prevent crash on standard webpages
+    }
 
     const adapter = getActiveReaderAdapter();
     if (adapter) {
@@ -678,12 +683,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 
       const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
       if (wrapper) {
-        const btnLog = wrapper.querySelector('#nt-ttu-btn-log') as HTMLButtonElement;
-        if (isEnabled && newReaderCfg.autoSave !== false) {
-          btnLog.disabled = true; btnLog.style.opacity = '0.3'; btnLog.style.cursor = 'not-allowed'; btnLog.title = 'Auto-sync is enabled (Sends automatically via Settings Queue)';
-        } else if (isEnabled) {
-          btnLog.disabled = false; btnLog.style.opacity = '1'; btnLog.style.cursor = 'pointer'; btnLog.title = 'Save & Queue';
-        }
+        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
       }
     } else {
       if (window.self !== window.top) return;
@@ -694,11 +694,25 @@ browser.storage.onChanged.addListener((changes, area) => {
         return;
       }
 
+      let customColors: any = undefined;
+      if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
+        const id = themeName.replace('custom_', '').replace('custom-', '');
+        const customTheme = (newCfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
+        if (customTheme) {
+          customColors = customTheme.colors;
+        } else if (newCfg.customColors) {
+          customColors = newCfg.customColors;
+        }
+      }
+
+      injectThemeStyles(themeName, newCfg.font ?? 'sans', customColors);
+
       const existingOverlay = document.getElementById('nt-overlay');
       if (existingOverlay) {
-        if (newCfg.overlayPosition !== 'hidden') {
+        const overlayPos = newCfg.overlayPosition ?? 'top-right';
+        if (overlayPos !== 'hidden') {
           existingOverlay.style.setProperty('display', 'flex', 'important');
-          applyOverlayPosition(existingOverlay, newCfg.overlayPosition);
+          applyOverlayPosition(existingOverlay, overlayPos);
           injectOverlayCustomOverrides();
           enforceOverlayLayout(existingOverlay);
 
@@ -805,6 +819,19 @@ export default defineContentScript({
     if (cfg.overlayPosition === 'hidden') return;
 
     if (window.self !== window.top) return;
+
+    let customColors: any = undefined;
+    if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
+      const id = themeName.replace('custom_', '').replace('custom-', '');
+      const customTheme = (cfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
+      if (customTheme) {
+        customColors = customTheme.colors;
+      } else if (cfg.customColors) {
+        customColors = cfg.customColors;
+      }
+    }
+
+    injectThemeStyles(themeName, cfg.font ?? 'sans', customColors);
     checkAndRunOverlay(cfg);
   },
 });

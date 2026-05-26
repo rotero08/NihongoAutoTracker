@@ -84,13 +84,20 @@ export default defineConfig({
     description:
       'An unofficial extension for NihongoTracker that automates and streamlines your Japanese immersion logging.',
     version: '4.0.0',
-    permissions: ['storage', 'contextMenus', 'notifications', 'tabs'],
+    permissions: ['storage', 'contextMenus', 'notifications', 'tabs', 'alarms'],
     host_permissions: [
       'https://nihongotracker.app/*',
       'https://*.nihongotracker.app/*',
     ],
 
     action: {
+      default_icon: {
+        "16": "icon/16.png",
+        "32": "icon/32.png",
+        "48": "icon/48.png",
+        "96": "icon/96.png",
+        "128": "icon/128.png"
+      },
       // @ts-ignore - Tells Firefox to anchor this button on the navigation bar (toolbar)
       default_area: 'navbar',
     },

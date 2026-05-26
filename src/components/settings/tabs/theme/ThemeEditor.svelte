@@ -311,7 +311,7 @@
                             onclick={() => {
                                 const presetTheme = THEMES[key];
                                 themeColors = {
-                                    background: presetTheme.colors.bg,
+                                    background: presetTheme.colors.background,
                                     surface: presetTheme.colors.surface,
                                     surfaceAlt:
                                         presetTheme.colors.surfaceAlt ||

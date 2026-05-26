@@ -172,7 +172,7 @@ export interface TTUHistorySession {
 
 /* ── Theme Compilation Colors ── */
 export interface UIThemeColors {
-  bg: string;
+  background: string;
   surface: string;
   surfaceAlt: string;
   border: string;
@@ -203,7 +203,7 @@ export interface UITheme {
 export const DEFAULT_THEME: UITheme = {
   name: 'Dark Amber (Default)',
   colors: {
-    bg: '#07070e',
+    background: '#07070e',
     surface: '#0d0d1c',
     surfaceAlt: '#10101f',
     border: '#1a2235',

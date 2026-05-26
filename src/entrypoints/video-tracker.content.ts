@@ -8,7 +8,7 @@ import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
 import { videoQueueStorage } from '@/lib/storage/queues';
 import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
-import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
+import { applyThemeToDocument, DYNAMIC_LOGO_SVG, getTheme } from '@/lib/ui/themes';
 import { shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
 import { isLikelyJapanese, isMusic } from '@/lib/utils/japanese';
@@ -23,8 +23,8 @@ import {
   getYouTubeChannelId
 } from '@/lib/utils/youtube-extraction';
 
-import rawLogoSvg from '../../public/NihongoAutoTracker.svg?raw';
-const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;"');
+// Bound gradient stops and text fills to theme-controlled properties to natively adapt across light and dark modes
+const inlineLogo = DYNAMIC_LOGO_SVG;
 
 if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
   browser.runtime.onMessage.addListener((req: any) => {
@@ -485,7 +485,10 @@ export default defineContentScript({
         if (!autoOn && reachedQueueThreshold(cfg, liveSecs, vid) && (liveSecs - lastSyncSecs) >= 10) {
           lastSyncSecs = liveSecs;
           resolvePageLanguageAndType();
-          if (isJapaneseVideoCached && !isMusicVideoCached) {
+
+          // Allow logging music videos if explicitly configured
+          const skipMusic = isMusicVideoCached && !cfg.logMusicVideos;
+          if (isJapaneseVideoCached && !skipMusic) {
             const chName = cachedChannelName || await getChannelNameFallback();
             await upsertQueueLive(liveSecs, document.title, chName, currentUrl, channelId, currentSessionId);
           }
@@ -494,7 +497,10 @@ export default defineContentScript({
         if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
           lastAutoCheckSecs = liveSecs;
           resolvePageLanguageAndType();
-          if (isJapaneseVideoCached && !isMusicVideoCached) {
+
+          // Allow logging music videos if explicitly configured
+          const skipMusic = isMusicVideoCached && !cfg.logMusicVideos;
+          if (isJapaneseVideoCached && !skipMusic) {
             const threshType = cfg.thresholdType ?? 'percent';
             const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
             const triggered = threshType === 'percent' ? (vid.currentTime / vid.duration) * 100 >= threshValue : (liveSecs / 60) >= threshValue;

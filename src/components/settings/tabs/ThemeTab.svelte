@@ -187,7 +187,7 @@
         } else if (THEMES[themeId]) {
             const preset = THEMES[themeId];
             return {
-                background: preset.colors.bg,
+                background: preset.colors.background,
                 surface: preset.colors.surface,
                 surfaceAlt: preset.colors.surfaceAlt || preset.colors.surface,
                 border: preset.colors.border,
@@ -211,11 +211,11 @@
 
         // Force fine-grained Svelte 5 dependency tracking to capture inner color modifications
         const _trackName = draftName;
-        const _trackBg = draftColors.background;
-        const _trackSurf = draftColors.surface;
-        const _trackSurfAlt = draftColors.surfaceAlt;
-        const _trackBdr = draftColors.border;
-        const _trackBdrHov = draftColors.borderHover;
+        const _trackBackground = draftColors.background;
+        const _trackSurface = draftColors.surface;
+        const _trackSurfaceAlt = draftColors.surfaceAlt;
+        const _trackBorder = draftColors.border;
+        const _trackBorderHover = draftColors.borderHover;
         const _trackText = draftColors.text;
         const _trackMuted = draftColors.textMuted;
         const _trackAccent = draftColors.accent;
@@ -1302,7 +1302,7 @@
                 themeDraftColors[themeId]?.accentHover ||
                 themeDraftColors[themeId]?.accent ||
                 "var(--color-accent-hover)"}
-            {@const activeBgColor =
+            {@const activeBackgroundColor =
                 themeDraftColors[themeId]?.background || "#09090f"}
 
             {#if isCollapsed["global"]}
@@ -1432,7 +1432,7 @@
                         themeDraftColors[themeId]?.accentHover ||
                         themeDraftColors[themeId]?.accent ||
                         "var(--color-accent-hover)"}
-                    {@const activeBgColor =
+                    {@const activeBackgroundColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
                     {#if isCollapsed["ttu"]}
@@ -1524,7 +1524,7 @@
                         themeDraftColors[themeId]?.accentHover ||
                         themeDraftColors[themeId]?.accent ||
                         "var(--color-accent-hover)"}
-                    {@const activeBgColor =
+                    {@const activeBackgroundColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
                     {#if isCollapsed["yatsu"]}
@@ -1611,7 +1611,7 @@
                         themeDraftColors[themeId]?.accentHover ||
                         themeDraftColors[themeId]?.accent ||
                         "var(--color-accent-hover)"}
-                    {@const activeBgColor =
+                    {@const activeBackgroundColor =
                         themeDraftColors[themeId]?.background || "#09090f"}
 
                     {#if isCollapsed["yomiyasu"]}

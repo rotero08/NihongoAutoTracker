@@ -70,7 +70,7 @@ export function rgbToHsl(r: number, g: number, b: number) {
     switch (max) {
       case r: h = (g - b) / d + (g < b ? 6 : 0); break;
       case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
+      case b: h = (b - r) / d + 4; break;
     }
     h /= 6;
   }
@@ -108,26 +108,26 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
 export function detectReaderThemeColors(): any {
   try {
     const bodyStyle = window.getComputedStyle(document.body);
-    let bgColor = bodyStyle.backgroundColor;
+    let backgroundColor = bodyStyle.backgroundColor;
 
-    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
+    if (!backgroundColor || backgroundColor === 'rgba(0, 0, 0, 0)' || backgroundColor === 'transparent') {
       const container = document.querySelector(
         '.book-content-container, .book-content, [data-ref="container"], .reader-container, #ttu-page-footer, #root, #app'
       );
       if (container) {
-        bgColor = window.getComputedStyle(container).backgroundColor;
+        backgroundColor = window.getComputedStyle(container).backgroundColor;
       }
     }
 
-    const parsedBg = parseColorToRgb(bgColor || '#07070e');
-    const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
-    const isDark = hslBg.l < 50;
+    const parsedBackground = parseColorToRgb(backgroundColor || '#07070e');
+    const hslBackground = rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b);
+    const isDark = hslBackground.l < 50;
 
     // 1. Establish clean background saturation and lightness ceilings to prevent neon/muddy backdrops
-    const bgS = Math.max(4, Math.min(22, hslBg.s));
-    const bgL = isDark ? Math.max(4, Math.min(18, hslBg.l)) : Math.max(88, Math.min(96, hslBg.l));
-    const bgRgb = hslToRgb(hslBg.h, bgS, bgL);
-    const background = `rgb(${bgRgb.r}, ${bgRgb.g}, ${bgRgb.b})`;
+    const backgroundS = Math.max(4, Math.min(22, hslBackground.s));
+    const backgroundL = isDark ? Math.max(4, Math.min(18, hslBackground.l)) : Math.max(88, Math.min(96, hslBackground.l));
+    const backgroundRgb = hslToRgb(hslBackground.h, backgroundS, backgroundL);
+    const background = `rgb(${backgroundRgb.r}, ${backgroundRgb.g}, ${backgroundRgb.b})`;
 
     let surface: string;
     let surfaceAlt: string;
@@ -143,14 +143,14 @@ export function detectReaderThemeColors(): any {
     if (isDark) {
       // --- DARK MODE CONFIGURATION ---
       // Surfaces step upwards (lighter) to construct distinct card layers
-      const surfRgb = hslToRgb(hslBg.h, bgS + 2, bgL + 5);
-      const surfAltRgb = hslToRgb(hslBg.h, bgS + 4, bgL + 10);
+      const surfRgb = hslToRgb(hslBackground.h, backgroundS + 2, backgroundL + 5);
+      const surfAltRgb = hslToRgb(hslBackground.h, backgroundS + 4, backgroundL + 10);
       surface = `rgb(${surfRgb.r}, ${surfRgb.g}, ${surfRgb.b})`;
       surfaceAlt = `rgb(${surfAltRgb.r}, ${surfAltRgb.g}, ${surfAltRgb.b})`;
 
       // Borders (thin, clean luminous offsets)
-      const borderRgb = hslToRgb(hslBg.h, bgS + 5, bgL + 16);
-      const borderHovRgb = hslToRgb(hslBg.h, bgS + 8, bgL + 25);
+      const borderRgb = hslToRgb(hslBackground.h, backgroundS + 5, backgroundL + 16);
+      const borderHovRgb = hslToRgb(hslBackground.h, backgroundS + 8, backgroundL + 25);
       border = `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`;
       borderHover = `rgb(${borderHovRgb.r}, ${borderHovRgb.g}, ${borderHovRgb.b})`;
 
@@ -166,14 +166,14 @@ export function detectReaderThemeColors(): any {
     } else {
       // --- LIGHT MODE CONFIGURATION ---
       // Surfaces step downwards (darker) to create card separation on bright panels
-      const surfRgb = hslToRgb(hslBg.h, Math.max(4, bgS - 2), bgL - 6);
-      const surfAltRgb = hslToRgb(hslBg.h, Math.max(4, bgS - 4), bgL - 12);
+      const surfRgb = hslToRgb(hslBackground.h, Math.max(4, backgroundS - 2), backgroundL - 6);
+      const surfAltRgb = hslToRgb(hslBackground.h, Math.max(4, backgroundS - 4), backgroundL - 12);
       surface = `rgb(${surfRgb.r}, ${surfRgb.g}, ${surfRgb.b})`;
       surfaceAlt = `rgb(${surfAltRgb.r}, ${surfAltRgb.g}, ${surfAltRgb.b})`;
 
       // Borders (deep, clearly legible outlines)
-      const borderRgb = hslToRgb(hslBg.h, bgS + 6, bgL - 25);
-      const borderHovRgb = hslToRgb(hslBg.h, bgS + 10, bgL - 38);
+      const borderRgb = hslToRgb(hslBackground.h, backgroundS + 6, backgroundL - 25);
+      const borderHovRgb = hslToRgb(hslBackground.h, backgroundS + 10, backgroundL - 38);
       border = `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`;
       borderHover = `rgb(${borderHovRgb.r}, ${borderHovRgb.g}, ${borderHovRgb.b})`;
 
@@ -279,10 +279,11 @@ export function getReaderConfig(cfg: any) {
   const adapter = getActiveReaderAdapter();
   const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
   const directSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
+  const hideUnavailableActions = cfg.hideUnavailableActions ?? false;
 
   let enabled = cfg.ttuEnabled ?? true;
   if (adapter) {
     enabled = adapter.isEnabled(cfg);
   }
-  return { enabled, autoSave, directSend };
+  return { enabled, autoSave, directSend, hideUnavailableActions };
 }

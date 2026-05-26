@@ -1,10 +1,10 @@
 <!--
   ── Settings Sidebar.svelte ──────────────────────────────────────────────────
   Navigation sidebar with tab switching, SVG icons, and debug toggle.
-  Matches the original settings/index.html sidebar design exactly.
 -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
+  import { DYNAMIC_LOGO_SVG } from "@/lib/ui/themes";
 
   interface Props {
     activeTab: string;
@@ -26,13 +26,9 @@
 </script>
 
 <nav class="sidebar">
-  <div class="brand">
-    <div class="brand-mark">
-      <img
-        src="/NihongoAutoTracker.svg"
-        style="width:100%; height:100%; object-fit:contain;"
-        alt="NAT"
-      />
+  <div class="brand" style="gap: 8px;">
+    <div class="brand-mark" style="width: 28px; height: 28px;">
+      {@html DYNAMIC_LOGO_SVG}
     </div>
     <div>
       <div class="brand-name">NihongoAutoTracker</div>
@@ -100,8 +96,8 @@
         onTabChange("theme");
       }}
     >
-      <span class="nav-icon">
-        <svg viewBox="0 0 16 16"
+      <span class="nav-icon"
+        ><svg viewBox="0 0 16 16"
           ><circle
             cx="8"
             cy="8"
@@ -110,8 +106,8 @@
             stroke-width="1.6"
             fill="none"
           /><path d="M8 2v12A6 6 0 0 0 8 2z" fill="currentColor" /></svg
-        >
-      </span>
+        ></span
+      >
       Theme
     </a>
 

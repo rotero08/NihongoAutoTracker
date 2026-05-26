@@ -1,5 +1,7 @@
 <!-- ThemePreview.svelte -->
 <script lang="ts">
+    import { parseColorToRgb, rgbToHsl } from "@/lib/ui/themes";
+
     interface Props {
         themeColors: Record<string, string>;
         themeName: string;
@@ -7,11 +9,36 @@
     }
 
     let { themeColors, themeName, isUnsaved }: Props = $props();
+
+    // Calculate dynamic contrast values in real-time to render accurate previews
+    const parsedBackground = $derived(
+        parseColorToRgb(
+            themeColors.background || themeColors.background || "#07070e",
+        ),
+    );
+    const hslBackground = $derived(
+        rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b),
+    );
+    const isBackgroundDark = $derived(hslBackground.l < 50);
+
+    const parsedAccent = $derived(
+        parseColorToRgb(themeColors.accent || "#f0b429"),
+    );
+    const hslAccent = $derived(
+        rgbToHsl(parsedAccent.r, parsedAccent.g, parsedAccent.b),
+    );
+    const isAccentDark = $derived(hslAccent.l < 60);
+
+    const previewApiGreen = $derived(isBackgroundDark ? "#3ddc84" : "#166534");
+    const previewAccentText = $derived(isAccentDark ? "#ffffff" : "#09090f");
+    const previewLogoText = $derived(
+        isBackgroundDark ? "#f4f4f3" : themeColors.text || "#2e3440",
+    );
 </script>
 
 <div
     class="preview-column"
-    style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 20px; position: sticky; top: 16px; align-self: flex-start; margin-top: 36px;"
+    style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 20px; position: sticky; top: 16px; align-self: flex-start; margin-top: 36px; pointer-events: none !important; user-select: none !important; -webkit-user-select: none !important; -moz-user-select: none !important; -ms-user-select: none !important;"
 >
     <!-- Global Custom Theme Mock NAT Popup Preview -->
     <div
@@ -38,29 +65,61 @@
                 style="display: flex; justify-content: space-between; align-items: center; color: {themeColors.textMuted};"
             >
                 <div style="display: flex; align-items: center; gap: 6px;">
-                    <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke={themeColors.accent}
-                        stroke-width="2.2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        style="display: block;"
+                    <!-- Brand logo mock reflecting the calculated dynamic contrast colors -->
+                    <div
+                        style="width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;"
                     >
-                        <circle cx="12" cy="12" r="10" />
-                        <path
-                            d="M12 18a6 6 0 1 0 0-12v12z"
-                            fill={themeColors.accent}
-                        />
-                    </svg>
+                        <svg
+                            version="1.1"
+                            xmlns="http://www.w3.org/2000/svg"
+                            style="display: block; width: 100%; height: 100%;"
+                            viewBox="0 0 1996 2000"
+                            preserveAspectRatio="xMidYMid meet"
+                        >
+                            <defs>
+                                <linearGradient
+                                    id="BrandPreviewLogoGrad"
+                                    gradientUnits="userSpaceOnUse"
+                                    x1="886.829"
+                                    y1="2067.63"
+                                    x2="1050"
+                                    y2="63.3125"
+                                >
+                                    <stop
+                                        offset="0"
+                                        stop-color={themeColors.accent ||
+                                            "#f0b429"}
+                                    />
+                                    <stop
+                                        offset="1"
+                                        stop-color={themeColors.accentHover ||
+                                            "#ffd060"}
+                                    />
+                                </linearGradient>
+                            </defs>
+                            <path
+                                transform="translate(0,0)"
+                                fill="url(#BrandPreviewLogoGrad)"
+                                d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"
+                            />
+                            <path
+                                transform="translate(1,0)"
+                                fill={previewLogoText}
+                                d="M 545.48 3.41642 C 618.477 4.27753 691.48 4.51709 764.481 4.13506 L 1150.38 4.14877 L 1996 3.90803 L 1996 396.493 C 1981.8 395.339 1956.31 396.056 1941.29 396.056 L 1839.74 396.112 L 1730.32 396.087 C 1710.26 396.087 1683.22 395.48 1663.63 396.889 C 1665.89 410.024 1664.9 465.901 1664.88 481.692 L 1664.76 660.017 L 1664.61 1333.11 L 1664.93 1482.65 C 1664.94 1488.35 1666.25 1509.62 1664.1 1512.99 C 1661.21 1512.36 1659.54 1510.64 1657.58 1508.56 C 1642.87 1492.9 1630.67 1473.93 1617.23 1457.12 C 1545.12 1366.97 1472.33 1276.85 1403.18 1184.44 C 1394.11 1172.31 1378.4 1158.98 1373.14 1144.8 C 1368.57 1132.48 1371.02 1021.47 1371.03 1001.99 L 1371.06 786.466 L 1371.05 540.762 C 1371.04 493.827 1370.01 443.005 1371.85 396.579 C 1324.33 395.232 1273.73 396.044 1225.87 396.05 L 975.872 396.147 C 937.262 396.177 896.37 396.925 857.95 395.899 C 846.987 387.483 840.284 376.716 831.698 365.964 C 820.535 352.246 809.511 338.415 798.627 324.474 L 689.982 187.802 C 658.188 148.24 626.619 108.499 595.277 68.5783 C 582.305 52.2313 555.273 19.8823 545.48 3.41642 z"
+                            />
+                            <path
+                                transform="translate(-53,0)"
+                                fill="url(#BrandPreviewLogoGrad)"
+                                d="M 628.973 2000 C 627.156 1987.04 627.585 1963.01 627.53 1949.37 L 627.598 1861.6 L 627.485 1597.21 L 627.476 1381.39 L 627.424 1331.3 C 627.408 1325.08 626.798 1308.51 628.005 1303.25 L 629.704 1302.29 C 633.93 1303.88 651.087 1326.95 655.625 1332.53 L 717.503 1407.2 L 1209.02 2000 L 628.973 2000 z"
+                            />
+                        </svg>
+                    </div>
                     <span
                         style="font-size: 9.5px; font-weight: bold; color: {themeColors.text};"
                         >NihongoAutoTracker</span
                     >
                     <span
-                        style="font-size: 7.5px; font-weight: bold; color: #3ddc84; border: 1px solid color-mix(in srgb, #3ddc84 25%, transparent); background: color-mix(in srgb, #3ddc84 7%, transparent); padding: 0.5px 3px; border-radius: 3px; text-transform: uppercase;"
+                        style="font-size: 7.5px; font-weight: bold; color: {previewApiGreen} !important; border: 1px solid color-mix(in srgb, {previewApiGreen} 25%, transparent) !important; background: color-mix(in srgb, {previewApiGreen} 7%, transparent) !important; padding: 0.5px 3px; border-radius: 3px; text-transform: uppercase;"
                         >API KEY ✓</span
                     >
                 </div>
@@ -79,17 +138,13 @@
                             fill="currentColor"
                         /></svg
                     >
+                    <!-- Settings filled cog icon replica loaded inside mock popup header -->
                     <svg
-                        width="12"
-                        height="12"
                         viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        ><circle cx="12" cy="12" r="3" /><path
-                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+                        fill="currentColor"
+                        style="width: 12px; height: 12px; display: block; color: {themeColors.textMuted};"
+                        ><path
+                            d="M19.14 12.94c.04-.3.06-.61.06-.94c0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.56C14.36 2.58 14.17 2.4 13.93 2.4h-3.87c-.24 0-.43.18-.47.41L9.21 5.37c-.59.24-1.12.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.69 8.89c-.12.22-.07.47.11.61l2.03 1.58c-.05.3-.07.63-.07.94c0 .31.02.62.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.56c.04.24.24.41.47.41h3.87c.24 0 .43-.18.47-.41l.36-2.56c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.11-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6c0-1.98 1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6c0 1.98-1.62 3.6-3.6 3.6z"
                         /></svg
                     >
                 </div>
@@ -114,7 +169,7 @@
                 </div>
                 <div style="display: flex; gap: 4px;">
                     <button
-                        style="background: {themeColors.accent}; color: {themeColors.background}; border: none; font-size: 7.5px; font-weight: bold; padding: 1.5px 5px; border-radius: 2px; cursor: default;"
+                        style="background: {themeColors.accent}; color: {previewAccentText} !important; border: none; font-size: 7.5px; font-weight: bold; padding: 1.5px 5px; border-radius: 2px; cursor: default;"
                         >Send All</button
                     >
                     <button
@@ -154,7 +209,9 @@
                     <div
                         style="display: flex; gap: 4px; font-size: 9px; color: {themeColors.textMuted};"
                     >
-                        <span style="color: #3ddc84; font-weight: bold;">✓</span
+                        <span
+                            style="color: {previewApiGreen} !important; font-weight: bold;"
+                            >✓</span
                         >
                         <span>×</span>
                     </div>
@@ -400,7 +457,6 @@
         </div>
 
         <!-- Mini Mock Reader Page + Floating status bar mockup styled with themeColors -->
-        <!-- Calculated theme dark background: 65% themeColors.background mixed with deep dark #05050a to fit better and avoid being too dark -->
         <div
             style="background: color-mix(in srgb, {themeColors.background} 65%, #05050a); border-radius: 6px; padding: 16px 12px; text-align: center; border: 1px solid var(--color-border); position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; width: 100%; font-family: var(--font-sans);"
         >
@@ -548,6 +604,19 @@
                             fill="currentColor"
                             ><path
                                 d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
+                            /></svg
+                        >
+                    </span>
+                    <span
+                        style="color: {themeColors.textMuted}; cursor: default; display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px;"
+                    >
+                        <!-- Standard filled gear Settings cog icon replica -->
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            style="width: 12px; height: 12px;"
+                            ><path
+                                d="M19.14 12.94c.04-.3.06-.61.06-.94c0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.56C14.36 2.58 14.17 2.4 13.93 2.4h-3.87c-.24 0-.43.18-.47.41L9.21 5.37c-.59.24-1.12.56-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.69 8.89c-.12.22-.07.47.11.61l2.03 1.58c-.05.3-.07.63-.07.94c0 .31.02.62.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.56c.04.24.24.41.47.41h3.87c.24 0 .43-.18.47-.41l.36-2.56c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.11-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6c0-1.98 1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6c0 1.98-1.62 3.6-3.6 3.6z"
                             /></svg
                         >
                     </span>

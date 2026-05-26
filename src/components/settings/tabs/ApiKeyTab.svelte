@@ -92,9 +92,8 @@
   <div
     id="api-status"
     class="api-status"
-    style={statusOk
-      ? "color: #3ddc84 !important;"
-      : "color: var(--color-error) !important;"}
+    class:ok={statusOk}
+    style={statusOk ? "" : "color: var(--color-error) !important;"}
   >
     {statusText}
   </div>
@@ -103,3 +102,10 @@
 <button id="save-api-btn" class="btn btn-amber" onclick={save}
   >Save API Key</button
 >
+
+<style>
+  /* Force adaptive, theme-bound green color with 100% Svelte compiler reliability */
+  .api-status.ok {
+    color: var(--color-api-green) !important;
+  }
+</style>

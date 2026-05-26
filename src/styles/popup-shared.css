@@ -62,7 +62,7 @@ body {
   border: 1px solid transparent; transition: opacity .15s;
 }
 .bulk-btn:hover { opacity: .7; }
-.bulk-btn.amber { background: var(--color-accent); color: var(--color-background); border-color: var(--color-accent); }
+.bulk-btn.amber { background: var(--color-accent); color: var(--color-accent-text, #09090f) !important; border-color: var(--color-accent); }
 .bulk-btn.ghost { background: none; color: var(--color-text-muted); border-color: var(--color-border-hover); }
 
 .queue-tabs { display: flex; gap: 8px; padding: 0 14px 8px; border-bottom: 1px solid var(--color-border); }

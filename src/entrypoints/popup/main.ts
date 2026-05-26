@@ -45,6 +45,12 @@ async function injectMockData() {
 }
 
 /* ── Mount ────────────────────────────────────────────────────────────────── */
-injectMockData().then(() => {
-  mount(App, { target: document.getElementById('app')! });
-});
+// Mount the application instantly to paint the primary layout skeleton on the first frame
+mount(App, { target: document.getElementById('app')! });
+
+// Run development mock data injection asynchronously so it doesn't block the critical mounting path
+if (import.meta.env.DEV) {
+  injectMockData().catch((err) => {
+    console.error('[DEV] Failed to inject mock data:', err);
+  });
+}

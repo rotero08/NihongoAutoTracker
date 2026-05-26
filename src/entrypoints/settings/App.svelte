@@ -13,6 +13,7 @@
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
   import { notify } from "@/lib/api/youtube"; // Route notifications to the unified smart helper
   import { applyThemeToDocument } from "@/lib/ui/themes";
+  import { storage } from "wxt/utils/storage";
 
   /* Import unchanged settings stylesheet globally */
   import "@/styles/settings-shared.css";
@@ -87,52 +88,25 @@
     ]);
     queueCount = (video?.length || 0) + (reading?.length || 0);
   }
-  function applyCustomTheme(colors: any) {
-    if (!colors) return;
-    const root = document.documentElement;
-    root.style.setProperty("--color-background", colors.background);
-    root.style.setProperty("--color-surface", colors.surface);
-    root.style.setProperty(
-      "--color-surface-alt",
-      colors.surfaceAlt || colors.surface,
-    );
-    root.style.setProperty("--color-border", colors.border);
-    root.style.setProperty(
-      "--color-border-hover",
-      colors.borderHover || colors.border,
-    );
-    root.style.setProperty("--color-text", colors.text);
-    root.style.setProperty("--color-text-muted", colors.textMuted);
-    root.style.setProperty("--color-text-dimmed", colors.textMuted);
-    root.style.setProperty("--color-accent", colors.accent);
-    root.style.setProperty(
-      "--color-accent-hover",
-      colors.accentHover || colors.accent,
-    );
-    root.style.setProperty("--color-success", colors.success || "#3ddc84");
-  }
-
-  function clearCustomTheme() {
-    const root = document.documentElement;
-    root.style.removeProperty("--color-background");
-    root.style.removeProperty("--color-surface");
-    root.style.removeProperty("--color-surface-alt");
-    root.style.removeProperty("--color-border");
-    root.style.removeProperty("--color-border-hover");
-    root.style.removeProperty("--color-text");
-    root.style.removeProperty("--color-text-muted");
-    root.style.removeProperty("--color-text-dimmed");
-    root.style.removeProperty("--color-accent");
-    root.style.removeProperty("--color-accent-hover");
-    root.style.removeProperty("--color-success");
-  }
 
   onMount(() => {
-    // Restore active tab from localStorage if available
-    const savedTab = localStorage.getItem("nt-active-settings-tab");
-    if (savedTab) {
-      activeTab = savedTab;
-    }
+    // Restore active tab from extension storage or localStorage
+    const loadSavedTab = async () => {
+      const savedTab = (await storage.getItem(
+        "local:activeSettingsTab",
+      )) as string;
+      if (savedTab) {
+        activeTab = savedTab;
+        // Clean up the key so future manual settings opens don't force a tab redirection
+        await storage.setItem("local:activeSettingsTab", null);
+      } else {
+        const localSaved = localStorage.getItem("nt-active-settings-tab");
+        if (localSaved) {
+          activeTab = localSaved;
+        }
+      }
+    };
+    loadSavedTab();
 
     // Load configuration values concurrently in parallel
     const loadConfigAndTheme = async () => {
@@ -148,10 +122,13 @@
       const applyTheme = (c: any) => {
         const theme = c?.theme ?? "nihongo";
         const font = c?.font ?? "sans";
-        if (theme.startsWith("custom_") || theme.startsWith("custom-")) {
+        if (
+          theme.startsWith("custom_") ||
+          theme.startsWith("custom-") ||
+          theme === "custom"
+        ) {
           const themeId = theme.replace("custom_", "").replace("custom-", "");
           const customThemes = c?.customThemes || [];
-          // Robust custom theme matching supporting both raw, underscore, and dash-prefixed IDs
           const targetTheme = customThemes.find(
             (t: any) =>
               t.id === themeId ||
@@ -161,13 +138,10 @@
           );
           if (targetTheme) {
             applyThemeToDocument("dark-amber", font, targetTheme.colors);
-            applyCustomTheme(targetTheme.colors);
           } else {
-            clearCustomTheme();
             applyThemeToDocument("dark-amber", font);
           }
         } else {
-          clearCustomTheme();
           applyThemeToDocument(theme, font);
         }
       };
@@ -192,22 +166,24 @@
         const val = changes["config"].newValue as any;
         const nextTheme = val?.theme ?? "nihongo";
         const nextFont = val?.font ?? "sans";
-        if (nextTheme.startsWith("custom_")) {
-          const themeId = nextTheme.replace("custom_", "");
+        if (
+          nextTheme.startsWith("custom_") ||
+          nextTheme.startsWith("custom-") ||
+          nextTheme === "custom"
+        ) {
+          const themeId = nextTheme
+            .replace("custom_", "")
+            .replace("custom-", "");
           const customThemes = val?.customThemes || [];
-          // Robust custom theme matching supporting both raw and prefixed IDs
           const targetTheme = customThemes.find(
             (t: any) => t.id === themeId || t.id === nextTheme,
           );
           if (targetTheme) {
             applyThemeToDocument("dark-amber", nextFont, targetTheme.colors);
-            applyCustomTheme(targetTheme.colors);
           } else {
-            clearCustomTheme();
             applyThemeToDocument("dark-amber", nextFont);
           }
         } else {
-          clearCustomTheme();
           applyThemeToDocument(nextTheme, nextFont);
         }
       }
@@ -221,6 +197,10 @@
           msg.title.toLowerCase().includes("fail") ||
             msg.title.toLowerCase().includes("error"),
         );
+      }
+      // Instantly switch tabs when redirected from an already active open settings tab
+      if (msg.action === "SWITCH_SETTINGS_TAB") {
+        handleTabChange(msg.tab);
       }
     };
     browser.runtime.onMessage.addListener(messageListener);
@@ -248,6 +228,7 @@
         onStatus={showStatus}
         onQueueCountChange={handleQueueCountChange}
         onConfirm={handleConfirm}
+        onTabChange={handleTabChange}
       />
     {:else if activeTab === "api"}
       <ApiKeyTab onStatus={showStatus} />
@@ -308,9 +289,13 @@
 {/if}
 
 <style>
-  /* Force system success green on all matched list checkmarks and settings API status elements globally */
+  /* Force system theme-adaptive green on all matched list checkmarks and settings status elements globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
-    color: #3ddc84 !important;
-    border-color: rgba(61, 220, 132, 0.25) !important;
+    color: var(--color-api-green) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--color-api-green) 25%,
+      transparent
+    ) !important;
   }
 </style>

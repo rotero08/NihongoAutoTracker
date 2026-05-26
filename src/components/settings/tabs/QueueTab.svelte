@@ -23,14 +23,18 @@
       msg: string,
       warnKey?: string,
     ) => Promise<boolean>;
+    onTabChange?: (tab: string) => void;
   }
-  let { onStatus, onQueueCountChange, onConfirm }: Props = $props();
+  let { onStatus, onQueueCountChange, onConfirm, onTabChange }: Props =
+    $props();
 
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
   let currentFilter = $state("all");
   let autoSendEOD = $state(false);
+  let showTotalInBadge = $state(true); // Control setting for combined dynamic toolbar badge count
   let isSendingAll = $state(false);
+  let isGuideOpen = $state(true); // Default to uncollapsed (open) on first load
 
   const filteredReading = $derived(
     currentFilter === "all" || currentFilter === "reading" ? readingQueue : [],
@@ -42,7 +46,6 @@
 
   export async function load() {
     console.log("[load] Loading queues concurrently from storage...");
-    // Run all storage queries concurrently to speed up tab load times
     const [video, reading, cfg] = await Promise.all([
       videoQueueStorage.getValue(),
       readingQueueStorage.getValue(),
@@ -52,6 +55,7 @@
     videoQueue = video;
     readingQueue = reading;
     autoSendEOD = cfg.autoSendEndOfDay ?? false;
+    showTotalInBadge = cfg.showTotalInBadge !== false;
     onQueueCountChange(total);
   }
 
@@ -60,6 +64,14 @@
     await configStorage.setValue({ ...cfg, autoSendEndOfDay: autoSendEOD });
     onStatus(
       autoSendEOD ? "✓ EOD auto-send enabled" : "✓ EOD auto-send disabled",
+    );
+  }
+
+  async function toggleBadgeOption() {
+    const cfg = (await configStorage.getValue()) as any;
+    await configStorage.setValue({ ...cfg, showTotalInBadge });
+    onStatus(
+      showTotalInBadge ? "✓ Badge count enabled" : "✓ Badge count disabled",
     );
   }
 
@@ -180,7 +192,6 @@
     // Process video logs
     for (const item of vItems) {
       try {
-        // Ensure channel media data is resolved
         const channelId = item.channelId || item.mediaData?.channelId;
         const channelTitle =
           item.mediaData?.channelTitle ||
@@ -227,11 +238,9 @@
       }
     }
 
-    // Retrieve the absolute freshest queue values from storage right before writing
     const freshReadingQueue = await readingQueueStorage.getValue();
     const freshVideoQueue = await videoQueueStorage.getValue();
 
-    // Retain failed items, while preserving newly added items that came in during the network requests
     const nextReadingQueue = [
       ...freshReadingQueue.filter(
         (item: any) => !rItems.some((sent: any) => sent.id === item.id),
@@ -276,9 +285,21 @@
     await load();
   }
 
+  function handleGuideToggle(e: Event) {
+    const isOpen = (e.target as HTMLDetailsElement).open;
+    isGuideOpen = isOpen;
+    localStorage.setItem("nt-queue-guide-open", String(isOpen));
+  }
+
   onMount(() => {
     load();
-    /* Watch for external storage changes */
+
+    // Recover guide collapsed preference state
+    const saved = localStorage.getItem("nt-queue-guide-open");
+    if (saved !== null) {
+      isGuideOpen = saved === "true";
+    }
+
     readingQueueStorage.watch(() => {
       const focusedTag = document.activeElement?.tagName;
       if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
@@ -312,10 +333,10 @@
   {/if}
 </div>
 
-<!-- Auto-send EOD toggle box (Contrast Fixed) -->
+<!-- Auto-send EOD toggle box -->
 <div
   class="field"
-  style="margin-bottom: 16px; background: color-mix(in srgb, var(--color-accent) 5%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 6px; padding: 12px 16px;"
+  style="margin-bottom: 8px; background: color-mix(in srgb, var(--color-accent) 5%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 6px; padding: 12px 16px;"
 >
   <div class="tooltip-wrap" style="display:flex; width:100%;">
     <label class="toggle" style="flex:1;">
@@ -327,10 +348,32 @@
         onchange={toggleEOD}
       />
       <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      Automatically send today's queued logs at end of day
+      Automatically send today's queued logs at end of day (23:45)
     </label>
-    <span class="tooltip">This would also send unmatched media</span>
+    <span class="tooltip">This will also submit unmatched media</span>
   </div>
+</div>
+
+<!-- Discrete Badge toggle option -->
+<div class="field" style="margin-bottom: 20px; padding-left: 4px;">
+  <label
+    class="toggle"
+    style="font-size: 11.5px; color: var(--color-text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; user-select: none;"
+  >
+    <input
+      type="checkbox"
+      id="show-total-in-badge"
+      class="toggle-chk"
+      bind:checked={showTotalInBadge}
+      onchange={toggleBadgeOption}
+    />
+    <span
+      class="toggle-track"
+      style="transform: scale(0.85); margin-right: 4px;"
+      ><span class="toggle-thumb"></span></span
+    >
+    Show total pending queue items as a badge on the extension icon
+  </label>
 </div>
 
 <!-- Filter tabs -->
@@ -346,12 +389,41 @@
   {/each}
 </div>
 
-<!-- Info box matching original -->
-<div class="info-box">
-  <strong>ⓘ Auto-Sum & Overrides:</strong> Editing individual sessions updates
-  the total automatically. If you manually set the <em>Total</em> higher than the
-  sum, the Total takes priority and sends as one combined log.
-</div>
+<!-- Compact, borderless, backgroundless collapsible Guide -->
+<details
+  class="info-guide"
+  open={isGuideOpen}
+  ontoggle={handleGuideToggle}
+  style="background: none; border: none; margin-bottom: 12px; font-family: var(--font-sans);"
+>
+  <summary
+    style="padding: 2px 0; font-size: 11px; font-weight: bold; cursor: pointer; color: var(--color-accent); list-style: none; display: flex; align-items: center; gap: 4px; user-select: none; width: max-content;"
+  >
+    <span>ⓘ Click to show/hide Guide & Queue Rules</span>
+  </summary>
+  <div
+    style="padding-top: 8px; font-size: 11px; line-height: 1.45; display: flex; flex-direction: column; gap: 6px; color: var(--color-text-muted);"
+  >
+    <div>
+      <strong style="color: var(--color-text);">Auto-Sum:</strong> Editing session
+      values updates the totals automatically. Manually typing a higher total overrides
+      the sum.
+    </div>
+    <div>
+      <strong style="color: var(--color-text);">Music Videos:</strong> Excluded
+      by default to preserve log quality. Enable them in
+      <a
+        href="#video"
+        onclick={(e) => {
+          e.preventDefault();
+          if (onTabChange) onTabChange("video");
+        }}
+        style="color: var(--color-accent); text-decoration: underline;"
+        >Video Settings</a
+      >.
+    </div>
+  </div>
+</details>
 
 <!-- Queue items -->
 <div id="queue-list">
@@ -381,7 +453,6 @@
 </div>
 
 <style>
-  /* Local adjustments to preserve exact original settings queue spacing */
   #queue-list {
     display: flex;
     flex-direction: column;

@@ -16,6 +16,7 @@
     applyThemeToDocument,
     THEME_OPTIONS,
     FONT_OPTIONS,
+    DYNAMIC_LOGO_SVG,
   } from "@/lib/ui/themes";
   import "@/styles/popup-shared.css";
 
@@ -149,48 +150,57 @@
 
     if (matchedColors) {
       applyThemeToDocument("dark-amber", fontVal, matchedColors);
-      applyCustomTheme(matchedColors);
     } else if (isCustomThemeId(themeVal)) {
       const activeThemeObj = (cfg?.customThemes ?? []).find(
         (t: any) => t.id === themeVal,
       );
       if (activeThemeObj) {
         applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors);
-        applyCustomTheme(activeThemeObj.colors);
       } else if (cfg?.customColors) {
         applyThemeToDocument("dark-amber", fontVal, cfg.customColors);
-        applyCustomTheme(cfg.customColors);
       } else {
-        clearCustomTheme();
         applyThemeToDocument("dark-amber", fontVal);
       }
     } else {
-      clearCustomTheme();
       applyThemeToDocument(themeVal, fontVal);
     }
   }
 
   /* ── Data loading ── */
   async function loadData() {
-    const activeTabs = await browser.tabs.query({
-      active: true,
-      currentWindow: true,
-    });
+    // Execute critical tab query and primary storage queries concurrently to prevent waterfall delay
+    const tabPromise = browser.tabs
+      .query({ active: true, currentWindow: true })
+      .catch(() => []);
+    const vQueuePromise = videoQueueStorage.getValue().catch(() => []);
+    const rQueuePromise = readingQueueStorage.getValue().catch(() => []);
+    const cfgPromise = (configStorage.getValue() as Promise<any>).catch(
+      () => null,
+    );
+
+    const [activeTabs, vQueue, rQueue, cfg] = await Promise.all([
+      tabPromise,
+      vQueuePromise,
+      rQueuePromise,
+      cfgPromise,
+    ]);
+
     activeUrl = activeTabs[0]?.url || "";
     let host = "";
     try {
       if (activeUrl) host = new URL(activeUrl).hostname;
     } catch (e) {}
 
-    // Load queues, config, and any cached reader theme colors for the current host in parallel
-    const [vQueue, rQueue, cfg, localStore] = await Promise.all([
-      videoQueueStorage.getValue(),
-      readingQueueStorage.getValue(),
-      configStorage.getValue() as Promise<any>,
-      host
-        ? browser.storage.local.get(`readerColors:${host}`)
-        : Promise.resolve({} as any),
-    ]);
+    // Fetch localized reader colors only after the hostname has been established
+    let detectedColors = null;
+    if (host) {
+      try {
+        const localStore = await browser.storage.local.get(
+          `readerColors:${host}`,
+        );
+        detectedColors = localStore[`readerColors:${host}`];
+      } catch (e) {}
+    }
 
     videoQueue = vQueue;
     readingQueue = rQueue;
@@ -201,84 +211,7 @@
     selectedFont = cfg?.font ?? "sans";
     syncPopupWithReaderTheme = cfg?.syncPopupWithReaderTheme !== false;
 
-    const detectedColors = host
-      ? (localStore as any)[`readerColors:${host}`]
-      : null;
     applyInitialTheme(cfg, activeUrl, detectedColors);
-  }
-
-  function applyCustomTheme(colors: any) {
-    if (!colors) return;
-    const root = document.documentElement;
-    const defaultColors = {
-      background: "#07070e",
-      surface: "#0d0d1c",
-      surfaceAlt: "#10101f",
-      border: "#1a2235",
-      borderHover: "#222d42",
-      text: "#dde4f0",
-      textMuted: "#7a8ca5",
-      accent: "#f0b429",
-      accentHover: "#ffd060",
-      success: "#3ddc84",
-    };
-
-    root.style.setProperty(
-      "--color-background",
-      colors.background || defaultColors.background,
-    );
-    root.style.setProperty(
-      "--color-surface",
-      colors.surface || defaultColors.surface,
-    );
-    root.style.setProperty(
-      "--color-surface-alt",
-      colors.surfaceAlt || colors.surface || defaultColors.surfaceAlt,
-    );
-    root.style.setProperty(
-      "--color-border",
-      colors.border || defaultColors.border,
-    );
-    root.style.setProperty(
-      "--color-border-hover",
-      colors.borderHover || colors.border || defaultColors.borderHover,
-    );
-    root.style.setProperty("--color-text", colors.text || defaultColors.text);
-    root.style.setProperty(
-      "--color-text-muted",
-      colors.textMuted || defaultColors.textMuted,
-    );
-    root.style.setProperty(
-      "--color-text-dimmed",
-      colors.textMuted || defaultColors.textMuted,
-    );
-    root.style.setProperty(
-      "--color-accent",
-      colors.accent || defaultColors.accent,
-    );
-    root.style.setProperty(
-      "--color-accent-hover",
-      colors.accentHover || colors.accent || defaultColors.accentHover,
-    );
-    root.style.setProperty(
-      "--color-success",
-      colors.success || defaultColors.success,
-    );
-  }
-
-  function clearCustomTheme() {
-    const root = document.documentElement;
-    root.style.removeProperty("--color-background");
-    root.style.removeProperty("--color-surface");
-    root.style.removeProperty("--color-surface-alt");
-    root.style.removeProperty("--color-border");
-    root.style.removeProperty("--color-border-hover");
-    root.style.removeProperty("--color-text");
-    root.style.removeProperty("--color-text-muted");
-    root.style.removeProperty("--color-text-dimmed");
-    root.style.removeProperty("--color-accent");
-    root.style.removeProperty("--color-accent-hover");
-    root.style.removeProperty("--color-success");
   }
 
   function decorateDropdownOptions() {
@@ -343,10 +276,10 @@
     });
   }
 
-  onMount(() => {
-    // Initiate single unified parallel load process
-    loadData();
+  // Invoke loadData immediately on script evaluation to unblock the initial paint lifecycle
+  loadData();
 
+  onMount(() => {
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
@@ -375,16 +308,12 @@
           );
           if (activeThemeObj) {
             applyThemeToDocument("dark-amber", nextFont, activeThemeObj.colors);
-            applyCustomTheme(activeThemeObj.colors);
           } else if (val?.customColors) {
             applyThemeToDocument("dark-amber", nextFont, val.customColors);
-            applyCustomTheme(val.customColors);
           } else {
-            clearCustomTheme();
             applyThemeToDocument("dark-amber", nextFont);
           }
         } else {
-          clearCustomTheme();
           applyThemeToDocument(nextTheme, nextFont);
         }
       }
@@ -474,7 +403,6 @@
         cfg.selectedThemeId = undefined;
         cfg.customColors = undefined;
         selectedTheme = "dark-amber";
-        clearCustomTheme();
         applyThemeToDocument("dark-amber", selectedFont);
       }
       await configStorage.setValue(cfg);
@@ -495,15 +423,11 @@
       await configStorage.setValue(cfg);
       // Base themes are set first, then our custom theme overrides them correctly
       applyThemeToDocument("dark-amber", selectedFont, activeThemeObj?.colors);
-      if (activeThemeObj) {
-        applyCustomTheme(activeThemeObj.colors);
-      }
     } else {
       cfg.theme = val;
       cfg.selectedThemeId = undefined;
       cfg.customColors = undefined;
       await configStorage.setValue(cfg);
-      clearCustomTheme();
       applyThemeToDocument(val, selectedFont);
     }
   }
@@ -517,9 +441,6 @@
         (t: any) => t.id === selectedTheme,
       );
       applyThemeToDocument("dark-amber", val, activeThemeObj?.colors);
-      if (activeThemeObj) {
-        applyCustomTheme(activeThemeObj.colors);
-      }
     } else {
       applyThemeToDocument(selectedTheme, val);
     }
@@ -779,7 +700,7 @@
 <header class="header">
   <div class="brand">
     <div class="brand-mark">
-      <img src="/NihongoAutoTracker.svg" alt="NAT" />
+      {@html DYNAMIC_LOGO_SVG}
     </div>
     <div class="brand-text">
       <div class="brand-name">NihongoAutoTracker</div>
@@ -810,9 +731,17 @@
         <path d="M12 18a6 6 0 1 0 0-12v12z" fill="currentColor" />
       </svg>
     </button>
-    <button class="icon-btn" title="Open Settings" onclick={openSettings}
-      >⚙</button
-    >
+    <button class="icon-btn" title="Open Settings" onclick={openSettings}>
+      <!-- Standard highly obvious filled gear settings cog SVG icon scaled identically to the toggle button -->
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        style="width: 14px; height: 14px; display: block;"
+        ><path
+          d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.64-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
+        /></svg
+      >
+    </button>
 
     {#if showCompactMenu}
       <div
@@ -994,10 +923,9 @@
     flex-shrink: 0;
     background: transparent;
   }
-  .brand-mark img {
+  .brand-mark :global(svg) {
     width: 100%;
     height: 100%;
-    object-fit: contain;
   }
   .brand-name {
     font-size: 11px;
@@ -1016,40 +944,49 @@
     border-radius: 8px;
   }
   .pill-ok {
-    color: #3ddc84 !important;
-    border: 1px solid rgba(61, 220, 132, 0.25) !important;
-    background: rgba(61, 220, 132, 0.07) !important;
+    color: var(--color-api-green) !important;
+    border: 1px solid
+      color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
+    background: color-mix(
+      in srgb,
+      var(--color-api-green) 8%,
+      transparent
+    ) !important;
   }
   .pill-off {
     color: var(--color-error);
     border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
     background: color-mix(in srgb, var(--color-error) 7%, transparent);
   }
+
+  /* Transparent, borderless header options buttons with hover transitions */
   .icon-btn {
-    width: 26px;
-    height: 26px;
-    background: none;
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
     color: var(--color-text-muted);
-    font-size: 13px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition:
-      color 0.15s,
-      border-color 0.15s;
+    transition: color 0.15s;
+    padding: 0;
   }
   .icon-btn:hover {
-    color: var(--color-text);
-    border-color: var(--color-border-hover);
+    color: var(--color-accent) !important;
   }
 
-  /* Force system success green on all matched list checkmarks and popup items globally */
+  /* Force system theme-adaptive green on all matched list checkmarks and popup items globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
-    color: #3ddc84 !important;
-    border-color: rgba(61, 220, 132, 0.25) !important;
+    color: var(--color-api-green) !important;
+    border-color: color-mix(
+      in srgb,
+      var(--color-api-green) 25%,
+      transparent
+    ) !important;
   }
 
   /* ── Separator ── */
@@ -1089,19 +1026,6 @@
     display: flex;
     gap: 6px;
   }
-  .badge {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-accent);
-    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
-    border-radius: 8px;
-    padding: 1px 6px;
-    font-size: 10px;
-    font-weight: bold;
-  }
-  .queue-bulk {
-    display: flex;
-    gap: 6px;
-  }
   .bulk-btn {
     font-family: var(--font-mono);
     font-size: 10px;
@@ -1117,7 +1041,7 @@
   }
   .bulk-btn.amber {
     background: var(--color-accent);
-    color: var(--color-background);
+    color: var(--color-accent-text);
     border-color: var(--color-accent);
   }
   .bulk-btn.ghost {

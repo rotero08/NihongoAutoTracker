@@ -1,7 +1,7 @@
 <!--
   ── VideoTab.svelte ──────────────────────────────────────────────────────────
-  Video tracking settings: thresholds, auto-send, badge display, toggles.
-  Matches the original settings/index.html design exactly.
+  Video tracking settings: thresholds, auto-send, badge displays, and toggles.
+  Saves all settings automatically on any change.
 -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
@@ -22,6 +22,7 @@
   let hideButtons = $state(false);
   let hideIfNotJp = $state(false);
   let hideMusic = $state(false);
+  let logMusicVideos = $state(false); // Music logging toggle state
   let enablePlaylist = $state(true);
   let playlistHideNonJp = $state(true);
   let showTotal = $state("total");
@@ -46,12 +47,14 @@
     hideButtons = cfg.hideButtons ?? false;
     hideIfNotJp = cfg.hideIfNotJapanese ?? false;
     hideMusic = cfg.hideMusic ?? false;
+    logMusicVideos = cfg.logMusicVideos ?? false;
     enablePlaylist = cfg.enablePlaylistLogger ?? true;
     playlistHideNonJp = cfg.playlistHideNonJapanese ?? true;
     showTotal = (cfg.showTotalInBadge ?? true) ? "total" : "session";
   }
 
-  async function save() {
+  /* ── Auto-Saving Logic ── */
+  async function persist() {
     const cfg = (await configStorage.getValue()) as any;
     const tVal = threshType === "percent" ? threshPct : threshMin;
     const qtVal =
@@ -67,11 +70,12 @@
       hideButtons,
       hideIfNotJapanese: hideIfNotJp,
       hideMusic,
+      logMusicVideos,
       enablePlaylistLogger: enablePlaylist,
       playlistHideNonJapanese: playlistHideNonJp,
       showTotalInBadge: showTotal === "total",
     });
-    onStatus("✓ Video Settings Saved");
+    onStatus("✓ Settings Auto-Saved");
   }
 
   async function reset() {
@@ -87,30 +91,37 @@
       hideButtons: false,
       hideIfNotJapanese: false,
       hideMusic: false,
+      logMusicVideos: false,
       enablePlaylistLogger: true,
       playlistHideNonJapanese: true,
       showTotalInBadge: true,
     });
     await load();
-    onStatus("✓ Defaults Restored");
+    onStatus("✓ Video Defaults Restored");
   }
 
-  /* ── Spinner helpers (match original SVG arrow buttons) ── */
+  /* ── Spinner helpers ── */
   function spinUp(getter: () => number, setter: (v: number) => void) {
     setter(getter() + 1);
+    persist();
   }
   function spinDn(getter: () => number, setter: (v: number) => void) {
     setter(Math.max(1, getter() - 1));
+    persist();
   }
 
   load();
 </script>
 
-<div class="tab-head"><h2>Video Tracking</h2></div>
+<div class="tab-head"><h2>Video Tracking Configuration</h2></div>
+<p class="hint">
+  Customise watch thresholds and automated logging options for video players.
+  All changes are saved automatically.
+</p>
 
-<!-- Auto-Queue Threshold Type (matches original exactly) -->
+<!-- Auto-Queue Threshold Type -->
 <div class="field">
-  <span class="label">Auto-Queue Threshold Type</span>
+  <span class="label">Auto-Queue Criteria</span>
   <div class="thresh-row">
     <label class="thresh-opt">
       <input
@@ -118,6 +129,7 @@
         name="queue-thresh-type"
         value="time"
         bind:group={queueThreshType}
+        onchange={persist}
       /> Minutes watched
     </label>
     <label class="thresh-opt">
@@ -126,7 +138,8 @@
         name="queue-thresh-type"
         value="percent"
         bind:group={queueThreshType}
-      /> Percentage
+        onchange={persist}
+      /> Percentage watched
     </label>
   </div>
 </div>
@@ -134,7 +147,7 @@
 <!-- Auto-Queue Threshold Value -->
 <div class="field">
   <label class="label" for="queue-thresh-min"
-    >Auto-Queue Threshold
+    >Auto-Queue Limit
     <span class="label-val"
       >{queueThreshType === "percent"
         ? queueThreshPct + "%"
@@ -150,6 +163,7 @@
       max="100"
       step="1"
       bind:value={queueThreshPct}
+      onchange={persist}
       aria-label="Queue threshold percentage"
     />
     <div class="slider-ticks">
@@ -165,6 +179,7 @@
         class="input"
         min="1"
         bind:value={queueThreshMin}
+        onchange={persist}
       />
       <div class="thresh-spin-btns">
         <button
@@ -202,7 +217,8 @@
       </div>
     </div>
     <p class="hint" style="margin-top:7px;margin-bottom:0">
-      Queue video automatically when watched time reaches this threshold.
+      Automatically place the video in your pending queue once this watch
+      threshold has been met.
     </p>
   {/if}
 </div>
@@ -210,16 +226,21 @@
 <!-- Auto-send toggle -->
 <div class="field">
   <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={autoSend} />
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={autoSend}
+      onchange={persist}
+    />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Automatically send video based on threshold
+    Directly submit logs to NihongoTracker (Bypasses local pending queue)
   </label>
 </div>
 
 <!-- Auto-send threshold config (dimmed if auto-send off) -->
 <div id="auto-config" class:dim-block={!autoSend}>
   <div class="field">
-    <span class="label">Threshold Type</span>
+    <span class="label">Instant Submission Criteria</span>
     <div class="thresh-row">
       <label class="thresh-opt">
         <input
@@ -227,6 +248,7 @@
           name="thresh-type"
           value="time"
           bind:group={threshType}
+          onchange={persist}
         /> Minutes watched
       </label>
       <label class="thresh-opt">
@@ -235,13 +257,14 @@
           name="thresh-type"
           value="percent"
           bind:group={threshType}
-        /> Percentage
+          onchange={persist}
+        /> Percentage watched
       </label>
     </div>
   </div>
   <div class="field">
     <label class="label" for="thresh-min"
-      >Threshold Value
+      >Instant Submission Threshold
       <span class="label-val"
         >{threshType === "percent" ? threshPct + "%" : threshMin + " min"}</span
       >
@@ -255,6 +278,7 @@
         max="100"
         step="1"
         bind:value={threshPct}
+        onchange={persist}
         aria-label="Auto send threshold percentage"
       />
       <div class="slider-ticks">
@@ -270,6 +294,7 @@
           class="input"
           min="1"
           bind:value={threshMin}
+          onchange={persist}
         />
         <div class="thresh-spin-btns">
           <button
@@ -307,39 +332,95 @@
         </div>
       </div>
       <p class="hint" style="margin-top:7px;margin-bottom:0">
-        Send when accumulated watch time reaches this many minutes.
+        Directly send the immersion log to NihongoTracker once this accumulated
+        watch time is reached.
       </p>
     {/if}
   </div>
 </div>
 
-<!-- UI toggles -->
+<!-- Player Options & Filters -->
+<div class="sub-head"><h3>Interface Settings & Content Filters</h3></div>
+
 <div class="field">
   <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={hideButtons} />
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={hideButtons}
+      onchange={persist}
+    />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Hide Log button on video players
+    Completely hide tracker status badges and buttons on players
   </label>
 </div>
 <div class="field" class:dim-block={hideButtons} id="hide-jp-field">
   <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={hideIfNotJp} />
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={hideIfNotJp}
+      onchange={persist}
+    />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Hide Log button if content is not Japanese
+    Only show tracker status badge if the video contains Japanese characters or captions
   </label>
 </div>
 <div class="field" class:dim-block={hideButtons} id="hide-music-field">
   <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={hideMusic} />
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={hideMusic}
+      onchange={persist}
+    />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Hide Log button on music videos
+    Do not display tracker status badge on music videos
   </label>
 </div>
-<div class="field">
-  <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={enablePlaylist} />
+
+<!-- Enhanced Music Video Immersion Toggle and Tooltip -->
+<div
+  class="field"
+  class:dim-block={hideButtons}
+  style="display: flex; align-items: center; justify-content: space-between;"
+>
+  <label class="toggle" style="flex: 1;">
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={logMusicVideos}
+      onchange={persist}
+    />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Show Playlist Logger button on YouTube
+    Allow queueing and logging of Japanese music videos
+  </label>
+  <div class="tooltip-wrap" style="cursor: help; margin-left: 8px;">
+    <span
+      style="display: inline-flex; align-items: center; justify-content: center; background: var(--color-border); color: var(--color-accent); border-radius: 50%; width: 18px; height: 18px; font-size: 11px; font-weight: bold; font-family: var(--font-mono);"
+      >i</span
+    >
+    <span
+      class="tooltip"
+      style="width: 250px; white-space: normal; line-height: 1.4;"
+    >
+      Not recommended. Music videos generally contain highly repetitive lyrics,
+      artistic styling, and low density text, which are not considered
+      high-quality active immersion material.
+    </span>
+  </div>
+</div>
+
+<div class="field" style="margin-top: 24px;">
+  <label class="toggle">
+    <input
+      type="checkbox"
+      class="toggle-chk"
+      bind:checked={enablePlaylist}
+      onchange={persist}
+    />
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    Show Bulk Playlist Logger button on YouTube playlist headers
   </label>
 </div>
 <div class="field">
@@ -348,22 +429,29 @@
       type="checkbox"
       class="toggle-chk"
       bind:checked={playlistHideNonJp}
+      onchange={persist}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Hide non-Japanese videos in Playlist Logger by default
+    Automatically filter out non-Japanese videos in Playlist Logger
   </label>
 </div>
 
 <!-- Badge display mode -->
-<div class="field" id="show-total-field">
-  <label class="label" for="show-total-badge">Badge Display Mode</label>
-  <select id="show-total-badge" class="input" bind:value={showTotal}>
-    <option value="session">Current Session Only</option>
-    <option value="total">Current Session / Total Time</option>
+<div class="field" id="show-total-field" style="margin-top: 24px;">
+  <label class="label" for="show-total-badge"
+    >Player Status Badge Display Mode</label
+  >
+  <select
+    id="show-total-badge"
+    class="input"
+    bind:value={showTotal}
+    onchange={persist}
+  >
+    <option value="session">Show Active Session Time Only</option>
+    <option value="total">Show Active Session / Local Queued Time</option>
   </select>
 </div>
 
-<div style="display:flex; gap:10px;">
-  <button class="btn btn-amber" onclick={save}>Save</button>
+<div style="display:flex; gap:10px; margin-top: 28px;">
   <button class="btn btn-ghost" onclick={reset}>Revert to Default</button>
 </div>

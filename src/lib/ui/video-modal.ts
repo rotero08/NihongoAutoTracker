@@ -8,18 +8,12 @@
  * - `injectModalStyles()` — injects the modal CSS once into the page
  * - `localTodayISODate()` — returns today's date in YYYY-MM-DD format
  * - `dateInputToISO()` — converts a date input value to ISO string
- *
- * These were extracted from video-tracker.content.ts (lines 266–397)
- * without changing any CSS values or logic.
  */
 
-import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 import type { UITheme } from '@/lib/types';
 import { DEFAULT_THEME } from '@/lib/types';
+import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
 import { getTheme } from './themes';
-
-// Restores original brand logo and guarantees it is completely shadow-free
-const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');
 
 export function showNTEditModal(
   badgeEl: HTMLElement,
@@ -58,7 +52,7 @@ export function showNTEditModal(
   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
   <div class="nt-modal-header">
   <div class="nt-logo-sq" style="border:none; display:flex; align-items:center; justify-content:center;">
-  ${inlineLogo}
+  ${DYNAMIC_LOGO_SVG}
   </div>
   <div class="nt-title-area"><span class="nt-brand-name">NihongoAutoTracker</span><span class="nt-badge">MANUAL LOG</span></div>
   </div>
@@ -177,11 +171,9 @@ let lastInjectedThemeSignature = '';
  * @param theme - Optional theme override. Defaults to DEFAULT_THEME.
  */
 export function injectModalStyles(theme: UITheme = DEFAULT_THEME): void {
-  // Generate a unique identifier signature from properties defined in UIThemeColors and UIThemeTypography
-  const activeThemeSignature = `${theme.colors.bg}_${theme.colors.accent}_${theme.typography.mono}`;
+  const activeThemeSignature = `${theme.colors.background}_${theme.colors.accent}_${theme.typography.mono}`;
   let style = document.getElementById('nt-modal-styles') as HTMLStyleElement;
 
-  // Skip redundant style recalculations if style exists and theme hasn't changed
   if (style && lastInjectedThemeSignature === activeThemeSignature) {
     return;
   }

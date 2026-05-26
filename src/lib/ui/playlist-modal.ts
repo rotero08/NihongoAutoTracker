@@ -1,18 +1,18 @@
 /**
  * ── Playlist Modal Interface Renderer ───────────────────────────────────────
  */
-import rawLogoSvg from '@/../public/NihongoAutoTracker.svg?raw';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { JP_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
+import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
 import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 import { getTheme } from './themes';
 import { injectModalStyles } from './video-modal';
 
-// Loads authentic branding asset cleanly without drop shadows
-const inlineLogo = rawLogoSvg.replace(/<svg\b/i, '<svg style="width:100%;height:100%;display:block;object-fit:contain;filter:none !important;box-shadow:none !important;"');
+// Bound gradient stops and text fills to theme-controlled properties to natively adapt across light and dark modes
+const inlineLogo = DYNAMIC_LOGO_SVG;
 
 // Single global observer instantiated once to monitor text overflow changes efficiently
 let globalTitleResizeObserver: ResizeObserver | null = null;

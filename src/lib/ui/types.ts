@@ -18,7 +18,7 @@
 /** Color palette for injected UI elements */
 export interface UIThemeColors {
   /** Primary background (darkest layer) */
-  bg: string;
+  background: string;
   /** Surface background (cards, modals) */
   surface: string;
   /** Secondary surface (inputs, nested panels) */
@@ -65,7 +65,7 @@ export interface UITheme {
  */
 export const DEFAULT_THEME: UITheme = {
   colors: {
-    bg: '#07070e',
+    background: '#07070e',
     surface: '#0d0d12',
     surfaceAlt: '#14141e',
     border: '#222d42',

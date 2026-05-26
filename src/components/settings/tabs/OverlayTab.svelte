@@ -1,7 +1,7 @@
 <!--
   ── OverlayTab.svelte ────────────────────────────────────────────────────────
-  Overlay settings: position, track time, allow/skip site lists.
-  Matches the original settings/index.html #tab-overlay section exactly.
+  Overlay settings: position, track time, whitelist/blacklist sites.
+  Saves all settings automatically on any change.
 -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
@@ -36,7 +36,8 @@
     skipSites = cfg.skipSites ?? [...BUILT_IN_SKIP];
   }
 
-  async function save() {
+  /* ── Auto-Saving Logic ── */
+  async function persist() {
     const cfg = (await configStorage.getValue()) as any;
     await configStorage.setValue({
       ...cfg,
@@ -44,7 +45,7 @@
       allowListOnly,
       overlayPosition: overlayPos,
     });
-    onStatus("✓ Overlay Settings Saved");
+    onStatus("✓ Settings Auto-Saved");
   }
 
   async function reset() {
@@ -58,7 +59,7 @@
       skipSites: [...BUILT_IN_SKIP],
     });
     await load();
-    onStatus("✓ Defaults Restored");
+    onStatus("✓ Overlay Defaults Restored");
   }
 
   async function addSite(list: "allow" | "skip") {
@@ -75,7 +76,7 @@
       if (list === "allow") allowInput = "";
       else skipInput = "";
       await load();
-      onStatus(`✓ ${list === "allow" ? "Allowed" : "Skipped"} Site Added`);
+      onStatus(`✓ Added to ${list === "allow" ? "Whitelist" : "Blacklist"}`);
     }
   }
 
@@ -89,6 +90,7 @@
       [key]: sites.filter((d) => d !== domain),
     });
     await load();
+    onStatus(`✓ Removed from ${list === "allow" ? "Whitelist" : "Blacklist"}`);
   }
 
   /* Inline edit triggers */
@@ -125,9 +127,9 @@
       sites[index] = newVal;
       await configStorage.setValue({ ...cfg, [key]: sites });
       await load();
-      onStatus(`✓ Site updated to ${newVal}`);
+      onStatus(`✓ Updated domain to ${newVal}`);
     } else {
-      onStatus(`⚠ Duplicate site domain ignored`, true);
+      onStatus(`⚠ Duplicate domain ignored`, true);
       await load();
     }
   }
@@ -148,9 +150,10 @@
   load();
 </script>
 
-<div class="tab-head"><h2>Text Overlay</h2></div>
+<div class="tab-head"><h2>Active Text Overlay</h2></div>
 <p class="hint">
-  A small draggable timer overlay shown on Japanese pages while you read.
+  Configure the behavior, positioning, and target websites for the floating,
+  draggable reading timer.
 </p>
 
 <div class="field">
@@ -160,14 +163,15 @@
       id="track-time"
       class="toggle-chk"
       bind:checked={trackTime}
+      onchange={persist}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Include active reading time in context-menu logs
+    Track and attach active reading time on manual context-menu logs
   </label>
 </div>
 
 <div class="field">
-  <span class="label">Default Position</span>
+  <span class="label">Default Screen Position</span>
   <div class="pos-grid">
     <label class="pos-opt"
       ><input
@@ -175,6 +179,7 @@
         name="overlay-pos"
         value="top-left"
         bind:group={overlayPos}
+        onchange={persist}
       /> Top Left</label
     >
     <label class="pos-opt"
@@ -183,6 +188,7 @@
         name="overlay-pos"
         value="top-right"
         bind:group={overlayPos}
+        onchange={persist}
       /> Top Right</label
     >
     <label class="pos-opt"
@@ -191,6 +197,7 @@
         name="overlay-pos"
         value="bottom-left"
         bind:group={overlayPos}
+        onchange={persist}
       /> Bottom Left</label
     >
     <label class="pos-opt"
@@ -199,6 +206,7 @@
         name="overlay-pos"
         value="bottom-right"
         bind:group={overlayPos}
+        onchange={persist}
       /> Bottom Right</label
     >
     <label class="pos-opt pos-wide"
@@ -207,43 +215,47 @@
         name="overlay-pos"
         value="hidden"
         bind:group={overlayPos}
-      /> Hidden</label
+        onchange={persist}
+      /> Hidden (Disable floating overlay completely)</label
     >
   </div>
 </div>
 
-<div style="display:flex; gap:10px; margin-bottom:36px">
-  <button id="save-overlay-btn" class="btn btn-amber" onclick={save}
-    >Save</button
-  >
-</div>
-
 <!-- Sites sub-section -->
-<div class="sub-head"><h3>Sites</h3></div>
-<p class="hint" style="margin-top:0">
-  <strong style="color:var(--color-text)"
-    >It auto-detects japanese characters in a website to force the overlay.</strong
-  ><br />
-  To control where the overlay appears, click a domain to edit it inline.<br />
-  <strong style="color:var(--color-text)">Note:</strong> Sites in the Allow list
-  force the overlay to appear, bypassing auto-detection. Sites on the Skip list,
-  skips them even if it detects japanese characters.
+<div class="sub-head"><h3>Domain Whitelists & Blacklists</h3></div>
+<p class="hint" style="margin-top:0; line-height: 1.5;">
+  NihongoAutoTracker automatically detects Japanese characters on any website to
+  dynamically mount the tracking overlay.
+  <br /><br />
+  •
+  <strong style="color:var(--color-success)">Whitelist (Force Overlay):</strong>
+  Web domains where the floating overlay will <strong>always</strong> appear,
+  bypassing automatic Japanese language detection.
+  <br />
+  • <strong style="color:var(--color-error)">Blacklist (Block Overlay):</strong>
+  Web domains where the floating overlay is <strong>permanently blocked</strong>
+  from appearing, even if Japanese characters are detected.
+  <br /><br />
+  <span style="color: var(--color-text-muted);"
+    >Double-click any domain listed below to inline edit its host name.</span
+  >
 </p>
 
-<div class="field">
+<div class="field" style="margin-bottom: 24px;">
   <label class="toggle">
     <input
       type="checkbox"
       id="allow-list-only"
       class="toggle-chk"
       bind:checked={allowListOnly}
+      onchange={persist}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Only show overlay on Allow sites (disables auto-detection completely)
+    Only show overlay on Whitelisted domains (Disables automatic page analysis)
   </label>
 </div>
 
-<!-- Allow list -->
+<!-- Whitelist -->
 <div class="sites-group">
   <button
     type="button"
@@ -253,7 +265,7 @@
     onclick={() => (allowOpen = !allowOpen)}
   >
     <div class="sites-head-left">
-      <span class="sites-head-label allow">Allow</span>
+      <span class="sites-head-label allow">Whitelist (Force Overlay)</span>
       <span class="sites-head-count" id="allow-count">{allowSites.length}</span>
     </div>
     <span class="sites-chevron"
@@ -287,7 +299,7 @@
             <button
               class="site-remove"
               onclick={() => removeSite(site, "allow")}
-              aria-label="Remove allowed site"
+              aria-label="Remove whitelisted site"
               title="Remove site"
             >
               <svg viewBox="0 0 10 10"
@@ -309,19 +321,19 @@
           class="input"
           placeholder="e.g. example.jp"
           bind:value={allowInput}
-          aria-label="New allowed site domain"
+          aria-label="New whitelisted site domain"
         />
         <button
           id="allow-add"
           class="btn btn-amber btn-sm"
-          onclick={() => addSite("allow")}>Add</button
+          onclick={() => addSite("allow")}>Add Domain</button
         >
       </div>
     </div>
   {/if}
 </div>
 
-<!-- Skip list -->
+<!-- Blacklist -->
 <div class="sites-group" style="margin-bottom: 0;">
   <button
     type="button"
@@ -331,7 +343,7 @@
     onclick={() => (skipOpen = !skipOpen)}
   >
     <div class="sites-head-left">
-      <span class="sites-head-label skip">Skip</span>
+      <span class="sites-head-label skip">Blacklist (Block Overlay)</span>
       <span class="sites-head-count" id="skip-count">{skipSites.length}</span>
     </div>
     <span class="sites-chevron"
@@ -365,7 +377,7 @@
             <button
               class="site-remove"
               onclick={() => removeSite(site, "skip")}
-              aria-label="Remove skipped site"
+              aria-label="Remove blacklisted site"
               title="Remove site"
             >
               <svg viewBox="0 0 10 10"
@@ -387,19 +399,19 @@
           class="input"
           placeholder="e.g. example.com"
           bind:value={skipInput}
-          aria-label="New skipped site domain"
+          aria-label="New blacklisted site domain"
         />
         <button
           id="skip-add"
           class="btn btn-amber btn-sm"
-          onclick={() => addSite("skip")}>Add</button
+          onclick={() => addSite("skip")}>Add Domain</button
         >
       </div>
     </div>
   {/if}
 </div>
 
-<!-- Appended Reset Button at the bottom -->
+<!-- Appended Reset Button -->
 <div style="display:flex; gap:10px; margin-top:36px;">
   <button id="reset-overlay-btn" class="btn btn-ghost" onclick={reset}
     >Revert to Default</button

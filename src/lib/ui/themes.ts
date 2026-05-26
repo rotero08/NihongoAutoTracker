@@ -1,10 +1,32 @@
+/**
+ * ── Themes Registry & Dynamic Style Applicator ──────────────────────────────
+ *
+ * Defines default color palettes, typography, and layout rules for the extension.
+ * Natively compiles and injects responsive variables including button text colors,
+ * success alerts, and logo fills.
+ */
+
 import type { UITheme } from '@/lib/types';
+
+export const DYNAMIC_LOGO_SVG = `
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" style="display: block; width: 100%; height: 100%;" viewBox="0 0 1996 2000" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="BrandLogoGrad" gradientUnits="userSpaceOnUse" x1="886.829" y1="2067.63" x2="1050" y2="63.3125">
+      <stop offset="0" stop-color="var(--color-accent, rgb(200,128,19))" />
+      <stop offset="1" stop-color="var(--color-accent-hover, rgb(231,167,47))" />
+    </linearGradient>
+  </defs>
+  <path transform="translate(0,0)" fill="url(#BrandLogoGrad)" d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"/>
+  <path transform="translate(1,0)" fill="var(--color-logo-text, #f4f4f3)" d="M 545.48 3.41642 C 618.477 4.27753 691.48 4.51709 764.481 4.13506 L 1150.38 4.14877 L 1996 3.90803 L 1996 396.493 C 1981.8 395.339 1956.31 396.056 1941.29 396.056 L 1839.74 396.112 L 1730.32 396.087 C 1710.26 396.087 1683.22 395.48 1663.63 396.889 C 1665.89 410.024 1664.9 465.901 1664.88 481.692 L 1664.76 660.017 L 1664.61 1333.11 L 1664.93 1482.65 C 1664.94 1488.35 1666.25 1509.62 1664.1 1512.99 C 1661.21 1512.36 1659.54 1510.64 1657.58 1508.56 C 1642.87 1492.9 1630.67 1473.93 1617.23 1457.12 C 1545.12 1366.97 1472.33 1276.85 1403.18 1184.44 C 1394.11 1172.31 1378.4 1158.98 1373.14 1144.8 C 1368.57 1132.48 1371.02 1021.47 1371.03 1001.99 L 1371.06 786.466 L 1371.05 540.762 C 1371.04 493.827 1370.01 443.005 1371.85 396.579 C 1324.33 395.232 1273.73 396.044 1225.87 396.05 L 975.872 396.147 C 937.262 396.177 896.37 396.925 857.95 395.899 C 846.987 387.483 840.284 376.716 831.698 365.964 C 820.535 352.246 809.511 338.415 798.627 324.474 L 689.982 187.802 C 658.188 148.24 626.619 108.499 595.277 68.5783 C 582.305 52.2313 555.273 19.8823 545.48 3.41642 z"/>
+  <path transform="translate(-53,0)" fill="url(#BrandLogoGrad)" d="M 628.973 2000 C 627.156 1987.04 627.585 1963.01 627.53 1949.37 L 627.598 1861.6 L 627.485 1597.21 L 627.476 1381.39 L 627.424 1331.3 C 627.408 1325.08 626.798 1308.51 628.005 1303.25 L 629.704 1302.29 C 633.93 1303.88 651.087 1326.95 655.625 1332.53 L 717.503 1407.2 L 1209.02 2000 L 628.973 2000 z"/>
+</svg>
+`;
 
 export const THEMES: Record<string, UITheme> = {
     'dark-amber': {
         name: 'Dark Amber (Default)',
         colors: {
-            bg: '#07070e',
+            background: '#07070e',
             surface: '#0d0d1c',
             surfaceAlt: '#10101f',
             border: '#1a2235',
@@ -26,7 +48,7 @@ export const THEMES: Record<string, UITheme> = {
     'charcoal-amber': {
         name: 'Charcoal Amber',
         colors: {
-            bg: '#1a1a1a',
+            background: '#1a1a1a',
             surface: '#252525',
             surfaceAlt: '#303030',
             border: '#404040',
@@ -48,7 +70,7 @@ export const THEMES: Record<string, UITheme> = {
     'dark': {
         name: 'Deep Ocean Dark',
         colors: {
-            bg: '#0b0f19',
+            background: '#0b0f19',
             surface: '#151f32',
             surfaceAlt: '#1e2d4a',
             border: '#2e3f5b',
@@ -70,17 +92,17 @@ export const THEMES: Record<string, UITheme> = {
     'light': {
         name: 'Nordic Light',
         colors: {
-            bg: '#f3f4f6',
-            surface: '#ffffff',
-            surfaceAlt: '#e5e7eb',
-            border: '#94a3b8',
-            borderHover: '#475569',
-            text: '#0f172a',
-            muted: '#334155',
-            accent: '#b45309',
-            accentHover: '#78350f',
+            background: '#eceff4',
+            surface: '#f8f9fa',
+            surfaceAlt: '#e5e9f0',
+            border: '#d8dee9',
+            borderHover: '#88c0d0',
+            text: '#2e3440',
+            muted: '#4c566a',
+            accent: '#5e81ac',
+            accentHover: '#81a1c1',
             success: '#166534',
-            error: '#dc2626',
+            error: '#bf616a',
         },
         typography: {
             mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -92,7 +114,7 @@ export const THEMES: Record<string, UITheme> = {
     'amethyst': {
         name: 'Amethyst Purple',
         colors: {
-            bg: '#0b0914',
+            background: '#0b0914',
             surface: '#120f22',
             surfaceAlt: '#18142c',
             border: '#252044',
@@ -134,6 +156,75 @@ export function getTheme(themeName?: string): UITheme {
     return THEMES[themeName || 'dark-amber'] || THEMES['dark-amber'];
 }
 
+export function parseColorToRgb(colorStr: string): { r: number, g: number, b: number } {
+    const defaultVal = { r: 7, g: 7, b: 14 };
+    if (!colorStr) return defaultVal;
+
+    const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    if (rgbMatch) {
+        return {
+            r: parseInt(rgbMatch[1], 10),
+            g: parseInt(rgbMatch[2], 10),
+            b: parseInt(rgbMatch[3], 10)
+        };
+    }
+
+    if (colorStr.startsWith('#')) {
+        let hex = colorStr.slice(1);
+        if (hex.length === 3) {
+            hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        }
+        if (hex.length === 6) {
+            return {
+                r: parseInt(hex.slice(0, 2), 16),
+                g: parseInt(hex.slice(2, 4), 16),
+                b: parseInt(hex.slice(4, 6), 16)
+            };
+        }
+    }
+
+    return defaultVal;
+}
+
+export function rgbToHsl(r: number, g: number, b: number) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0, l = (max + min) / 2;
+
+    if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+export function hslToRgb(h: number, s: number, l: number) {
+    h /= 360; s /= 100; l /= 100;
+    let r = l, g = l, b = l;
+    if (s !== 0) {
+        const hue2rgb = (p: number, q: number, t: number) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+    }
+    return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+}
+
 export function applyThemeToDocument(themeName: string, fontName?: string, customColors?: Record<string, string>) {
     const theme = getTheme(themeName);
     const root = document.documentElement;
@@ -141,22 +232,38 @@ export function applyThemeToDocument(themeName: string, fontName?: string, custo
     root.setAttribute('data-theme', themeName);
 
     const selectedFont = FONTS[fontName as keyof typeof FONTS] || theme.typography.sans;
-    const isLight = themeName === 'light';
 
-    const bg = customColors?.bg || theme.colors.bg;
+    const background = customColors?.background || theme.colors.background;
     const surface = customColors?.surface || theme.colors.surface;
-    const surfaceAlt = customColors?.surfaceAlt || customColors?.surface || theme.colors.surfaceAlt;
+    const surfaceAlt = customColors?.surfaceAlt || customColors?.surfaceAlt || customColors?.surface || theme.colors.surfaceAlt;
     const border = customColors?.border || theme.colors.border;
-    const borderHover = customColors?.borderHover || customColors?.border || theme.colors.borderHover;
+    const borderHover = customColors?.borderHover || customColors?.borderHover || customColors?.border || theme.colors.borderHover;
     const text = customColors?.text || theme.colors.text;
-    const muted = customColors?.muted || theme.colors.muted;
+    const muted = customColors?.textMuted || customColors?.muted || theme.colors.muted;
     const accent = customColors?.accent || theme.colors.accent;
-    const accentHover = customColors?.accentHover || customColors?.accent || theme.colors.accentHover;
+    const accentHover = customColors?.accentHover || customColors?.accentHover || customColors?.accent || theme.colors.accentHover;
     const success = customColors?.success || theme.colors.success;
     const error = customColors?.error || theme.colors.error;
 
+    // Determine background lightness dynamically
+    const parsedBackground = parseColorToRgb(background);
+    const hslBackground = rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b);
+    const isBackgroundDark = hslBackground.l < 50;
+
+    // Determine accent relative luminance dynamically for accurate perceived human eye brightness contrast
+    const parsedAccent = parseColorToRgb(accent);
+    const r = parsedAccent.r / 255;
+    const g = parsedAccent.g / 255;
+    const b = parsedAccent.b / 255;
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const isAccentDark = luminance < 0.55;
+
+    const accentText = isAccentDark ? '#ffffff' : '#09090f';
+    const logoText = isBackgroundDark ? '#f4f4f3' : text;
+    const apiGreen = isBackgroundDark ? '#3ddc84' : '#166534';
+
     const variables: Record<string, string> = {
-        '--color-background': bg,
+        '--color-background': background,
         '--color-surface': surface,
         '--color-surface-alt': surfaceAlt,
         '--color-border': border,
@@ -172,8 +279,11 @@ export function applyThemeToDocument(themeName: string, fontName?: string, custo
         '--font-sans': selectedFont,
         '--rounded-box': `${theme.borderRadius}px`,
         '--rounded-btn': `${theme.borderRadiusSmall}px`,
-        '--nt-color-scheme': isLight ? 'light' : 'dark',
+        '--nt-color-scheme': isBackgroundDark ? 'dark' : 'light',
 
+        '--color-accent-text': accentText,
+        '--color-logo-text': logoText,
+        '--color-api-green': apiGreen,
         '--color-success-system': '#3ddc84',
     };
 
@@ -189,7 +299,8 @@ export function clearThemeOverrides() {
     const variablesToClear = [
         '--color-background', '--color-surface', '--color-surface-alt', '--color-border', '--color-border-hover',
         '--color-text', '--color-text-muted', '--color-text-dimmed', '--color-accent', '--color-accent-hover',
-        '--color-success', '--color-error', '--font-mono', '--font-sans', '--rounded-box', '--rounded-btn', '--nt-color-scheme'
+        '--color-success', '--color-error', '--font-mono', '--font-sans', '--rounded-box', '--rounded-btn',
+        '--nt-color-scheme', '--color-accent-text', '--color-logo-text', '--color-api-green'
     ];
     variablesToClear.forEach(variable => root.style.removeProperty(variable));
 }

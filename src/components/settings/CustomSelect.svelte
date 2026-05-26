@@ -155,17 +155,24 @@
         color: var(--color-accent);
     }
     .select-option.selected {
-        /* Mapped selection background dynamically to your active theme accent color */
         background: color-mix(in srgb, var(--color-accent) 12%, transparent);
         color: var(--color-accent);
         font-weight: bold;
     }
 
-    /* --- COMPACT SWITCHER OVERRIDES (Popup) --- */
+    /* --- COMPACT SWITCHER OVERRIDES (Popup Settings Dropdown List styling) --- */
     .custom-select-container.compact .select-trigger {
-        padding: 5px 8px;
-        font-size: 11px;
-        border-radius: 3px;
+        padding: 4px 0 !important;
+        font-size: 11px !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        border-bottom: 1.5px solid transparent !important;
+        box-shadow: none !important;
+    }
+    .custom-select-container.compact .select-trigger:hover,
+    .custom-select-container.compact .select-trigger:focus {
+        border-bottom-color: var(--color-accent) !important;
     }
     .custom-select-container.compact .select-option {
         padding: 6px 8px;
