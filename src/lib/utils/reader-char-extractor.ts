@@ -1,57 +1,10 @@
+/**
+ * @license BSD-3-Clause
+ * Copyright (c) 2026, ッツ Reader Authors
+ * All rights reserved.
+ */
+
 import { addDebugLog } from '@/lib/storage/debug';
-
-// WeakMap cache for character counts to prevent re-parsing text nodes
-const charCountCache = new WeakMap<Element, number>();
-
-// Flat cache registries to track elements during active reading sessions
-let cachedNodes: Element[] = [];
-let cachedAccumulated: number[] = [];
-const seenSectionIds = new Map<string, number>();
-
-// Cache paragraph client rects to prevent layout thrashing
-interface GeometryCache {
-    left: number;
-    right: number;
-    top: number;
-    bottom: number;
-    width: number;
-    height: number;
-}
-let paragraphGeometryCache = new WeakMap<Element, GeometryCache>();
-
-// Cache for layout properties that rarely change during a reading session
-let _layoutCacheElement: Element | null = null;
-let _layoutCacheTime = 0;
-let _layoutCacheWritingMode = '';
-let _layoutCacheColumnWidth = '';
-let _layoutCacheColumnCount = '';
-const LAYOUT_CACHE_TTL = 1000; // ms
-
-// Cache for last calculation inputs and result
-let lastContainerSelector = '';
-let lastReaderContainer: Element | null = null;
-let lastScrollY = -1;
-let lastScrollX = -1;
-let lastContainerScrollTop = -1;
-let lastContainerScrollLeft = -1;
-let lastViewportWidth = -1;
-let lastViewportHeight = -1;
-let lastDocumentTitle = '';
-let lastResult: AdvancedCharData | null = null;
-
-let isParagraphsCacheDirty = true;
-let containerObserver: MutationObserver | null = null;
-
-function setupContainerObserver(container: Element) {
-    if (containerObserver) {
-        containerObserver.disconnect();
-    }
-    containerObserver = new MutationObserver(() => {
-        isParagraphsCacheDirty = true;
-        paragraphGeometryCache = new WeakMap();
-    });
-    containerObserver.observe(container, { childList: true, subtree: true });
-}
 
 export interface AdvancedCharData {
     current: number;
@@ -60,34 +13,53 @@ export interface AdvancedCharData {
     isPaginated: boolean;
 }
 
-export function clearCharacterExtractorCache() {
-    cachedNodes = [];
-    cachedAccumulated = [];
+// Module-level caches to optimize execution overhead
+const ttuCharCountCache = new WeakMap<Element, number>();
+const seenSectionIds = new Map<string, number>();
+
+let ttuCachedNodes: Element[] = [];
+let ttuCachedAccumulated: number[] = [];
+
+// Layout and style caches to avoid forced reflows (Layout Thrashing)
+let cachedIsVertical = false;
+let cachedIsPaginated = false;
+let cachedWritingMode = '';
+let lastContainer: Element | null = null;
+let lastContainerId = '';
+let isCacheValid = false;
+
+let containerObserver: MutationObserver | null = null;
+
+// Throttled viewport trackers updated on resize
+let cachedVw = typeof window !== 'undefined' ? window.innerWidth : 1024;
+let cachedVh = typeof window !== 'undefined' ? window.innerHeight : 768;
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('resize', () => {
+        cachedVw = window.innerWidth;
+        cachedVh = window.innerHeight;
+        isCacheValid = false; // Invalidate cache for layout recalculated positions
+    }, { passive: true });
 }
 
 /**
- * Returns a cached bounding box for a given paragraph element,
- * updating the cache only if necessary.
+ * Robust regular expression that captures:
+ * - \p{L} and \p{N} (Letters and numbers across all scripts)
+ * - \u3007 (〇 - Ideographic Number Zero)
+ * - \u25CB (○ - White Circle placeholder)
+ * - \u25EF (◯ - Large Circle placeholder)
+ * - \u25CF (● - Black Circle placeholder)
+ * - \u25A0 (■ - Black Square placeholder)
+ * - \u25A1 (□ - White Square placeholder)
+ * - \u00D7 (× - Multiplication sign censor mark)
+ * - \u2715 (✕ - Multiplication X censor mark)
+ * - \uFF0A (＊ - Fullwidth Asterisk scene break/placeholder)
  */
-function getCachedGeometry(element: Element, forceUpdate = false): GeometryCache {
-    let cached = paragraphGeometryCache.get(element);
-    if (!cached || forceUpdate) {
-        const rect = element.getBoundingClientRect();
-        cached = {
-            left: rect.left,
-            right: rect.right,
-            top: rect.top,
-            bottom: rect.bottom,
-            width: rect.width,
-            height: rect.height
-        };
-        paragraphGeometryCache.set(element, cached);
-    }
-    return cached;
-}
+const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1\u00D7\u2715\uFF0A]/gu;
 
 /**
- * Calculates a sequential index for the active section container.
+ * Calculates a sequential integer for the active section container.
+ * Resolves DOM order if multiple elements exist, otherwise maps ID hashes sequentially.
  */
 function getSectionIndex(container: Element): number | null {
     const id = container.id || '';
@@ -98,13 +70,23 @@ function getSectionIndex(container: Element): number | null {
     }
 
     if (containers.length > 1) {
-        const index = containers.indexOf(container);
-        if (index !== -1) return index;
+        const idx = containers.indexOf(container);
+        if (idx !== -1) {
+            return idx;
+        }
     }
 
+    // Extract the raw sequential digit from the ID (highly stable for spine indexing)
     if (id) {
+        const match = id.match(/\d+/);
+        if (match) {
+            return parseInt(match[0], 10);
+        }
+
+        // Fallback to sequential hashing if no digits exist
         if (!seenSectionIds.has(id)) {
-            seenSectionIds.set(id, seenSectionIds.size);
+            const nextVal = seenSectionIds.size;
+            seenSectionIds.set(id, nextVal);
         }
         return seenSectionIds.get(id) ?? null;
     }
@@ -113,284 +95,268 @@ function getSectionIndex(container: Element): number | null {
 }
 
 /**
- * Returns cached layout properties for a content container.
- * Avoids calling getComputedStyle on every tick.
+ * Sets up a mutation observer to invalidate DOM and character caches only on true structural changes.
+ * This completely prevents expensive DOM re-queries on simple scroll movements.
  */
-function getCachedLayoutProperties(contentContainer: Element): { writingMode: string; columnWidth: string; columnCount: string } {
-    const now = Date.now();
-    if (_layoutCacheElement === contentContainer && (now - _layoutCacheTime) < LAYOUT_CACHE_TTL) {
-        return { writingMode: _layoutCacheWritingMode, columnWidth: _layoutCacheColumnWidth, columnCount: _layoutCacheColumnCount };
+function watchContainerMutations(container: Element) {
+    if (containerObserver) {
+        containerObserver.disconnect();
     }
-    const computedStyle = getComputedStyle(contentContainer);
-    _layoutCacheElement = contentContainer;
-    _layoutCacheTime = now;
-    _layoutCacheWritingMode = computedStyle.writingMode;
-    _layoutCacheColumnWidth = computedStyle.columnWidth || '';
-    _layoutCacheColumnCount = computedStyle.columnCount || '';
-    return { writingMode: _layoutCacheWritingMode, columnWidth: _layoutCacheColumnWidth, columnCount: _layoutCacheColumnCount };
+    containerObserver = new MutationObserver(() => {
+        isCacheValid = false;
+    });
+    containerObserver.observe(container, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
 }
 
-/**
- * Extracts character counts performantly using binary search, element caching,
- * and layout-thrashing guards.
- */
 export function extractAdvancedCharCount(
     containerSelector = '.book-content, [data-ref="container"], .reader-container, article'
 ): AdvancedCharData | null {
     try {
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
         const readerContainer = document.querySelector(containerSelector) || document.body;
+        const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
+        const currentContainerId = activeContainer.id || '';
 
-        const currentTitle = document.title;
-        const isContainerDisconnected = lastReaderContainer && !lastReaderContainer.isConnected;
-
-        if (isContainerDisconnected || lastReaderContainer !== readerContainer || lastContainerSelector !== containerSelector || lastDocumentTitle !== currentTitle) {
-            clearCharacterExtractorCache();
-            seenSectionIds.clear();
-            paragraphGeometryCache = new WeakMap();
-
-            if (isContainerDisconnected || readerContainer === document.body) {
-                if (containerObserver) {
-                    containerObserver.disconnect();
-                    containerObserver = null;
-                }
-            } else {
-                setupContainerObserver(readerContainer);
-            }
-
-            lastReaderContainer = readerContainer;
-            lastContainerSelector = containerSelector;
-            lastDocumentTitle = currentTitle;
-            isParagraphsCacheDirty = true;
+        // Check if the container reference or its ID changed to trigger a cache refresh
+        if (readerContainer !== lastContainer || currentContainerId !== lastContainerId) {
+            lastContainer = readerContainer;
+            lastContainerId = currentContainerId;
+            isCacheValid = false;
+            watchContainerMutations(readerContainer);
         }
 
-        const scrollY = window.scrollY;
-        const scrollX = window.scrollX;
-        const containerScrollTop = readerContainer.scrollTop;
-        const containerScrollLeft = readerContainer.scrollLeft;
+        // 1. Resolve Style Configurations (Cached)
+        if (!isCacheValid) {
+            const style = getComputedStyle(activeContainer);
+            cachedWritingMode = style.writingMode || '';
+            cachedIsVertical =
+                cachedWritingMode === 'vertical-rl' ||
+                cachedWritingMode === 'vertical-lr' ||
+                readerContainer.classList.contains('book-content--writing-vertical-rl');
 
-        // Invalidate geometry cache if the viewport scrolls or resizes
-        if (
-            lastScrollY !== scrollY ||
-            lastScrollX !== scrollX ||
-            lastContainerScrollTop !== containerScrollTop ||
-            lastContainerScrollLeft !== containerScrollLeft ||
-            lastViewportWidth !== viewportWidth ||
-            lastViewportHeight !== viewportHeight
-        ) {
-            paragraphGeometryCache = new WeakMap();
+            const colWidth = style.columnWidth || '';
+            const colCount = style.columnCount || '';
+
+            // Highly stable paginated mode detection based on structural container selectors
+            cachedIsPaginated =
+                !!document.querySelector('.book-content-container, .book-reader-paginated, [data-view-mode="paginated"]') ||
+                ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
+                    (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
         }
 
-        if (
-            !isParagraphsCacheDirty &&
-            lastResult &&
-            lastScrollY === scrollY &&
-            lastScrollX === scrollX &&
-            lastContainerScrollTop === containerScrollTop &&
-            lastContainerScrollLeft === containerScrollLeft &&
-            lastViewportWidth === viewportWidth &&
-            lastViewportHeight === viewportHeight
-        ) {
-            return lastResult;
-        }
-
-        // Select valid reading paragraphs
-        let paragraphs = cachedNodes;
-        if (isParagraphsCacheDirty || cachedNodes.length === 0) {
-            paragraphs = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(element => {
-                if (element.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-                return (element.textContent || '').trim().length > 0;
+        // 2. Query Text-bearing Nodes
+        let pTags = ttuCachedNodes;
+        if (!isCacheValid) {
+            pTags = Array.from(readerContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
+                if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
+                return (el.textContent || '').trim().length > 0;
             }) as Element[];
-            isParagraphsCacheDirty = false;
         }
 
-        const contentContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
-        const { writingMode, columnWidth, columnCount } = getCachedLayoutProperties(contentContainer);
+        const sectionIndex = getSectionIndex(activeContainer);
 
-        const isVerticalText =
-            writingMode === 'vertical-rl' ||
-            writingMode === 'vertical-lr' ||
-            readerContainer.classList.contains('book-content--writing-vertical-rl');
+        console.log('[TextTracker-Diag] extractAdvancedCharCount() Structural Diagnostics:', {
+            pTagsCount: pTags.length,
+            hasImages: !!readerContainer.querySelector('img, svg, .ttu-illustration-container, .ttu-img-container'),
+            cachedIsPaginated,
+            cachedIsVertical,
+            sectionIndex,
+            currentContainerId
+        });
 
-        const isPaginated =
-            (columnWidth !== 'auto' && columnWidth !== 'none' && columnWidth !== '') ||
-            (columnCount !== 'auto' && columnCount !== 'none' && columnCount !== '') ||
-            !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-            !!document.querySelector('.book-reader-paginated');
-
-        if (paragraphs.length === 0) {
-            const container = readerContainer.querySelector('.book-content-container') || readerContainer;
-            const sectionIndex = getSectionIndex(container);
-            lastScrollY = scrollY;
-            lastScrollX = scrollX;
-            lastContainerScrollTop = containerScrollTop;
-            lastContainerScrollLeft = containerScrollLeft;
-            lastViewportWidth = viewportWidth;
-            lastViewportHeight = viewportHeight;
-            lastResult = { current: 0, total: 0, sectionIndex, isPaginated };
-            return lastResult;
+        if (pTags.length === 0) {
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
-        // Rebuild character position registry if structural changes occur
-        if (cachedNodes.length !== paragraphs.length || cachedNodes[0] !== paragraphs[0]) {
-            cachedNodes = paragraphs;
-            cachedAccumulated = new Array(paragraphs.length);
-            let accumulatedCount = 0;
-            for (let i = 0; i < paragraphs.length; i++) {
-                const element = paragraphs[i];
-                let count = charCountCache.get(element);
+        // Layout Stability Guard: If Svelte is rendering but has not applied dimensions,
+        // we defer transition processing to prevent premature character jumps.
+        const firstParagraph = pTags[0];
+        const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
+        if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
+            console.log('[TextTracker-Diag] Deferring extraction: Paragraph layout width/height is 0 (Uncomputed state)');
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
+        }
+
+        // 3. Cache Rebuild & Prefix Sum Calculations
+        if (!isCacheValid || ttuCachedNodes.length !== pTags.length || ttuCachedNodes[0] !== pTags[0]) {
+            ttuCachedNodes = pTags;
+            ttuCachedAccumulated = new Array(pTags.length);
+            let acc = 0;
+
+            for (let i = 0; i < pTags.length; i++) {
+                const el = pTags[i];
+                let count = ttuCharCountCache.get(el);
                 if (count === undefined) {
                     let text = '';
-                    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-                    let node;
-                    while ((node = walker.nextNode())) {
-                        if (!node.parentElement?.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
-                            text += node.nodeValue || '';
+                    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                    let n;
+                    while ((n = walker.nextNode())) {
+                        if (!n.parentElement?.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
+                            text += n.nodeValue || '';
                         }
                     }
-                    const matches = text.match(/[\p{L}\p{N}]/gu);
+                    const matches = text.match(JP_CHAR_PATTERN);
                     count = matches ? matches.length : 0;
-                    charCountCache.set(element, count);
+                    ttuCharCountCache.set(el, count);
                 }
-                accumulatedCount += count;
-                cachedAccumulated[i] = accumulatedCount;
+                acc += count;
+                ttuCachedAccumulated[i] = acc;
             }
+            isCacheValid = true;
         }
 
-        // Binary search for the last visible paragraph
+        // 4. Binary Search for last explored paragraph
         let low = 0;
-        let high = cachedNodes.length - 1;
-        let lastVisibleIndex = -1;
+        let high = ttuCachedNodes.length - 1;
+        let lastIdx = -1;
 
-        // We only force-refresh layouts for nodes within current search boundaries
         while (low <= high) {
             const mid = Math.floor((low + high) / 2);
-            const geom = getCachedGeometry(cachedNodes[mid], false);
+            const r = ttuCachedNodes[mid].getBoundingClientRect();
 
-            let isExplored = false;
-            if (geom.width === 0 || geom.height === 0) {
-                isExplored = true;
-            } else if (isVerticalText) {
-                if (isPaginated) {
-                    isExplored = geom.bottom <= 1;
+            let explored = false;
+            if (r.width === 0 || r.height === 0) {
+                explored = true; // Treats unrendered nodes as explored to bypass frozen baselines
+            } else if (cachedIsVertical) {
+                if (cachedIsPaginated) {
+                    explored = r.bottom <= 1;
                 } else {
-                    if (writingMode === 'vertical-lr') {
-                        isExplored = geom.right <= 1;
+                    if (cachedWritingMode === 'vertical-lr') {
+                        explored = r.right <= 1;
                     } else {
-                        isExplored = geom.left >= (viewportWidth + 1);
+                        explored = r.left >= (cachedVw + 1);
                     }
                 }
             } else {
-                if (isPaginated) {
-                    isExplored = geom.right <= 1;
+                if (cachedIsPaginated) {
+                    explored = r.right <= 1;
                 } else {
-                    isExplored = geom.bottom <= 1;
+                    explored = r.bottom <= 1;
                 }
             }
 
-            if (isExplored) {
-                lastVisibleIndex = mid;
+            if (explored) {
+                lastIdx = mid;
                 low = mid + 1;
             } else {
                 high = mid - 1;
             }
         }
 
-        let current = lastVisibleIndex >= 0 ? cachedAccumulated[lastVisibleIndex] : 0;
+        let current = lastIdx >= 0 ? ttuCachedAccumulated[lastIdx] : 0;
 
-        // Process partial progress inside the active paragraph
-        const nextIndex = lastVisibleIndex + 1;
-        if (nextIndex < cachedNodes.length) {
-            const activeElement = cachedNodes[nextIndex];
-            const highlightedSpans = activeElement.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
+        // 5. High-Precision Localized Sub-Paragraph Progress Tracker
+        const currentIdx = lastIdx + 1;
+        if (currentIdx < ttuCachedNodes.length) {
+            const activeEl = ttuCachedNodes[currentIdx];
+            const r = activeEl.getBoundingClientRect();
 
-            if (highlightedSpans.length > 0) {
-                highlightedSpans.forEach(span => {
-                    if (span.closest('rt, rp, svg, figcaption, noscript')) return;
-                    const rect = span.getBoundingClientRect();
-                    let isSpanExplored = false;
-                    if (isVerticalText) {
-                        if (isPaginated) {
-                            isSpanExplored = rect.bottom <= 1;
-                        } else {
-                            if (writingMode === 'vertical-lr') {
-                                isSpanExplored = rect.right <= 1;
-                            } else {
-                                isSpanExplored = rect.left >= (viewportWidth + 1);
-                            }
-                        }
+            // Optimisation Check: Verify if the active element has actually entered the viewport boundaries
+            let hasEntered = false;
+            if (cachedIsVertical) {
+                if (cachedIsPaginated) {
+                    hasEntered = r.top < cachedVh;
+                } else {
+                    if (cachedWritingMode === 'vertical-lr') {
+                        hasEntered = r.left < cachedVw;
                     } else {
-                        if (isPaginated) {
-                            isSpanExplored = rect.right <= 1;
-                        } else {
-                            isSpanExplored = rect.bottom <= 1;
-                        }
+                        hasEntered = r.right > 0;
                     }
-
-                    if (isSpanExplored) {
-                        const matches = span.textContent?.match(/[\p{L}\p{N}]/gu);
-                        if (matches) current += matches.length;
-                    }
-                });
+                }
             } else {
-                const textWalker = document.createTreeWalker(activeElement, NodeFilter.SHOW_TEXT);
-                let textNode;
-                while ((textNode = textWalker.nextNode())) {
-                    const parent = textNode.parentElement;
-                    if (!parent || parent.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
-                        continue;
-                    }
+                if (cachedIsPaginated) {
+                    hasEntered = r.left < cachedVw;
+                } else {
+                    hasEntered = r.top < cachedVh;
+                }
+            }
 
-                    const nodeRange = document.createRange();
-                    nodeRange.selectNodeContents(textNode);
-                    const rangeRect = nodeRange.getBoundingClientRect();
+            if (hasEntered) {
+                const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
-                    if (rangeRect.width === 0 || rangeRect.height === 0) continue;
+                if (spans.length > 0) {
+                    spans.forEach(s => {
+                        if (s.closest('rt, rp, svg, figcaption, noscript')) return;
 
-                    let isRangeExplored = false;
-                    if (isVerticalText) {
-                        if (isPaginated) {
-                            isRangeExplored = rangeRect.bottom <= 1;
-                        } else {
-                            if (writingMode === 'vertical-lr') {
-                                isRangeExplored = rangeRect.right <= 1;
+                        const sr = s.getBoundingClientRect();
+                        let sExp = false;
+                        if (cachedIsVertical) {
+                            if (cachedIsPaginated) {
+                                sExp = sr.bottom <= 1;
                             } else {
-                                isRangeExplored = rangeRect.left >= (viewportWidth + 1);
+                                if (cachedWritingMode === 'vertical-lr') {
+                                    sExp = sr.right <= 1;
+                                } else {
+                                    sExp = sr.left >= (cachedVw + 1);
+                                }
+                            }
+                        } else {
+                            if (cachedIsPaginated) {
+                                sExp = sr.right <= 1;
+                            } else {
+                                sExp = sr.bottom <= 1;
                             }
                         }
-                    } else {
-                        if (isPaginated) {
-                            isRangeExplored = rangeRect.right <= 1;
-                        } else {
-                            isRangeExplored = rangeRect.bottom <= 1;
-                        }
-                    }
 
-                    if (isRangeExplored) {
-                        const rawText = textNode.nodeValue || '';
-                        const matches = rawText.match(/[\p{L}\p{N}]/gu);
-                        if (matches) current += matches.length;
+                        if (sExp) {
+                            const m = s.textContent?.match(JP_CHAR_PATTERN);
+                            if (m) current += m.length;
+                        }
+                    });
+                } else {
+                    // Fallback to text node precision tracking when highlights are absent
+                    const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
+                    let n;
+                    while ((n = walker.nextNode())) {
+                        const parent = n.parentElement;
+                        if (!parent || parent.closest('rt, rp, svg, figcaption, noscript, .ttu-illustration-container, .ttu-img-container')) {
+                            continue;
+                        }
+
+                        const range = document.createRange();
+                        range.selectNodeContents(n);
+                        const nr = range.getBoundingClientRect();
+
+                        if (nr.width === 0 || nr.height === 0) continue;
+
+                        let sExp = false;
+                        if (cachedIsVertical) {
+                            if (cachedIsPaginated) {
+                                sExp = nr.bottom <= 1;
+                            } else {
+                                if (cachedWritingMode === 'vertical-lr') {
+                                    sExp = nr.right <= 1;
+                                } else {
+                                    sExp = nr.left >= (cachedVw + 1);
+                                }
+                            }
+                        } else {
+                            if (cachedIsPaginated) {
+                                sExp = nr.right <= 1;
+                            } else {
+                                sExp = nr.bottom <= 1;
+                            }
+                        }
+
+                        if (sExp) {
+                            const text = n.nodeValue || '';
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) {
+                                current += matches.length;
+                            }
+                        }
                     }
                 }
             }
         }
 
-        const total = cachedAccumulated[cachedAccumulated.length - 1] || 0;
-        const sectionContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
-        const sectionIndex = getSectionIndex(sectionContainer);
+        const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
 
-        lastScrollY = scrollY;
-        lastScrollX = scrollX;
-        lastContainerScrollTop = containerScrollTop;
-        lastContainerScrollLeft = containerScrollLeft;
-        lastViewportWidth = viewportWidth;
-        lastViewportHeight = viewportHeight;
-
-        lastResult = { current, total, sectionIndex, isPaginated };
-        return lastResult;
-    } catch (error) {
-        void addDebugLog('ERROR', 'CharExtractor', 'Error extracting character counts', error);
+        return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
+    } catch (e) {
         return null;
     }
 }

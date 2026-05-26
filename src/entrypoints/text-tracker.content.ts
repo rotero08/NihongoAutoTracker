@@ -45,7 +45,7 @@ const READING_VIEW_CACHE_TTL = 500; // ms
 
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
 
-let _mutationRAF: number | null = null;
+let _mutationMicrotaskScheduled = false;
 let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 
@@ -93,6 +93,8 @@ interface StateRefs {
   lastSectionIndex: number;
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
+  sessionInitialSectionIndex: number;
+  sessionInitialStartChar: number;
 }
 
 const stateRefs: StateRefs = {
@@ -101,7 +103,9 @@ const stateRefs: StateRefs = {
   globalLastTick: Date.now(),
   lastSectionIndex: -1,
   lastSectionTotal: 0,
-  visitedSections: new Map<number, number>()
+  visitedSections: new Map<number, number>(),
+  sessionInitialSectionIndex: -1,
+  sessionInitialStartChar: -1
 };
 
 /**
@@ -150,6 +154,9 @@ function getTTUTitle() {
 function parseTitleWithConfig(docTitle: string) {
   return parseTitle(docTitle, currentConfig.titleRegexes);
 }
+
+// Global cached layout mode tracker to sanitize continuous <-> paginated switches
+let lastLoggedPaginatedMode: boolean | null = null;
 
 function getReaderName() {
   const adapter = getActiveReaderAdapter();
@@ -345,6 +352,16 @@ function recalculateChars() {
     if (diff < 0) diff = 0;
 
     let calculatedChars = diff + stateRefs.globalManualCharOffset;
+
+    console.log('[TextTracker-Diag] recalculateChars():', {
+      current,
+      globalSessionStartChar: stateRefs.globalSessionStartChar,
+      diff,
+      globalManualCharOffset: stateRefs.globalManualCharOffset,
+      calculatedChars,
+      timeMs: ttuState.timeMs
+    });
+
     ttuState.chars = calculatedChars;
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -427,6 +444,7 @@ async function setupTTUChronometer() {
       clearInterval((window as any).ntChronoInterval);
     }
 
+    // High temporal resolution interval (200ms) for an instantaneous, snappy timing experience
     (window as any).ntChronoInterval = setInterval(() => {
       if (!isReadingViewActive()) {
         if (ttuState.running) {
@@ -439,7 +457,9 @@ async function setupTTUChronometer() {
 
       if (ttuState.running && !document.hidden) {
         const now = Date.now();
-        ttuState.timeMs += (now - stateRefs.globalLastTick);
+        const elapsed = now - stateRefs.globalLastTick;
+
+        ttuState.timeMs += elapsed;
 
         const charData = extractAdvancedCharCount();
         if (charData !== null) {
@@ -456,14 +476,22 @@ async function setupTTUChronometer() {
         }
         stateRefs.globalLastTick = now;
 
-        const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-        if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        // Perform layout re-paints only when a whole second transition takes place
+        const lastSec = Math.floor((ttuState.timeMs - elapsed) / 1000);
+        const currSec = Math.floor(ttuState.timeMs / 1000);
+
+        if (currSec !== lastSec) {
+          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wrapper) {
+            wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          }
+        }
 
         if (getReaderConfig(currentConfig).autoSave !== false) liveSyncQueue();
       } else if (ttuState.running && document.hidden) {
         stateRefs.globalLastTick = Date.now();
       }
-    }, 1000);
+    }, 200);
   } finally {
     isChronoInitializing = false;
   }
@@ -496,10 +524,49 @@ if (typeof window !== 'undefined') {
   }, { passive: true });
 }
 
+function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
+  stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+  stateRefs.sessionInitialStartChar = isPaginated ? 0 : current;
+  stateRefs.sessionInitialSectionIndex = activeSection;
+  stateRefs.globalManualCharOffset = 0;
+  stateRefs.lastSectionIndex = activeSection;
+  stateRefs.lastSectionTotal = total;
+  stateRefs.visitedSections.clear();
+  stateRefs.visitedSections.set(activeSection, 0);
+}
+
+function isChapterLoading(): boolean {
+  // Center screen loader check specifically targeted to prevent matching standard sidebar/gear icons
+  const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
+  if (loader && loader.querySelector('svg')) {
+    return true;
+  }
+  const contentContainer = document.querySelector('.book-content-container');
+  if (contentContainer && contentContainer.children.length === 0) {
+    return true;
+  }
+  return false;
+}
+
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   const handleMutations = () => {
-    _mutationRAF = null;
+    _mutationMicrotaskScheduled = false;
     invalidateReadingViewCache();
+
+    const isLoaderActive = isChapterLoading();
+    if (isReadingViewActive()) {
+      console.log('[TextTracker-Diag] Mutation Triggered:', {
+        isReadingViewActive: true,
+        isChapterLoading: isLoaderActive,
+        lastSectionIndex: stateRefs.lastSectionIndex,
+        globalManualCharOffset: stateRefs.globalManualCharOffset
+      });
+    }
+
+    // Prevent corrupting session references when Svelte is displaying a transition loading spinner
+    if (isReadingViewActive() && isLoaderActive) {
+      return;
+    }
 
     // 1. TTU Chrono insert check
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -526,16 +593,74 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       setupProgressObserver();
     }
 
-    // 2. Section transition detector (throttled to max once per 300ms)
+    // 2. Section transition detector (throttled to max once per 50ms for instantaneous updates)
     const now = Date.now();
-    if ((now - _lastSectionCheckTime) >= 300) {
+    if ((now - _lastSectionCheckTime) >= 50) {
       _lastSectionCheckTime = now;
       const charData = extractAdvancedCharCount();
       if (charData !== null) {
         const { total, sectionIndex, isPaginated } = charData;
         const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
+        console.log('[TextTracker-Diag] Section Check Iteration:', {
+          activeSection,
+          total,
+          isPaginated,
+          lastLoggedPaginatedMode,
+          stateRefs: {
+            globalSessionStartChar: stateRefs.globalSessionStartChar,
+            globalManualCharOffset: stateRefs.globalManualCharOffset,
+            lastSectionIndex: stateRefs.lastSectionIndex,
+            lastSectionTotal: stateRefs.lastSectionTotal,
+            sessionInitialSectionIndex: stateRefs.sessionInitialSectionIndex,
+            sessionInitialStartChar: stateRefs.sessionInitialStartChar,
+            visitedSections: Array.from(stateRefs.visitedSections.entries())
+          },
+          ttuStateChars: ttuState.chars,
+          ttuStateTimeMs: ttuState.timeMs
+        });
+
+        // View-Mode Switch Safeguard: Cleanly purge old metrics if we transitioned reading types
+        if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+          console.log('[TextTracker-Diag] VIEW MODE TOGGLE DETECTED:', {
+            oldMode: lastLoggedPaginatedMode,
+            newMode: isPaginated
+          });
+          stateRefs.globalSessionStartChar = -1;
+          stateRefs.globalManualCharOffset = 0;
+          stateRefs.lastSectionIndex = -1;
+          stateRefs.lastSectionTotal = 0;
+          stateRefs.visitedSections.clear();
+          stateRefs.sessionInitialSectionIndex = -1;
+          stateRefs.sessionInitialStartChar = -1;
+          ttuState.chars = 0;
+          ttuState.timeMs = 0;
+          stateRefs.globalLastTick = Date.now();
+          lastLoggedPaginatedMode = isPaginated;
+          recalculateChars();
+          return;
+        }
+        lastLoggedPaginatedMode = isPaginated;
+
+        if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
+          const currentCount = extractAdvancedCharCount();
+          console.log('[TextTracker-Diag] INITIALIZING SESSION REFERENCES:', {
+            currentCount: currentCount?.current,
+            activeSection,
+            total,
+            isPaginated
+          });
+          initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
+        }
+
         if (stateRefs.lastSectionIndex !== activeSection) {
+          console.log('[TextTracker-Diag] TRANSITION DETECTED:', {
+            from: stateRefs.lastSectionIndex,
+            to: activeSection,
+            lastSectionTotal: stateRefs.lastSectionTotal,
+            currentTotal: total
+          });
+
           // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
           if (activeSection === -1) {
             if (!isReadingViewActive()) {
@@ -545,39 +670,59 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
               recalculateChars();
             }
           } else {
-            if (isPaginated) {
-              stateRefs.globalSessionStartChar = 0;
-            } else {
-              stateRefs.globalSessionStartChar = -1;
-            }
-
-            if (stateRefs.lastSectionIndex === -1) {
-              stateRefs.lastSectionIndex = activeSection;
-              stateRefs.lastSectionTotal = total;
-              stateRefs.visitedSections.set(activeSection, 0);
-            }
-
-            if (stateRefs.lastSectionIndex !== activeSection) {
-              if (activeSection > stateRefs.lastSectionIndex) {
-                if (stateRefs.visitedSections.has(activeSection)) {
-                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                } else {
-                  stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                }
+            if (activeSection > stateRefs.lastSectionIndex) {
+              console.log('[TextTracker-Diag] DIRECTION: FORWARD');
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                console.log('[TextTracker-Diag] Visited sections found, restored offset:', stateRefs.globalManualCharOffset);
               } else {
-                if (stateRefs.visitedSections.has(activeSection)) {
-                  stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-                } else {
-                  stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                  stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-                }
+                // Accumulate using the verified non-zero previous chapter total
+                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                console.log('[TextTracker-Diag] Visited sections absent, accumulated new offset:', stateRefs.globalManualCharOffset);
               }
+            } else {
+              console.log('[TextTracker-Diag] DIRECTION: BACKWARD');
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+                console.log('[TextTracker-Diag] Visited sections found, restored offset:', stateRefs.globalManualCharOffset);
+              } else {
+                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+                console.log('[TextTracker-Diag] Visited sections absent, subtracted offset:', stateRefs.globalManualCharOffset);
+              }
+            }
+
+            // Sync baseline progress boundary so going backward stays clamped at 0 session progress
+            if (isPaginated) {
+              const oldStart = stateRefs.globalSessionStartChar;
+              if (activeSection < stateRefs.sessionInitialSectionIndex) {
+                stateRefs.globalSessionStartChar = total;
+              } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
+                stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
+              } else {
+                stateRefs.globalSessionStartChar = 0;
+              }
+              console.log('[TextTracker-Diag] Paginated SessionStartChar Sync:', {
+                oldStart,
+                newStart: stateRefs.globalSessionStartChar,
+                sessionInitialSectionIndex: stateRefs.sessionInitialSectionIndex,
+                sessionInitialStartChar: stateRefs.sessionInitialStartChar
+              });
             }
 
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
             recalculateChars();
+          }
+        } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
+          const oldTotal = stateRefs.lastSectionTotal;
+          stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
+          if (oldTotal !== stateRefs.lastSectionTotal) {
+            console.log('[TextTracker-Diag] Same section total updated:', {
+              oldTotal,
+              newTotal: stateRefs.lastSectionTotal
+            });
           }
         }
       }
@@ -605,9 +750,11 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   };
 
   const observer = new MutationObserver(() => {
-    // Debounce: coalesce all mutations in a single animation frame
-    if (_mutationRAF === null) {
-      _mutationRAF = requestAnimationFrame(handleMutations);
+    // Coalesce mutations synchronously inside the microtask queue to recalculate
+    // and redraw UI elements before the browser paints the screen (Eliminates visual flickers)
+    if (!_mutationMicrotaskScheduled) {
+      _mutationMicrotaskScheduled = true;
+      queueMicrotask(handleMutations);
     }
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
@@ -633,7 +780,7 @@ window.addEventListener('message', (event) => {
     if (window.self !== window.top) return;
     const title = String(event.data.title || '');
     const msg = event.data.message || '';
-    showToast(title, msg, event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
+    showToast(title, msg, event.data.error || title.toLowerCase().includes('fail') || event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
   }
 });
 
@@ -745,7 +892,13 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['readingQueue']) {
     const queue = (changes['readingQueue'].newValue as any[]) || [];
     const rawTitle = getTTUTitle();
-    const existing = queue.find((q: any) => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
+    const parsedRaw = parseTitleWithConfig(rawTitle).query;
+
+    // Robust Core Title matching to avoid resetting the session on slight chapter/page title drifts
+    const existing = queue.find((q: any) => {
+      const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '').query;
+      return qParsed === parsedRaw;
+    });
 
     if (!existing && ttuState.timeMs > 0) {
       ttuState.timeMs = 0;

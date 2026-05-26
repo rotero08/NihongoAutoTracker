@@ -29,6 +29,9 @@ export function setupTTUChronometerUI(
         globalSessionStartChar: number;
         globalManualCharOffset: number;
         globalLastTick: number;
+        lastSectionIndex: number;
+        lastSectionTotal: number;
+        visitedSections: Map<number, number>;
     },
     helpers: {
         getTTUTitle: () => string;
@@ -621,6 +624,12 @@ export function setupTTUChronometerUI(
         const currentCount = helpers.extractTTUCharCount();
         stateRefs.globalSessionStartChar = currentCount !== null ? currentCount : -1;
         stateRefs.globalManualCharOffset = 0;
+
+        // Reset transition states to prevent old visited section offsets from corrupting the new session
+        stateRefs.lastSectionIndex = -1;
+        stateRefs.lastSectionTotal = 0;
+        stateRefs.visitedSections.clear();
+
         updateUI();
     });
 
