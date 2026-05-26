@@ -1127,5 +1127,300 @@
 <ConfirmModal bind:this={confirmModal} />
 
 <style>
-  /* Styles omitted for brevity; exact layout retained as in original App.svelte */
+  /* ── Root ── */
+  :global(body) {
+    font-family: var(--font-mono);
+    background: var(--color-background);
+    color: var(--color-text);
+    width: 380px;
+    min-height: 380px;
+    font-size: 13px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0;
+  }
+  :global(#app) {
+    display: flex;
+    flex-direction: column;
+    min-height: 380px;
+    width: 100%;
+  }
+  :global(*, *::before, *::after) {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    flex-shrink: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .brand-mark {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: transparent;
+  }
+  .brand-mark :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+  .brand-name {
+    font-size: 11px;
+    font-weight: bold;
+    color: var(--color-text);
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 6px;
+    border-radius: 8px;
+  }
+  .pill-ok {
+    color: #3ddc84 !important;
+    border: 1px solid rgba(61, 220, 132, 0.25) !important;
+    background: rgba(61, 220, 132, 0.07) !important;
+  }
+  .pill-off {
+    color: var(--color-error);
+    border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
+    background: color-mix(in srgb, var(--color-error) 7%, transparent);
+  }
+  .icon-btn {
+    width: 26px;
+    height: 26px;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s;
+  }
+  .icon-btn:hover {
+    color: var(--color-text);
+  }
+
+  /* Force system success green on all matched list checkmarks and popup items globally */
+  :global(.qi-link-status, .api-status.ok, .pill-ok) {
+    color: #3ddc84 !important;
+    border-color: rgba(61, 220, 132, 0.25) !important;
+  }
+
+  /* ── Separator ── */
+  .sep {
+    height: 1px;
+    background: var(--color-border);
+    flex-shrink: 0;
+  }
+
+  /* ── Queue header & tabs (Contrast Mapped) ── */
+  .queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 14px 6px;
+    flex-shrink: 0;
+  }
+  .queue-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .queue-label {
+    font-size: 10px;
+    font-weight: bold;
+    color: var(--color-text-dimmed);
+    letter-spacing: 0.1em;
+  }
+  .badge {
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
+    border-radius: 8px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: bold;
+  }
+  .queue-bulk {
+    display: flex;
+    gap: 6px;
+  }
+  .bulk-btn {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: opacity 0.15s;
+  }
+  .bulk-btn:hover {
+    opacity: 0.7;
+  }
+  .bulk-btn.amber {
+    background: var(--color-accent);
+    color: var(--color-background);
+    border-color: var(--color-accent);
+  }
+  .bulk-btn.ghost {
+    background: none;
+    color: var(--color-text-muted);
+    border-color: var(--color-border-hover);
+  }
+  .bulk-btn:disabled {
+    opacity: 0.45 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+  }
+  .queue-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 0 14px 8px;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+  .q-tab {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    color: var(--color-text-dimmed);
+    padding: 4px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    transition: all 0.15s;
+    font-weight: bold;
+  }
+  .q-tab:hover {
+    color: var(--color-text);
+    border-color: var(--color-border-hover);
+  }
+  .q-tab.active {
+    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent);
+    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  }
+
+  /* ── Queue container ── */
+  .queue-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  /* Force centered alignments for any empty queue placeholders rendered by QueueList */
+  .queue-container :global(.empty-state),
+  .queue-container :global(.empty-message),
+  .queue-container :global(.queue-empty),
+  .queue-container :global(.empty),
+  .queue-container :global([class*="empty"]),
+  .queue-container :global(.empty-msg) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    margin: auto !important;
+    flex: 1 !important;
+    height: 100% !important;
+    color: var(--color-text-muted) !important;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    padding: 9px 12px 12px;
+    flex-shrink: 0;
+  }
+  .open-btn {
+    width: 100%;
+    background: none;
+    color: var(--color-text-dimmed);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 7px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s;
+  }
+  .open-btn:hover {
+    color: var(--color-text-muted);
+    border-color: var(--color-border-hover);
+  }
+
+  /* Style select dropdown option layouts inside popover globally */
+  :global(
+      .compact-popover .select-option,
+      .compact-popover .option,
+      .compact-popover [class*="option"]
+    ) {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100%;
+  }
+
+  /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */
+  :global(
+      .select-dropdown,
+      .dropdown-menu,
+      [class*="select-dropdown"],
+      [class*="dropdown-menu"],
+      [class*="select-options"],
+      [class*="options-container"]
+    ) {
+    max-height: 160px !important;
+    overflow-y: auto !important;
+  }
+
+  /* Modern sleek minimalist scrollbar styles across popup elements */
+  :global(::-webkit-scrollbar) {
+    width: 6px !important;
+    height: 6px !important;
+  }
+  :global(::-webkit-scrollbar-track) {
+    background: transparent !important;
+  }
+  :global(::-webkit-scrollbar-thumb) {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-radius: 10px !important;
+    transition: background 0.2s;
+  }
+  :global(::-webkit-scrollbar-thumb:hover) {
+    background: rgba(255, 255, 255, 0.25) !important;
+  }
+  /* Firefox Scrollbar support */
+  :global(*) {
+    scrollbar-width: thin !important;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;
+  }
 </style>
