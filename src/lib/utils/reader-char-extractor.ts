@@ -28,6 +28,10 @@ let lastContainer: Element | null = null;
 let lastContainerId = '';
 let isCacheValid = false;
 
+// Stopped-state cache references
+let lastCachedTotal = 0;
+let lastCachedSectionIndex: number | null = null;
+
 let containerObserver: MutationObserver | null = null;
 
 // Throttled viewport trackers updated on resize
@@ -75,6 +79,12 @@ function shouldIgnoreNode(node: Node | null): boolean {
         if (cl && (cl.contains('ttu-illustration-container') || cl.contains('ttu-img-container'))) {
             return true;
         }
+
+        // TERMINATION GUARD: Stop walking up parent nodes once we reach paragraph/block elements
+        if (tag === 'P' || tag === 'LI' || /^(H[1-6])$/i.test(tag)) {
+            break;
+        }
+
         current = current.parentNode;
     }
     return false;
@@ -125,9 +135,78 @@ function watchContainerMutations(container: Element) {
     if (containerObserver) {
         containerObserver.disconnect();
     }
-    containerObserver = new MutationObserver(() => {
-        isCacheValid = false;
+
+    const isBlockTag = (tag: string) => /^(P|LI|H[1-6]|DIV|ARTICLE|SECTION|BODY|HTML)$/i.test(tag);
+
+    const isJitenOrYomichan = (el: HTMLElement) => {
+        const tag = el.tagName;
+        if (tag === 'RT' || tag === 'RP' || tag === 'RUBY') return true;
+        const cl = el.classList;
+        if (cl) {
+            if (cl.contains('jiten-word') || cl.contains('yomichan') || cl.contains('yomitan')) return true;
+            for (let i = 0; i < cl.length; i++) {
+                const c = cl[i].toLowerCase();
+                if (c.includes('jiten') || c.includes('yomi')) return true;
+            }
+        }
+        if (el.getAttribute('ajb') === 'true') return true;
+        return false;
+    };
+
+    containerObserver = new MutationObserver((mutations) => {
+        let realMutation = false;
+        for (const m of mutations) {
+            const target = m.target as HTMLElement;
+            if (!target) continue;
+
+            // Direct Block Filter Guard: Ignore subtree changes inside inline elements completely
+            if (!isBlockTag(target.tagName)) continue;
+
+            if (m.type === 'childList') {
+                const checkNode = (node: Node): boolean => {
+                    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+                    const el = node as HTMLElement;
+
+                    // Ignore dictionary dynamic wrappings
+                    if (isJitenOrYomichan(el)) return false;
+
+                    const tag = el.tagName;
+                    if (isBlockTag(tag)) {
+                        if (el.id === 'nt-ttu-chrono-wrapper' || el.closest('#nt-ttu-chrono-wrapper')) {
+                            return false;
+                        }
+                        return true;
+                    }
+
+                    for (let i = 0; i < el.children.length; i++) {
+                        if (checkNode(el.children[i])) return true;
+                    }
+                    return false;
+                };
+
+                let hasBlockChange = false;
+                m.addedNodes.forEach(node => { if (checkNode(node)) hasBlockChange = true; });
+                m.removedNodes.forEach(node => { if (checkNode(node)) hasBlockChange = true; });
+
+                if (hasBlockChange) {
+                    realMutation = true;
+                    break;
+                }
+            } else if (m.type === 'characterData') {
+                const parent = m.target.parentElement;
+                if (parent) {
+                    if (isJitenOrYomichan(parent)) continue;
+                }
+                realMutation = true;
+                break;
+            }
+        }
+
+        if (realMutation) {
+            isCacheValid = false;
+        }
     });
+
     containerObserver.observe(container, {
         childList: true,
         subtree: true,
@@ -136,8 +215,10 @@ function watchContainerMutations(container: Element) {
 }
 
 export function extractAdvancedCharCount(
-    containerSelector = '.book-content, [data-ref="container"], .reader-container, article'
+    containerSelector = '.book-content, [data-ref="container"], .reader-container, article',
+    isTimerRunning = true
 ): AdvancedCharData | null {
+    const tStart = performance.now();
     try {
         const readerContainer = document.querySelector(containerSelector) || document.body;
         const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
@@ -149,6 +230,16 @@ export function extractAdvancedCharCount(
             lastContainerId = currentContainerId;
             isCacheValid = false;
             watchContainerMutations(readerContainer);
+        }
+
+        // Goal 3: Complete Stopped-State Optimization Bypass (O(1) retrieval when stopped & cache valid)
+        if (!isTimerRunning && lastContainer === readerContainer && currentContainerId === lastContainerId && isCacheValid) {
+            return {
+                current: 0,
+                total: lastCachedTotal,
+                sectionIndex: lastCachedSectionIndex,
+                isPaginated: cachedIsPaginated
+            };
         }
 
         // 1. Resolve Style Configurations (Cached)
@@ -163,7 +254,6 @@ export function extractAdvancedCharCount(
             const colWidth = style.columnWidth || '';
             const colCount = style.columnCount || '';
 
-            // Highly stable paginated mode detection based on structural container selectors
             cachedIsPaginated =
                 !!document.querySelector('.book-content-container, .book-reader-paginated, [data-view-mode="paginated"]') ||
                 ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
@@ -180,8 +270,10 @@ export function extractAdvancedCharCount(
         }
 
         const sectionIndex = getSectionIndex(activeContainer);
+        lastCachedSectionIndex = sectionIndex;
 
         if (pTags.length === 0) {
+            lastCachedTotal = 0;
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
@@ -190,14 +282,17 @@ export function extractAdvancedCharCount(
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
+        let cacheRebuilt = false;
+        const tCacheStart = performance.now();
         if (!isCacheValid || ttuCachedNodes.length !== pTags.length || ttuCachedNodes[0] !== pTags[0]) {
             ttuCachedNodes = pTags;
             ttuCachedAccumulated = new Array(pTags.length);
             let acc = 0;
+            cacheRebuilt = true;
 
             for (let i = 0; i < pTags.length; i++) {
                 const el = pTags[i];
@@ -221,7 +316,20 @@ export function extractAdvancedCharCount(
             isCacheValid = true;
         }
 
+        const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
+        lastCachedTotal = total;
+
+        if (cacheRebuilt) {
+            console.log(`[TextTracker Diagnostic] Cache rebuilt in ${(performance.now() - tCacheStart).toFixed(2)}ms for ${pTags.length} paragraphs.`);
+        }
+
+        // Bypasses calculations when stopped, but still preserves cached metrics
+        if (!isTimerRunning) {
+            return { current: 0, total, sectionIndex, isPaginated: cachedIsPaginated };
+        }
+
         // 4. Binary Search for last explored paragraph
+        const tBSStart = performance.now();
         let low = 0;
         let high = ttuCachedNodes.length - 1;
         let lastIdx = -1;
@@ -260,34 +368,39 @@ export function extractAdvancedCharCount(
         }
 
         let current = lastIdx >= 0 ? ttuCachedAccumulated[lastIdx] : 0;
+        const tBSEnd = performance.now();
 
         // 5. High-Precision Localized Sub-Paragraph Progress Tracker
+        let checkedNodesCount = 0;
+        let rangeCallsCount = 0;
+        const tSubStart = performance.now();
+
         const currentIdx = lastIdx + 1;
         if (currentIdx < ttuCachedNodes.length) {
             const activeEl = ttuCachedNodes[currentIdx];
             const r = activeEl.getBoundingClientRect();
 
-            // Optimisation Check: Verify if the active element has actually entered the viewport boundaries
-            let hasEntered = false;
-            if (cachedIsVertical) {
-                if (cachedIsPaginated) {
-                    hasEntered = r.top < cachedVh;
-                } else {
-                    if (cachedWritingMode === 'vertical-lr') {
-                        hasEntered = r.left < cachedVw;
-                    } else {
-                        hasEntered = r.right > 0;
-                    }
-                }
+            // Continuous Scroll Boundary Check: Skip checking if paragraph hasn't crossed boundary
+            let needsSubParagraphTracking = false;
+            if (cachedIsPaginated) {
+                // Goal 1: Bypass text-node measurements in columns unless split across layout borders or highlight is active
+                const isSplit = cachedIsVertical
+                    ? (r.bottom > cachedVh || r.top < 0)
+                    : (r.right > cachedVw || r.left < 0);
+                needsSubParagraphTracking = isSplit || activeEl.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
             } else {
-                if (cachedIsPaginated) {
-                    hasEntered = r.left < cachedVw;
+                if (cachedIsVertical) {
+                    if (cachedWritingMode === 'vertical-lr') {
+                        needsSubParagraphTracking = r.left < -1;
+                    } else {
+                        needsSubParagraphTracking = r.right > (cachedVw + 1);
+                    }
                 } else {
-                    hasEntered = r.top < cachedVh;
+                    needsSubParagraphTracking = r.top < -1;
                 }
             }
 
-            if (hasEntered) {
+            if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
                 if (spans.length > 0) {
@@ -329,19 +442,50 @@ export function extractAdvancedCharCount(
                         reusableRange = document.createRange();
                     }
 
-                    while ((n = walker.nextNode())) {
+                    while ((n = walker.nextNode()) && checkedNodesCount < 150) {
                         const parent = n.parentElement;
                         if (!parent || shouldIgnoreNode(parent)) {
                             continue;
                         }
 
-                        if (reusableRange) {
+                        // Check if node actually contains Japanese characters before querying layout
+                        const text = n.nodeValue || '';
+                        if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
+                            continue;
+                        }
+
+                        checkedNodesCount++;
+
+                        let sExp = false;
+                        // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation when wrapped in Jiten spans
+                        if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
+                            const nr = parent.getBoundingClientRect();
+                            if (nr.width > 0 && nr.height > 0) {
+                                if (cachedIsVertical) {
+                                    if (cachedIsPaginated) {
+                                        sExp = nr.bottom <= 1;
+                                    } else {
+                                        if (cachedWritingMode === 'vertical-lr') {
+                                            sExp = nr.right <= 1;
+                                        } else {
+                                            sExp = nr.left >= (cachedVw + 1);
+                                        }
+                                    }
+                                } else {
+                                    if (cachedIsPaginated) {
+                                        sExp = nr.right <= 1;
+                                    } else {
+                                        sExp = nr.bottom <= 1;
+                                    }
+                                }
+                            }
+                        } else if (reusableRange) {
+                            rangeCallsCount++;
                             reusableRange.selectNodeContents(n);
                             const nr = reusableRange.getBoundingClientRect();
 
                             if (nr.width === 0 || nr.height === 0) continue;
 
-                            let sExp = false;
                             if (cachedIsVertical) {
                                 if (cachedIsPaginated) {
                                     sExp = nr.bottom <= 1;
@@ -359,21 +503,28 @@ export function extractAdvancedCharCount(
                                     sExp = nr.bottom <= 1;
                                 }
                             }
+                        }
 
-                            if (sExp) {
-                                const text = n.nodeValue || '';
-                                const matches = text.match(JP_CHAR_PATTERN);
-                                if (matches) {
-                                    current += matches.length;
-                                }
+                        if (sExp) {
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) {
+                                current += matches.length;
                             }
                         }
                     }
                 }
             }
         }
+        const tSubEnd = performance.now();
 
-        const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
+        // Performance Instrumentation Logs
+        const totalDuration = performance.now() - tStart;
+        if (totalDuration > 1.5) {
+            console.warn(`[TextTracker Diagnostic] Slow Extraction: ${totalDuration.toFixed(2)}ms. ` +
+                `BinarySearch: ${(tBSEnd - tBSStart).toFixed(2)}ms | ` +
+                `SubParagraph: ${(tSubEnd - tSubStart).toFixed(2)}ms (Checked Nodes: ${checkedNodesCount}, Ranges Measured: ${rangeCallsCount}) | ` +
+                `TimerRunning: ${isTimerRunning}`);
+        }
 
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {

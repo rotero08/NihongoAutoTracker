@@ -2,13 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 
+// Generate JWT for authentication with Firefox AMO API
 function generateToken(issuer, secret) {
     const issuedAt = Math.floor(Date.now() / 1000);
     const payload = {
         iss: issuer,
         jti: Math.random().toString(),
         iat: issuedAt,
-        exp: issuedAt + 300, // Token valid for 5 minutes
+        exp: issuedAt + 300, // Valid for 5 minutes
     };
     return jwt.sign(payload, secret, { algorithm: 'HS256' });
 }
@@ -23,24 +24,28 @@ async function run() {
         process.exit(1);
     }
 
-    // Path to your README
-    const readmePath = path.resolve(__dirname, '../../README.md');
-    if (!fs.existsSync(readmePath)) {
-        console.error("README.md not found at path: " + readmePath);
+    // Read the store-specific description file instead of the main README.md
+    // to ensure formatting (like HTML tables or images) remains clean on the store page.
+    const descriptionPath = path.resolve(__dirname, '../../STORE_DESCRIPTION.md');
+
+    if (!fs.existsSync(descriptionPath)) {
+        console.error(`Store description file not found at: ${descriptionPath}`);
         process.exit(1);
     }
 
-    let content = fs.readFileSync(readmePath, 'utf-8');
+    let content = fs.readFileSync(descriptionPath, 'utf-8');
 
-    // AMO limit is 3000 characters. 
+    // AMO store page description limit is 3000 characters. 
     if (content.length > 3000) {
-        console.warn("README is longer than 3000 characters. Truncating for AMO...");
+        console.warn("Description is longer than 3000 characters. Truncating to fit AMO guidelines...");
         content = content.substring(0, 2995) + '...';
     }
 
     const token = generateToken(issuer, secret);
 
-    // Update listing details via AMO API v5
+    console.log("Updating store page description on Firefox AMO...");
+
+    // Update listing details on AMO via PATCH request
     const response = await fetch(`https://addons.mozilla.org/api/v5/addons/addon/${addonId}/`, {
         method: 'PATCH',
         headers: {
@@ -55,15 +60,15 @@ async function run() {
     });
 
     if (response.ok) {
-        console.log("Successfully updated store description.");
+        console.log("Successfully updated extension store page description.");
     } else {
         const errData = await response.json();
-        console.error("Failed to update store description:", JSON.stringify(errData, null, 2));
+        console.error("Failed to update store page description:", JSON.stringify(errData, null, 2));
         process.exit(1);
     }
 }
 
 run().catch(err => {
-    console.error(err);
+    console.error("Description sync failed with error:", err);
     process.exit(1);
 });

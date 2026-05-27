@@ -61,6 +61,68 @@ let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
+// Dynamic stabilization grace period state variables (Goal 2)
+let isGracePeriodActive = false;
+let graceTimeout: any = null;
+let lastJitenMutationTime = 0;
+
+function setChronoButtonDisabled(disabled: boolean) {
+  const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLButtonElement;
+  if (btn) {
+    if (disabled) {
+      btn.disabled = true;
+      btn.style.setProperty('opacity', '0.4', 'important');
+      btn.style.setProperty('pointer-events', 'none', 'important');
+      btn.style.setProperty('cursor', 'not-allowed', 'important');
+      btn.setAttribute('title', 'Waiting for Jiten text parsing to stabilize...');
+    } else {
+      btn.disabled = false;
+      btn.style.removeProperty('opacity');
+      btn.style.removeProperty('pointer-events');
+      btn.style.removeProperty('cursor');
+      btn.setAttribute('title', 'Click to open Tracker Menu or Double Click to toggle Tracker');
+    }
+  }
+}
+
+// Goal 2: Infinite-precision Dynamic Debounce Stabilization
+function runGracePeriodIfJiten() {
+  const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+  if (!isJitenActive) return;
+
+  lastJitenMutationTime = Date.now();
+  if (isGracePeriodActive) {
+    // Extend the active window if mutations are still actively arriving
+    if (graceTimeout) clearTimeout(graceTimeout);
+    graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
+    return;
+  }
+
+  console.log("[TextTracker Diagnostic] Jiten activity detected. Activating dynamic stabilization grace period...");
+  isGracePeriodActive = true;
+  setChronoButtonDisabled(true);
+
+  if (graceTimeout) clearTimeout(graceTimeout);
+  graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
+}
+
+function checkGracePeriodStabilization() {
+  const timeSinceLastMutation = Date.now() - lastJitenMutationTime;
+  if (timeSinceLastMutation < 300) {
+    // Keep checking until mutations completely stop
+    if (graceTimeout) clearTimeout(graceTimeout);
+    graceTimeout = setTimeout(checkGracePeriodStabilization, 300 - timeSinceLastMutation);
+    return;
+  }
+
+  console.log("[TextTracker Diagnostic] Jiten mutations stabilized. Ending grace period, capturing baseline.");
+  isGracePeriodActive = false;
+  setChronoButtonDisabled(false);
+  if (ttuState.running) {
+    recalculateChars();
+  }
+}
+
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
 
@@ -204,7 +266,7 @@ function getOverlayElement(): HTMLElement | null {
   if (_overlayCache && _overlayCache.isConnected) {
     return _overlayCache;
   }
-  _overlayCache = document.getElementById('nt-overlay');
+  _overlayCache = document.getElementById('nt-ttu-chrono-wrapper');
   return _overlayCache;
 }
 
@@ -301,7 +363,7 @@ async function saveSessionAndQueue() {
   ttuState.timeMs = 0;
   ttuState.chars = 0;
 
-  const currentCount = extractAdvancedCharCount();
+  const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
   stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = -1;
@@ -353,7 +415,7 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
  * Perform progression mapping and dispatch instant UI updates.
  */
 function recalculateChars() {
-  if (!ttuState.running) return;
+  if (!ttuState.running || isGracePeriodActive) return;
 
   if (!isReadingViewActive()) {
     ttuState.running = false;
@@ -457,6 +519,7 @@ async function setupTTUChronometer() {
     });
 
     setupProgressObserver();
+    runGracePeriodIfJiten();
 
     if ((window as any).ntChronoInterval) {
       clearInterval((window as any).ntChronoInterval);
@@ -481,13 +544,13 @@ async function setupTTUChronometer() {
         return;
       }
 
-      if (ttuState.running) {
+      if (ttuState.running && !isGracePeriodActive) {
         const now = Date.now();
         const elapsed = now - stateRefs.globalLastTick;
 
         ttuState.timeMs += elapsed;
 
-        const charData = extractAdvancedCharCount();
+        const charData = extractAdvancedCharCount(undefined, ttuState.running);
         if (charData !== null) {
           const { current } = charData;
 
@@ -528,7 +591,7 @@ async function setupTTUChronometer() {
 // ── Ultra-Performant Interaction Hooks ────────────────────────────────────────
 if (typeof window !== 'undefined') {
   const handleScrollUpdate = () => {
-    if (!ttuState.running || !isReadingViewActive()) return;
+    if (!ttuState.running || !isReadingViewActive() || isGracePeriodActive) return;
     if (scrollTimeout) clearTimeout(scrollTimeout);
 
     scrollTimeout = setTimeout(() => {
@@ -540,13 +603,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', handleScrollUpdate, { passive: true });
 
   window.addEventListener('click', () => {
-    if (ttuState.running && isReadingViewActive()) {
+    if (ttuState.running && isReadingViewActive() && !isGracePeriodActive) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
 
   window.addEventListener('keyup', (e) => {
-    if (ttuState.running && isReadingViewActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
+    if (ttuState.running && isReadingViewActive() && !isGracePeriodActive && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
@@ -577,176 +640,261 @@ function isChapterLoading(): boolean {
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
-  const handleMutations = () => {
-    _mutationMicrotaskScheduled = false;
-    invalidateReadingViewCache();
+  const isInlineTag = (tag: string) => /^(SPAN|RUBY|RT|RP|A|I|B|EM|STRONG|FONT|CODE)$/i.test(tag);
 
-    const isLoaderActive = isChapterLoading();
+  const observer = new MutationObserver((mutations) => {
+    const t0 = performance.now();
+    let totalMutations = mutations.length;
+    let processedMutations = 0;
+    let hasImportantMutation = false;
 
-    // Prevent corrupting session references when Svelte is displaying a transition loading spinner
-    if (isReadingViewActive() && isLoaderActive) {
-      if (lastLoggedPaginatedMode === false) {
-        _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window only on continuous loads
+    for (const m of mutations) {
+      processedMutations++;
+      const target = m.target as HTMLElement;
+      if (!target) continue;
+
+      // Goal 1: Bypass inline structural mutations immediately to prevent DOM walk overhead
+      if (isInlineTag(target.tagName)) continue;
+
+      // Ignore mutations inside our chrono wrapper, overlays, and toasts
+      if (target.id === 'nt-ttu-chrono-wrapper' || target.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+        continue;
       }
-      return;
-    }
 
-    // 1. TTU Chrono insert check
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (isReadingViewActive()) {
-      const target = findTTUInsertPoint();
-      if (target) {
-        const readerCfg = getReaderConfig(currentConfig);
-        if (readerCfg.enabled !== false) {
-          if (!wrapper) {
-            setupTTUChronometer();
-          } else {
-            const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
-            if (wrapper.parentElement !== expectedParent) {
-              target.el.insertAdjacentElement(target.pos, wrapper);
-            }
-          }
-        }
+      // Ignore inline word modifications from Jiten, Yomichan, and Yomitan
+      if (target.classList.contains('jiten-word') || target.closest('.jiten-word, .yomichan, .yomitan')) {
+        continue;
       }
-    } else {
-      if (wrapper) wrapper.remove();
-    }
 
-    // Yatsu whispersync layout adjustment: Adjust gap when whispersync is detected on app.yatsu.moe
-    if (wrapper) {
-      const isYatsu = window.location.hostname.includes('app.yatsu.moe');
-      const isWhispersyncActive = isYatsu && !!(
-        document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
-        Array.from(document.querySelectorAll('button, div, span')).some(el =>
-          el.textContent?.toLowerCase().includes('whispersync')
-        )
-      );
-      if (isWhispersyncActive) {
-        wrapper.style.setProperty('margin-left', '12px', 'important');
-        wrapper.style.setProperty('gap', '12px', 'important');
-      } else if (isYatsu) {
-        wrapper.style.removeProperty('margin-left');
-        wrapper.style.removeProperty('gap');
-      }
-    }
-
-    if (ttuState.running && isReadingViewActive()) {
-      setupProgressObserver();
-    }
-
-    // 2. Section transition detector (throttled to max once per 50ms for instantaneous updates)
-    const now = Date.now();
-    if ((now - _lastSectionCheckTime) >= 50) {
-      _lastSectionCheckTime = now;
-      const charData = extractAdvancedCharCount();
-      if (charData !== null) {
-        const { total, sectionIndex, isPaginated } = charData;
-        const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-        // View-Mode Switch Safeguard: Cleanly purge old metrics if we transitioned reading types
-        if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-          stateRefs.globalSessionStartChar = -1;
-          stateRefs.globalManualCharOffset = 0;
-          stateRefs.lastSectionIndex = -1;
-          stateRefs.lastSectionTotal = 0;
-          stateRefs.visitedSections.clear();
-          stateRefs.sessionInitialSectionIndex = -1;
-          stateRefs.sessionInitialStartChar = -1;
-          ttuState.chars = 0;
-          ttuState.timeMs = 0;
-          stateRefs.globalLastTick = Date.now();
-          lastLoggedPaginatedMode = isPaginated;
-          if (!isPaginated) {
-            _transitionGraceUntil = Date.now() + 400; // Trigger grace window on continuous view switches
-          }
-          recalculateChars();
-          return;
-        }
-        lastLoggedPaginatedMode = isPaginated;
-
-        if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
-          const currentCount = extractAdvancedCharCount();
-          initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
-        }
-
-        if (stateRefs.lastSectionIndex !== activeSection) {
-          // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
-          if (activeSection === -1) {
-            if (!isReadingViewActive()) {
-              stateRefs.lastSectionIndex = -1;
-              stateRefs.globalManualCharOffset = 0;
-              stateRefs.visitedSections.clear();
-              recalculateChars();
-            }
-          } else {
-            if (activeSection > stateRefs.lastSectionIndex) {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-              } else {
-                // Accumulate using the verified non-zero previous chapter total
-                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-              }
-            } else {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-              } else {
-                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+      // Ignore Jiten / Yomichan / Yomitan childList modifications
+      if (m.type === 'childList') {
+        const isDictionaryMutation = Array.from(m.addedNodes).concat(Array.from(m.removedNodes)).every(node => {
+          if (node.nodeType === Node.TEXT_NODE) return true;
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            const el = node as HTMLElement;
+            const tag = el.tagName;
+            if (tag === 'RT' || tag === 'RP' || tag === 'RUBY') return true;
+            const nodeCl = el.classList;
+            if (nodeCl) {
+              if (nodeCl.contains('jiten-word') || nodeCl.contains('yomichan') || nodeCl.contains('yomitan')) return true;
+              for (let i = 0; i < nodeCl.length; i++) {
+                const c = nodeCl[i].toLowerCase();
+                if (c.includes('jiten') || c.includes('yomi')) return true;
               }
             }
-
-            // Sync baseline progress boundary so going backward stays clamped at 0 session progress
-            if (isPaginated) {
-              if (activeSection < stateRefs.sessionInitialSectionIndex) {
-                stateRefs.globalSessionStartChar = total;
-              } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
-                stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
-              } else {
-                stateRefs.globalSessionStartChar = 0;
-              }
-            }
-
-            stateRefs.lastSectionIndex = activeSection;
-            stateRefs.lastSectionTotal = total;
-            recalculateChars();
+            if (el.getAttribute('ajb') === 'true') return true;
           }
-        } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-          stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
+          return false;
+        });
+
+        // Dynamic, high-precision Jiten parser detection (Goal 2)
+        if (!isGracePeriodActive) {
+          const hasJitenAdded = Array.from(m.addedNodes).some(node => {
+            if (node.nodeType !== Node.ELEMENT_NODE) return false;
+            const el = node as HTMLElement;
+            return el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || el.className?.toLowerCase().includes('jiten');
+          });
+          if (hasJitenAdded) {
+            runGracePeriodIfJiten();
+          }
+        }
+
+        if (isDictionaryMutation) {
+          continue;
         }
       }
-    }
 
-    // 3. Theme change tracking (throttled to max once per 2s)
-    if ((now - _lastThemeCheckTime) >= 2000) {
-      _lastThemeCheckTime = now;
-      const activeTheme = getActiveThemeName(currentConfig);
-      if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
-        updateActiveThemeStyles(activeTheme, currentConfig);
-      }
-    }
-
-    // 4. Non-reader Overlay recovery check
-    const adapter = getActiveReaderAdapter();
-    if (!adapter) {
-      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
-        const overlay = getOverlayElement();
-        if (!overlay) {
-          checkAndRunOverlay(currentConfig);
+      // For attribute modifications, we only care about high-level structural components (body, containers, etc.)
+      if (m.type === 'attributes') {
+        const tag = target.tagName;
+        if (tag !== 'BODY' && tag !== 'HTML' && !target.classList.contains('book-content-container') && !target.id?.includes('ttu') && !target.className?.includes('reader')) {
+          continue;
         }
       }
-    }
-  };
 
-  const observer = new MutationObserver(() => {
-    // Coalesce mutations synchronously inside the microtask queue to recalculate
-    // and redraw UI elements before the browser paints the screen (Eliminates visual flickers)
-    if (!_mutationMicrotaskScheduled) {
-      _mutationMicrotaskScheduled = true;
-      queueMicrotask(handleMutations);
+      hasImportantMutation = true;
+      break;
+    }
+
+    const duration = performance.now() - t0;
+    if (totalMutations > 10) {
+      console.log(`[TextTracker Diagnostic] Mutation Storm: Received ${totalMutations} mutations. ` +
+        `Processed: ${processedMutations} in ${duration.toFixed(2)}ms. ` +
+        `Triggered Recalculation: ${hasImportantMutation}`);
+    }
+
+    if (hasImportantMutation) {
+      if (!_mutationMicrotaskScheduled) {
+        _mutationMicrotaskScheduled = true;
+        queueMicrotask(handleMutations);
+      }
     }
   });
+
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+}
+
+function handleMutations() {
+  _mutationMicrotaskScheduled = false;
+  invalidateReadingViewCache();
+
+  const isLoaderActive = isChapterLoading();
+
+  // Prevent corrupting session references when Svelte is displaying a transition loading spinner
+  if (isReadingViewActive() && isLoaderActive) {
+    if (lastLoggedPaginatedMode === false) {
+      _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window only on continuous loads
+    }
+    runGracePeriodIfJiten();
+    return;
+  }
+
+  // 1. TTU Chrono insert check
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  if (isReadingViewActive()) {
+    const target = findTTUInsertPoint();
+    if (target) {
+      const readerCfg = getReaderConfig(currentConfig);
+      if (readerCfg.enabled !== false) {
+        if (!wrapper) {
+          setupTTUChronometer();
+        } else {
+          const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
+          if (wrapper.parentElement !== expectedParent) {
+            target.el.insertAdjacentElement(target.pos, wrapper);
+          }
+        }
+      }
+    }
+  } else {
+    if (wrapper) wrapper.remove();
+  }
+
+  // Yatsu whispersync layout adjustment: Adjust gap when whispersync is detected on app.yatsu.moe
+  if (wrapper) {
+    const isYatsu = window.location.hostname.includes('app.yatsu.moe');
+    const isWhispersyncActive = isYatsu && !!(
+      document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
+      Array.from(document.querySelectorAll('button, div, span')).some(el =>
+        el.textContent?.toLowerCase().includes('whispersync')
+      )
+    );
+    if (isWhispersyncActive) {
+      wrapper.style.setProperty('margin-left', '12px', 'important');
+      wrapper.style.setProperty('gap', '12px', 'important');
+    } else if (isYatsu) {
+      wrapper.style.removeProperty('margin-left');
+      wrapper.style.removeProperty('gap');
+    }
+  }
+
+  if (ttuState.running && isReadingViewActive()) {
+    setupProgressObserver();
+  }
+
+  // 2. Section transition detector (throttled to max once per 50ms for instantaneous updates)
+  const now = Date.now();
+  if ((now - _lastSectionCheckTime) >= 50) {
+    _lastSectionCheckTime = now;
+    const charData = extractAdvancedCharCount(undefined, ttuState.running);
+    if (charData !== null) {
+      const { total, sectionIndex, isPaginated } = charData;
+      const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+      // View-Mode Switch Safeguard: Cleanly purge old metrics if we transitioned reading types
+      if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+        stateRefs.globalSessionStartChar = -1;
+        stateRefs.globalManualCharOffset = 0;
+        stateRefs.lastSectionIndex = -1;
+        stateRefs.lastSectionTotal = 0;
+        stateRefs.visitedSections.clear();
+        stateRefs.sessionInitialSectionIndex = -1;
+        stateRefs.sessionInitialStartChar = -1;
+        ttuState.chars = 0;
+        ttuState.timeMs = 0;
+        stateRefs.globalLastTick = Date.now();
+        lastLoggedPaginatedMode = isPaginated;
+        if (!isPaginated) {
+          _transitionGraceUntil = Date.now() + 400; // Trigger grace window on continuous view switches
+        }
+        recalculateChars();
+        return;
+      }
+      lastLoggedPaginatedMode = isPaginated;
+
+      if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
+        const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
+        initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
+      }
+
+      if (stateRefs.lastSectionIndex !== activeSection) {
+        // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
+        if (activeSection === -1) {
+          if (!isReadingViewActive()) {
+            stateRefs.lastSectionIndex = -1;
+            stateRefs.globalManualCharOffset = 0;
+            stateRefs.visitedSections.clear();
+            recalculateChars();
+          }
+        } else {
+          if (activeSection > stateRefs.lastSectionIndex) {
+            if (stateRefs.visitedSections.has(activeSection)) {
+              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+            } else {
+              // Accumulate using the verified non-zero previous chapter total
+              stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+            }
+          } else {
+            if (stateRefs.visitedSections.has(activeSection)) {
+              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+            } else {
+              stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+            }
+          }
+
+          // Sync baseline progress boundary so going backward stays clamped at 0 session progress
+          if (isPaginated) {
+            if (activeSection < stateRefs.sessionInitialSectionIndex) {
+              stateRefs.globalSessionStartChar = total;
+            } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
+              stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
+            } else {
+              stateRefs.globalSessionStartChar = 0;
+            }
+          }
+
+          stateRefs.lastSectionIndex = activeSection;
+          stateRefs.lastSectionTotal = total;
+          runGracePeriodIfJiten();
+          recalculateChars();
+        }
+      } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
+        stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
+      }
+    }
+  }
+
+  // 3. Theme change tracking (throttled to max once per 2s)
+  if ((now - _lastThemeCheckTime) >= 2000) {
+    _lastThemeCheckTime = now;
+    const activeTheme = getActiveThemeName(currentConfig);
+    if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
+      updateActiveThemeStyles(activeTheme, currentConfig);
+    }
+  }
+
+  // 4. Non-reader Overlay recovery check
+  const adapter = getActiveReaderAdapter();
+  if (!adapter) {
+    if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
+      const overlay = getOverlayElement();
+      if (!overlay) {
+        checkAndRunOverlay(currentConfig);
+      }
+    }
+  }
 }
 
 if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
@@ -794,6 +942,7 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes['config']) {
     const newCfg: any = changes['config'].newValue || {};
     currentConfig = newCfg;
+    const cfg = newCfg;
 
     const themeName = getActiveThemeName(newCfg);
     try {
@@ -841,7 +990,7 @@ browser.storage.onChanged.addListener((changes, area) => {
         }
       }
 
-      injectThemeStyles(themeName, newCfg.font ?? 'sans', customColors);
+      injectThemeStyles(themeName, cfg.font ?? 'sans', customColors);
 
       const existingOverlay = getOverlayElement();
       if (existingOverlay) {
@@ -894,7 +1043,7 @@ browser.storage.onChanged.addListener((changes, area) => {
       ttuState.chars = 0;
       stateRefs.globalLastTick = Date.now();
 
-      const initCount = extractAdvancedCharCount();
+      const initCount = extractAdvancedCharCount(undefined, ttuState.running);
       stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
 
       stateRefs.globalManualCharOffset = 0;
