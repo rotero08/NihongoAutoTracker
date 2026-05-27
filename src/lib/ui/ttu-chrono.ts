@@ -46,7 +46,7 @@ export function setupTTUChronometerUI(
     helpers: {
         getTTUTitle: () => string;
         parseTitleWithConfig: (t: string) => { query: string; volume?: number };
-        extractTTUCharCount: () => number | null;
+        extractTTUCharCount: () => any;
         getReaderName: () => string;
         getCurrentReaderConfig: () => any;
         liveSyncQueue: () => Promise<void>;
@@ -60,6 +60,48 @@ export function setupTTUChronometerUI(
 
     const wrapper = document.createElement('div');
     wrapper.id = 'nt-ttu-chrono-wrapper';
+
+    // Inject high-performance compositor-only GPU-driven styles (Issue 4 Fix)
+    let styleEl = document.getElementById('nt-ttu-custom-styles');
+    if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'nt-ttu-custom-styles';
+        styleEl.textContent = `
+            @keyframes nt-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+            @keyframes nt-fade-pulse {
+                0% { opacity: 0.4; }
+                50% { opacity: 1.0; }
+                100% { opacity: 0.4; }
+            }
+            .nt-ttu-sync-status {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 10px;
+                color: var(--nt-text-secondary, #aaa); /* Inherits theme color (Issue 2 Fix) */
+                text-align: center;
+                margin-top: 8px;
+                opacity: 0.9;
+                /* GPU-driven composite opacity pulse (Issue 4 Fix) */
+                animation: nt-fade-pulse 1.8s ease-in-out infinite; 
+            }
+            .nt-ttu-spinner {
+                width: 12px;
+                height: 12px;
+                margin-right: 6px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 2.5;
+                stroke-linecap: round;
+                /* GPU-driven composite rotate transition (Issue 4 Fix) */
+                animation: nt-spin 0.8s linear infinite; 
+            }
+        `;
+        document.head.appendChild(styleEl);
+    }
 
     setSafeHTML(wrapper, `
   <button id="nt-ttu-chrono-btn" title="Click to open Tracker Menu or Double Click to toggle Tracker">
@@ -79,6 +121,13 @@ export function setupTTUChronometerUI(
         <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-log" title="Save & Queue"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg></button>
         <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-direct" title="Match media to send directly" disabled style="opacity: 0.3; cursor: not-allowed;"><svg style="width: 16px; height: 16px;" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
         <button class="nt-ttu-btn-icon" id="nt-ttu-btn-settings" title="Open Tracker Settings"><svg viewBox="0 0 24 24" fill="currentColor" style="width: 15px; height: 15px;"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg></button>
+      </div>
+      <div id="nt-ttu-sync-status" class="nt-ttu-sync-status" style="display:none;">
+        <svg class="nt-ttu-spinner" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.12)"></circle>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor"></path>
+        </svg>
+        <span>Tracking active — Waiting for Jiten to process layout...</span>
       </div>
       <div class="nt-ttu-linker" id="nt-ttu-linker-sec">
         <div class="nt-ttu-link-compact" id="nt-ttu-link-compact" style="display:none">
@@ -539,7 +588,7 @@ export function setupTTUChronometerUI(
                 } else {
                     const val = parseInt(input.value.replace(/\D/g, ''));
                     if (!isNaN(val) && val >= 0) {
-                        const currentCount = helpers.extractTTUCharCount() || 0;
+                        const currentCount = helpers.extractTTUCharCount() ? helpers.extractTTUCharCount().current : 0;
                         let diff = currentCount - (stateRefs.globalSessionStartChar !== -1 ? stateRefs.globalSessionStartChar : 0);
                         if (diff < 0) diff = 0;
                         stateRefs.globalManualCharOffset = val - diff;
@@ -564,26 +613,98 @@ export function setupTTUChronometerUI(
 
     btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        dropdown.classList.toggle('open');
-        if (dropdown.classList.contains('open')) {
+
+        // Suppress menu interaction if button has the Jiten suspension class
+        if (btn.classList.contains('nt-btn-suspended') || btn.classList.contains('nt-btn-suspended-running')) {
+            return;
+        }
+
+        const willOpen = !dropdown.classList.contains('open');
+
+        // Synchronous Pre-rendering logic (Point 3): Update character progress nodes BEFORE toggle to prevent visual jumps
+        if (willOpen) {
+            const charData = helpers.extractTTUCharCount();
+            if (charData && typeof charData === 'object') {
+                const currentCount = charData.current;
+                if (stateRefs.globalSessionStartChar === -1) {
+                    stateRefs.globalSessionStartChar = currentCount;
+                }
+                let diff = currentCount - stateRefs.globalSessionStartChar;
+                if (diff < 0) diff = 0;
+                ttuState.chars = diff + stateRefs.globalManualCharOffset;
+            }
+
+            // Sync stats values immediately in the same paint tick
+            if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
+            if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
+
+            const totalMins = cachedHistoryMins + Math.floor(ttuState.timeMs / 60000);
+            const totalChars = cachedHistoryChars + ttuState.chars;
+            const sessSpeed = ttuState.timeMs > 0 ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60) : 0;
+            const totSpeed = totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0;
+
+            speedVal.textContent = sessSpeed + '/h';
+            totalSpeedVal.textContent = totSpeed + '/h';
+
+            const totalTimeEl = wrapper.querySelector('#nt-ttu-total-time');
+            const totalCharsEl = wrapper.querySelector('#nt-ttu-total-chars');
+            if (totalTimeEl) totalTimeEl.textContent = totalMins + 'm';
+            if (totalCharsEl) totalCharsEl.textContent = totalChars.toString();
+
             await updateHistoryData();
             await refreshLinkerUI();
         }
+
+        dropdown.classList.toggle('open');
         updateUI();
     });
 
     btn.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         e.preventDefault();
+
+        // Suppress timer triggers only when completely stopped (visual grace active)
+        if (btn.classList.contains('nt-btn-suspended')) {
+            return;
+        }
+
+        const wasRunning = ttuState.running;
         ttuState.running = !ttuState.running;
+
         if (ttuState.running) {
-            const currentCount = helpers.extractTTUCharCount();
+            const currentCount = helpers.extractTTUCharCount() ? helpers.extractTTUCharCount().current : null;
             if (currentCount !== null) {
                 stateRefs.globalSessionStartChar = currentCount - (ttuState.chars - stateRefs.globalManualCharOffset);
             }
             stateRefs.globalLastTick = Date.now();
+        } else if (wasRunning) {
+            // High-precision mouse-hardware double-click back-deduction (Math correction)
+            const eventTime = e.timeStamp;
+            const now = performance.now();
+            const latency = now - eventTime;
+            if (latency > 50 && latency < 10000) {
+                ttuState.timeMs = Math.max(0, ttuState.timeMs - latency);
+            }
         }
         updateUI();
+    });
+
+    // Custom instant tooltip events aligned left and sliding upward (Issue 1 & Requirement 1 Fix)
+    btn.addEventListener('mouseenter', () => {
+        const tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+        const isDropdownOpen = dropdown.classList.contains('open');
+        if (tooltip && (btn.classList.contains('nt-btn-suspended') || btn.classList.contains('nt-btn-suspended-running')) && !isDropdownOpen) {
+            tooltip.style.opacity = '1';
+            tooltip.style.transform = 'translateY(0px)'; // Smoothly slides up, left-aligned, preventing clipping
+        }
+    });
+
+    btn.addEventListener('mouseleave', () => {
+        const tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+        if (tooltip) {
+            tooltip.style.opacity = '0';
+            tooltip.style.transform = 'translateY(5px)';
+        }
     });
 
     document.addEventListener('click', (e) => {
@@ -596,7 +717,7 @@ export function setupTTUChronometerUI(
         e.stopPropagation();
         ttuState.running = !ttuState.running;
         if (ttuState.running) {
-            const currentCount = helpers.extractTTUCharCount();
+            const currentCount = helpers.extractTTUCharCount() ? helpers.extractTTUCharCount().current : null;
             if (currentCount !== null) {
                 stateRefs.globalSessionStartChar = currentCount - (ttuState.chars - stateRefs.globalManualCharOffset);
             }
@@ -609,7 +730,7 @@ export function setupTTUChronometerUI(
         e.stopPropagation();
         ttuState.timeMs = 0;
         ttuState.chars = 0;
-        const currentCount = helpers.extractTTUCharCount();
+        const currentCount = helpers.extractTTUCharCount() ? helpers.extractTTUCharCount().current : null;
         stateRefs.globalSessionStartChar = currentCount !== null ? currentCount : -1;
         stateRefs.globalManualCharOffset = 0;
 
@@ -620,99 +741,14 @@ export function setupTTUChronometerUI(
         updateUI();
     });
 
-    let isProcessingLog = false;
-    btnLog.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (helpers.getCurrentReaderConfig().autoSave !== false) return;
-        if (isProcessingLog) return;
-
-        isProcessingLog = true;
-        btnLog.style.opacity = '0.3';
-        btnLog.style.cursor = 'wait';
-
-        try {
-            await helpers.saveSessionAndQueue();
-            await updateHistoryData();
-        } finally {
-            isProcessingLog = false;
-            updateUI();
+    // Handle background status event when running (Issue 2 & 3 Fix)
+    wrapper.addEventListener('nt-jiten-status', (e: any) => {
+        const statusEl = wrapper.querySelector('#nt-ttu-sync-status') as HTMLElement;
+        const isParsing = e.detail?.parsing;
+        if (statusEl) {
+            statusEl.style.display = isParsing ? 'flex' : 'none';
         }
-    });
-
-    let isProcessingDirect = false;
-    btnDirect.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
-        if (isProcessingDirect) return;
-
-        const title = helpers.getTTUTitle();
-        const links = await ttuLinkStorage.getValue() || {};
-        const linkedMedia = links[title];
-        if (!linkedMedia) return;
-
-        isProcessingDirect = true;
-        btnDirect.style.opacity = '0.3';
-        btnDirect.style.cursor = 'wait';
-
-        const secs = Math.round(ttuState.timeMs / 1000);
-        const minutes = Math.max(1, Math.round(secs / 60));
-        try {
-            const ok = await submitLog({
-                type: 'reading',
-                mediaId: linkedMedia.mediaId,
-                mediaData: linkedMedia.mediaData,
-                description: linkedMedia.mediaData.contentTitleNative || title,
-                chars: ttuState.chars,
-                time: minutes,
-                date: new Date().toISOString(),
-                episodes: 0,
-                pages: 0,
-                volume: linkedMedia.volume || 1,
-                private: false,
-                tags: []
-            });
-            if (!ok) return;
-
-            const dateStr = new Date().toISOString();
-            const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
-            const history = await ttuHistoryStorage.getValue() || {};
-            if (!history[title]) history[title] = [];
-            history[title].push(sessionLog);
-            await ttuHistoryStorage.setValue(history);
-
-            const queue = await readingQueueStorage.getValue();
-            const existing = queue.find((q: any) => q.originalTitle === title || q.contentTitleNative === title);
-            if (existing) {
-                existing.sessions = (existing.sessions || []).filter((s: any) => s.id !== ttuState.id);
-                existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
-                existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
-                await readingQueueStorage.setValue(queue);
-            }
-
-            ttuState.id = crypto.randomUUID();
-            ttuState.timeMs = 0;
-            ttuState.chars = 0;
-            const currentCount = helpers.extractTTUCharCount();
-            stateRefs.globalSessionStartChar = currentCount !== null ? currentCount : -1;
-            stateRefs.globalManualCharOffset = 0;
-            ttuState.running = false;
-
-            await updateHistoryData();
-        } catch {
-            showToast('Error', 'Failed to send log', true);
-        } finally {
-            isProcessingDirect = false;
-            const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-            if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-            updateUI();
-        }
-    });
-
-    btnSettings.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        browser.runtime.sendMessage({ action: 'OPEN_SETTINGS', tab: 'readers' }).catch(() => { });
+        // Button glow and scale filters completely removed during status changes (Issue 3 Fix)
     });
 
     wrapper.addEventListener('nt-linker-refresh', () => {

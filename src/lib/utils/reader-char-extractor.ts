@@ -28,7 +28,7 @@ let lastContainer: Element | null = null;
 let lastContainerId = '';
 let isCacheValid = false;
 
-// Stopped-state cache references
+// Stopped-state cache references (Goal 3)
 let lastCachedTotal = 0;
 let lastCachedSectionIndex: number | null = null;
 
@@ -218,7 +218,6 @@ export function extractAdvancedCharCount(
     containerSelector = '.book-content, [data-ref="container"], .reader-container, article',
     isTimerRunning = true
 ): AdvancedCharData | null {
-    const tStart = performance.now();
     try {
         const readerContainer = document.querySelector(containerSelector) || document.body;
         const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
@@ -286,13 +285,10 @@ export function extractAdvancedCharCount(
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
-        let cacheRebuilt = false;
-        const tCacheStart = performance.now();
         if (!isCacheValid || ttuCachedNodes.length !== pTags.length || ttuCachedNodes[0] !== pTags[0]) {
             ttuCachedNodes = pTags;
             ttuCachedAccumulated = new Array(pTags.length);
             let acc = 0;
-            cacheRebuilt = true;
 
             for (let i = 0; i < pTags.length; i++) {
                 const el = pTags[i];
@@ -319,17 +315,12 @@ export function extractAdvancedCharCount(
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
         lastCachedTotal = total;
 
-        if (cacheRebuilt) {
-            console.log(`[TextTracker Diagnostic] Cache rebuilt in ${(performance.now() - tCacheStart).toFixed(2)}ms for ${pTags.length} paragraphs.`);
-        }
-
         // Bypasses calculations when stopped, but still preserves cached metrics
         if (!isTimerRunning) {
             return { current: 0, total, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
         // 4. Binary Search for last explored paragraph
-        const tBSStart = performance.now();
         let low = 0;
         let high = ttuCachedNodes.length - 1;
         let lastIdx = -1;
@@ -368,13 +359,8 @@ export function extractAdvancedCharCount(
         }
 
         let current = lastIdx >= 0 ? ttuCachedAccumulated[lastIdx] : 0;
-        const tBSEnd = performance.now();
 
         // 5. High-Precision Localized Sub-Paragraph Progress Tracker
-        let checkedNodesCount = 0;
-        let rangeCallsCount = 0;
-        const tSubStart = performance.now();
-
         const currentIdx = lastIdx + 1;
         if (currentIdx < ttuCachedNodes.length) {
             const activeEl = ttuCachedNodes[currentIdx];
@@ -436,6 +422,7 @@ export function extractAdvancedCharCount(
                     // Fallback to text node precision tracking when highlights are absent
                     const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
                     let n;
+                    let checkedNodesCount = 0;
 
                     // Lazy-load DOM Range to prevent memory churn
                     if (!reusableRange && typeof document !== 'undefined') {
@@ -480,7 +467,6 @@ export function extractAdvancedCharCount(
                                 }
                             }
                         } else if (reusableRange) {
-                            rangeCallsCount++;
                             reusableRange.selectNodeContents(n);
                             const nr = reusableRange.getBoundingClientRect();
 
@@ -514,16 +500,6 @@ export function extractAdvancedCharCount(
                     }
                 }
             }
-        }
-        const tSubEnd = performance.now();
-
-        // Performance Instrumentation Logs
-        const totalDuration = performance.now() - tStart;
-        if (totalDuration > 1.5) {
-            console.warn(`[TextTracker Diagnostic] Slow Extraction: ${totalDuration.toFixed(2)}ms. ` +
-                `BinarySearch: ${(tBSEnd - tBSStart).toFixed(2)}ms | ` +
-                `SubParagraph: ${(tSubEnd - tSubStart).toFixed(2)}ms (Checked Nodes: ${checkedNodesCount}, Ranges Measured: ${rangeCallsCount}) | ` +
-                `TimerRunning: ${isTimerRunning}`);
         }
 
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };

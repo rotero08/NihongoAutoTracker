@@ -62,45 +62,118 @@ let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
 // Dynamic stabilization grace period state variables (Goal 2)
+let hasInitialJitenParseOccurred = false;
 let isGracePeriodActive = false;
 let graceTimeout: any = null;
 let lastJitenMutationTime = 0;
 
-function setChronoButtonDisabled(disabled: boolean) {
+// Silent grace period state variables for continuous running timer updates (Point 2A)
+let isSilentGraceActive = false;
+let silentGraceTimeout: any = null;
+let lastSilentMutationTime = 0;
+
+// Background tracking throttle timestamp (Point 3)
+let lastBackgroundCharCheck = 0;
+
+function setChronoButtonDisabled(disabled: boolean, message?: string) {
   const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLButtonElement;
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   if (btn) {
+    let tooltip = wrapper?.querySelector('.nt-chrono-tooltip') as HTMLElement;
     if (disabled) {
-      btn.disabled = true;
-      btn.style.setProperty('opacity', '0.4', 'important');
-      btn.style.setProperty('pointer-events', 'none', 'important');
-      btn.style.setProperty('cursor', 'not-allowed', 'important');
-      btn.setAttribute('title', 'Waiting for Jiten text parsing to stabilize...');
+      btn.classList.add('nt-btn-suspended');
+      btn.style.setProperty('opacity', '0.6', 'important');
+      btn.style.setProperty('pointer-events', 'auto', 'important'); // Keep hover triggers active so tooltip works (Issue 2 Fix)
+      btn.style.setProperty('cursor', 'help', 'important'); // Change barred cursor to a help question-mark cursor
+
+      // Inject beautifully styled custom HTML tooltip aligned left (Issue 1 Fix)
+      if (!tooltip && wrapper) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'nt-chrono-tooltip';
+        Object.assign(tooltip.style, {
+          position: 'absolute',
+          bottom: '38px',
+          left: '0', // Align left edge with button start (extends to the right, resolving clipping)
+          transform: 'translateY(5px)',
+          background: 'rgba(20, 20, 25, 0.95)',
+          color: '#f5a623', // Amber color matches theme perfectly
+          padding: '6px 12px',
+          borderRadius: '4px',
+          fontSize: '11px',
+          whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
+          border: '1px solid rgba(245, 166, 35, 0.3)',
+          zIndex: '10000',
+          opacity: '0',
+          pointerEvents: 'none',
+          transition: 'opacity 0.2s ease, transform 0.2s ease'
+        });
+        wrapper.appendChild(tooltip);
+      }
+      if (tooltip) {
+        tooltip.textContent = message || 'Waiting for Jiten to finish processing layout...';
+      }
     } else {
-      btn.disabled = false;
+      btn.classList.remove('nt-btn-suspended');
       btn.style.removeProperty('opacity');
       btn.style.removeProperty('pointer-events');
       btn.style.removeProperty('cursor');
       btn.setAttribute('title', 'Click to open Tracker Menu or Double Click to toggle Tracker');
+      if (tooltip) tooltip.remove();
     }
   }
 }
 
-// Goal 2: Infinite-precision Dynamic Debounce Stabilization
+function updateDropdownOverlayState(active: boolean, message?: string) {
+  const dropdown = document.getElementById('nt-ttu-dropdown');
+  if (!dropdown) return;
+
+  let overlay = dropdown.querySelector('.nt-stabilize-overlay') as HTMLElement;
+  if (active) {
+    dropdown.style.setProperty('pointer-events', 'none', 'important');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'nt-stabilize-overlay';
+      Object.assign(overlay.style, {
+        position: 'absolute',
+        top: '0', left: '0', right: '0', bottom: '0',
+        background: 'rgba(15, 15, 20, 0.75)',
+        backdropFilter: 'blur(2.5px)', // Blurs the dropdown content underneath (Issue 1 Fix)
+        webkitBackdropFilter: 'blur(2.5px)', // Safari support
+        color: '#aaa',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '11px',
+        textAlign: 'center',
+        padding: '16px',
+        borderRadius: '8px',
+        zIndex: '9999'
+      });
+      dropdown.appendChild(overlay);
+    }
+    overlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
+  } else {
+    dropdown.style.removeProperty('pointer-events');
+    if (overlay) overlay.remove();
+  }
+}
+
+// Goal 2: Infinite-precision Dynamic Debounce Stabilization (Visual overlay for stopped timer)
 function runGracePeriodIfJiten() {
   const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
   if (!isJitenActive) return;
 
   lastJitenMutationTime = Date.now();
   if (isGracePeriodActive) {
-    // Extend the active window if mutations are still actively arriving
     if (graceTimeout) clearTimeout(graceTimeout);
     graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
     return;
   }
 
-  console.log("[TextTracker Diagnostic] Jiten activity detected. Activating dynamic stabilization grace period...");
   isGracePeriodActive = true;
   setChronoButtonDisabled(true);
+  updateDropdownOverlayState(true);
 
   if (graceTimeout) clearTimeout(graceTimeout);
   graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
@@ -109,17 +182,113 @@ function runGracePeriodIfJiten() {
 function checkGracePeriodStabilization() {
   const timeSinceLastMutation = Date.now() - lastJitenMutationTime;
   if (timeSinceLastMutation < 300) {
-    // Keep checking until mutations completely stop
     if (graceTimeout) clearTimeout(graceTimeout);
     graceTimeout = setTimeout(checkGracePeriodStabilization, 300 - timeSinceLastMutation);
     return;
   }
 
-  console.log("[TextTracker Diagnostic] Jiten mutations stabilized. Ending grace period, capturing baseline.");
   isGracePeriodActive = false;
+  hasInitialJitenParseOccurred = true; // Mark parsing as completed
   setChronoButtonDisabled(false);
+  updateDropdownOverlayState(false);
   if (ttuState.running) {
     recalculateChars();
+  }
+}
+
+// Point 2A: Silent Background Protection during running sessions
+function runSilentGracePeriodIfJiten() {
+  const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+  if (!isJitenActive) return;
+
+  lastSilentMutationTime = Date.now();
+  if (isSilentGraceActive) {
+    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
+    silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300);
+    return;
+  }
+
+  setSilentGraceActiveState(true);
+
+  if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
+  silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300);
+}
+
+function checkSilentGraceStabilization() {
+  const timeSinceLastMutation = Date.now() - lastSilentMutationTime;
+  if (timeSinceLastMutation < 300) {
+    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
+    silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300 - timeSinceLastMutation);
+    return;
+  }
+
+  setSilentGraceActiveState(false);
+  recalculateChars();
+}
+
+function setSilentGraceActiveState(active: boolean) {
+  isSilentGraceActive = active;
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  if (wrapper) {
+    // Triggers a custom event in the UI controller to toggle the plain sync notice (Issue 2 Fix)
+    wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
+  }
+
+  // Edge Case 2: Handle button locked tooltip when closed and running Jiten operations
+  const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
+  if (btn && wrapper) {
+    let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+    if (active) {
+      btn.classList.add('nt-btn-suspended-running');
+      btn.style.setProperty('cursor', 'help', 'important');
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'nt-chrono-tooltip';
+        Object.assign(tooltip.style, {
+          position: 'absolute',
+          bottom: '38px',
+          left: '0',
+          transform: 'translateY(5px)',
+          background: 'rgba(20, 20, 25, 0.95)',
+          color: '#f5a623',
+          padding: '6px 12px',
+          borderRadius: '4px',
+          fontSize: '11px',
+          whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
+          border: '1px solid rgba(245, 166, 35, 0.3)',
+          zIndex: '10000',
+          opacity: '0',
+          pointerEvents: 'none',
+          transition: 'opacity 0.2s ease, transform 0.2s ease'
+        });
+        wrapper.appendChild(tooltip);
+      }
+      tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
+    } else {
+      btn.classList.remove('nt-btn-suspended-running');
+      btn.style.removeProperty('cursor');
+      if (tooltip) tooltip.remove();
+    }
+  }
+}
+
+// Edge Case 1: Intercept timer pausing while silent/background parsing processes are running
+function handleTimerPaused() {
+  if (isSilentGraceActive) {
+    // Terminate running/silent grace parameters
+    setSilentGraceActiveState(false);
+    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
+    isSilentGraceActive = false;
+
+    // Transition straight into paused stabilization grace period overlays with safe state messages
+    isGracePeriodActive = true;
+    setChronoButtonDisabled(true, 'Waiting for Jiten to finish processing layout... Your tracking progress is safe.');
+    updateDropdownOverlayState(true, 'Waiting for Jiten to finish processing layout... Your tracking progress is safe.');
+
+    lastJitenMutationTime = lastSilentMutationTime;
+    if (graceTimeout) clearTimeout(graceTimeout);
+    graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
   }
 }
 
@@ -193,6 +362,15 @@ const ttuState = new Proxy({
   chars: 0,
 }, {
   set(target, prop, value) {
+    if (prop === 'running') {
+      const wasRunning = target.running;
+      const isRunning = !!value;
+      target.running = isRunning;
+      if (wasRunning && !isRunning) {
+        handleTimerPaused();
+      }
+      return true;
+    }
     if (prop === 'timeMs') {
       const numVal = Number(value) || 0;
       if (numVal < target.timeMs || numVal === 0) {
@@ -509,8 +687,8 @@ async function setupTTUChronometer() {
       getTTUTitle,
       parseTitleWithConfig,
       extractTTUCharCount: () => {
-        const adapter = getActiveReaderAdapter();
-        return adapter ? adapter.extractCharCount() : null;
+        // Run deep coordinate checking synchronously on-demand
+        return extractAdvancedCharCount(undefined, true);
       },
       getReaderName,
       getCurrentReaderConfig: () => getReaderConfig(currentConfig),
@@ -550,21 +728,31 @@ async function setupTTUChronometer() {
 
         ttuState.timeMs += elapsed;
 
-        const charData = extractAdvancedCharCount(undefined, ttuState.running);
-        if (charData !== null) {
-          const { current } = charData;
+        // Point 3 Optimization: Skip coordinate calculation completely when the dropdown menu is closed
+        const dropdown = document.getElementById('nt-ttu-dropdown');
+        const isDropdownOpen = !!(dropdown && dropdown.classList.contains('open'));
 
-          if (stateRefs.globalSessionStartChar === -1) {
-            stateRefs.globalSessionStartChar = current;
-          }
+        // Silent Background Protection during active running mutations (Point 2A)
+        if (isSilentGraceActive) {
+          // Suspends progress checking during the Jiten parse storm to prevent baseline corruption
+        } else if (isDropdownOpen || (now - lastBackgroundCharCheck) >= 5000) {
+          lastBackgroundCharCheck = now;
+          const charData = extractAdvancedCharCount(undefined, ttuState.running);
+          if (charData !== null) {
+            const { current } = charData;
 
-          if (now >= _transitionGraceUntil) {
-            let diff = current - stateRefs.globalSessionStartChar;
-            if (diff < 0) diff = 0;
+            if (stateRefs.globalSessionStartChar === -1) {
+              stateRefs.globalSessionStartChar = current;
+            }
 
-            ttuState.chars = diff + stateRefs.globalManualCharOffset;
-          } else {
-            stateRefs.globalSessionStartChar = current;
+            if (now >= _transitionGraceUntil) {
+              let diff = current - stateRefs.globalSessionStartChar;
+              if (diff < 0) diff = 0;
+
+              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+            } else {
+              stateRefs.globalSessionStartChar = current;
+            }
           }
         }
         stateRefs.globalLastTick = now;
@@ -643,13 +831,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   const isInlineTag = (tag: string) => /^(SPAN|RUBY|RT|RP|A|I|B|EM|STRONG|FONT|CODE)$/i.test(tag);
 
   const observer = new MutationObserver((mutations) => {
-    const t0 = performance.now();
-    let totalMutations = mutations.length;
-    let processedMutations = 0;
-    let hasImportantMutation = false;
-
     for (const m of mutations) {
-      processedMutations++;
       const target = m.target as HTMLElement;
       if (!target) continue;
 
@@ -687,15 +869,19 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
           return false;
         });
 
-        // Dynamic, high-precision Jiten parser detection (Goal 2)
-        if (!isGracePeriodActive) {
+        // Dynamic Jiten parser detection & routing (Goal 2 & Point 2A)
+        if (!isGracePeriodActive && !isSilentGraceActive) {
           const hasJitenAdded = Array.from(m.addedNodes).some(node => {
             if (node.nodeType !== Node.ELEMENT_NODE) return false;
             const el = node as HTMLElement;
             return el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || el.className?.toLowerCase().includes('jiten');
           });
           if (hasJitenAdded) {
-            runGracePeriodIfJiten();
+            if (ttuState.running) {
+              runSilentGracePeriodIfJiten();
+            } else {
+              runGracePeriodIfJiten();
+            }
           }
         }
 
@@ -712,22 +898,9 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
         }
       }
 
-      hasImportantMutation = true;
+      _mutationMicrotaskScheduled = true;
+      queueMicrotask(handleMutations);
       break;
-    }
-
-    const duration = performance.now() - t0;
-    if (totalMutations > 10) {
-      console.log(`[TextTracker Diagnostic] Mutation Storm: Received ${totalMutations} mutations. ` +
-        `Processed: ${processedMutations} in ${duration.toFixed(2)}ms. ` +
-        `Triggered Recalculation: ${hasImportantMutation}`);
-    }
-
-    if (hasImportantMutation) {
-      if (!_mutationMicrotaskScheduled) {
-        _mutationMicrotaskScheduled = true;
-        queueMicrotask(handleMutations);
-      }
     }
   });
 
@@ -828,6 +1001,9 @@ function handleMutations() {
       }
 
       if (stateRefs.lastSectionIndex !== activeSection) {
+        // Reset dynamic stabilization trigger flag on chapter transitions
+        hasInitialJitenParseOccurred = false;
+
         // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
         if (activeSection === -1) {
           if (!isReadingViewActive()) {
@@ -867,7 +1043,12 @@ function handleMutations() {
 
           stateRefs.lastSectionIndex = activeSection;
           stateRefs.lastSectionTotal = total;
-          runGracePeriodIfJiten();
+
+          if (ttuState.running) {
+            runSilentGracePeriodIfJiten();
+          } else {
+            runGracePeriodIfJiten();
+          }
           recalculateChars();
         }
       } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
