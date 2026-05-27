@@ -70,6 +70,10 @@
   }
 
   function showStatus(msg: string, err = false) {
+    // Avoid duplicate system notification for single log success, which is already handled by toast
+    if (!err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"))) {
+      return;
+    }
     notify(err ? "Error" : "Success", msg);
   }
 

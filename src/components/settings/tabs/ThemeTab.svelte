@@ -1396,10 +1396,18 @@
             <div
                 style="display: flex; justify-content: space-between; align-items: center;"
             >
-                <span
-                    style="font-weight: bold; font-size: 11.5px; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em;"
-                    >Branding Style</span
-                >
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span
+                        style="font-weight: bold; font-size: 11.5px; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em;"
+                        >Branding Style</span
+                    >
+                    <span
+                        title="Adaptive: logo & icons match your active theme colors. Classic: uses the original static branding style."
+                        style="display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--color-border); color: var(--color-text-muted); font-size: 9px; font-weight: bold; cursor: help;"
+                    >
+                        i
+                    </span>
+                </div>
                 <span style="font-size: 10px; color: var(--color-text-muted);"
                     >Configure logo & icon appearance</span
                 >
