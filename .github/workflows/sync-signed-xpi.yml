@@ -1,0 +1,27 @@
+name: Poll AMO and Attach Signed XPI
+
+on:
+  schedule:
+    - cron: '0 */3 * * *' # Runs every 3 hours
+  workflow_dispatch: # Allows you to trigger it manually from GitHub UI
+
+jobs:
+  poll-and-attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Sync Script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AMO_ADDON_ID: ${{ secrets.AMO_ADDON_ID }}
+          # Used to determine which repo to update
+          GITHUB_REPOSITORY: ${{ github.repository }} 
+        run: |
+          node .github/scripts/attach-signed-xpi.js
