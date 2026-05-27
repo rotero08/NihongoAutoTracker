@@ -678,10 +678,35 @@
   }
 
   function showStatus(msg: string, err = false) {
-    // Avoid duplicate system notification for single log success, which is already handled by toast
-    if (!err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"))) {
+    const isLogSuccess =
+      !err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"));
+
+    if (isLogSuccess) {
+      const payload = {
+        action: "SHOW_TOAST",
+        title: "Success",
+        message: msg,
+        error: false,
+      };
+
+      // Broadcast to Settings tab / other extension pages
+      if (browser?.runtime?.sendMessage) {
+        browser.runtime.sendMessage(payload).catch(() => {});
+      }
+      // Broadcast to active reader/content script
+      if (browser?.tabs?.query) {
+        browser.tabs
+          .query({ active: true, currentWindow: true })
+          .then((tabs: any) => {
+            if (tabs[0]?.id) {
+              browser.tabs.sendMessage(tabs[0].id, payload).catch(() => {});
+            }
+          })
+          .catch(() => {});
+      }
       return;
     }
+
     notify(err ? "Error" : "Success", msg);
   }
 

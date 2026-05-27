@@ -12,6 +12,7 @@
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
   import { notify } from "@/lib/api/youtube"; // Route notifications to the unified smart helper
+  import { showToast } from "@/lib/utils/toast";
   import { applyThemeToDocument } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
 
@@ -70,11 +71,15 @@
   }
 
   function showStatus(msg: string, err = false) {
-    // Avoid duplicate system notification for single log success, which is already handled by toast
-    if (!err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"))) {
-      return;
+    const isLogSuccess =
+      !err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"));
+
+    if (isLogSuccess) {
+      // Show web toast locally inside settings to avoid native duplicate popups
+      showToast("Success", msg, false);
+    } else {
+      notify(err ? "Error" : "Success", msg);
     }
-    notify(err ? "Error" : "Success", msg);
   }
 
   async function handleConfirm(
@@ -256,7 +261,9 @@
     /* Listen for SHOW_TOAST messages from other execution contexts */
     const messageListener = (msg: any) => {
       if (msg.action === "SHOW_TOAST") {
-        showStatus(
+        // Render toast directly without triggering showStatus loop
+        showToast(
+          msg.title,
           msg.message,
           msg.title.toLowerCase().includes("fail") ||
             msg.title.toLowerCase().includes("error"),

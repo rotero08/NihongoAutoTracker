@@ -290,7 +290,6 @@
 
     if (success) {
       await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
-      onStatusMessage("✓ Sent");
       onRefresh();
     } else {
       sending = false;
