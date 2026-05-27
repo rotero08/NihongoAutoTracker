@@ -612,6 +612,24 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       if (wrapper) wrapper.remove();
     }
 
+    // Yatsu whispersync layout adjustment: Adjust gap when whispersync is detected on app.yatsu.moe
+    if (wrapper) {
+      const isYatsu = window.location.hostname.includes('app.yatsu.moe');
+      const isWhispersyncActive = isYatsu && !!(
+        document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
+        Array.from(document.querySelectorAll('button, div, span')).some(el =>
+          el.textContent?.toLowerCase().includes('whispersync')
+        )
+      );
+      if (isWhispersyncActive) {
+        wrapper.style.setProperty('margin-left', '12px', 'important');
+        wrapper.style.setProperty('gap', '12px', 'important');
+      } else if (isYatsu) {
+        wrapper.style.removeProperty('margin-left');
+        wrapper.style.removeProperty('gap');
+      }
+    }
+
     if (ttuState.running && isReadingViewActive()) {
       setupProgressObserver();
     }
