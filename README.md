@@ -96,6 +96,10 @@ This repository is configured with GitHub Actions to automate building, publishi
 
 To learn how to trigger a new deployment, automatically sync this description to the Firefox Add-ons Store, and retrieve the signed `.xpi` file, see the [Release Guide](RELEASE.md).
 
+## 🔒 Privacy
+
+NihongoAutoTracker is designed with a strict focus on user privacy. No analytical tracking, ads, or telemetry software are bundled with this extension. Your logging history and API keys reside locally in your browser storage. For detailed information on data processing, please view the [Privacy Policy](PRIVACY.md).
+
 ## ⚖️ Attribution
 
 This extension interacts with [NihongoTracker](https://nihongotracker.com). All data retrieved from the site is licensed under **CC BY-NC-SA 4.0**. This is an independent project and is not affiliated with or endorsed by NihongoTracker. Consistent with the source license, this extension is strictly NonCommercial.
