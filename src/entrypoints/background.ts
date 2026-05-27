@@ -42,6 +42,7 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg.action === 'NOTIFY') {
+        // Send to the active tab's content scripts (for page-level toasts)
         browser.tabs
           .query({ active: true, currentWindow: true })
           .then((tabs) => {
@@ -56,6 +57,13 @@ export default defineBackground(() => {
             }
           })
           .catch(() => null);
+
+        // Also broadcast to other active extension contexts (like settings page or popup)
+        browser.runtime.sendMessage({
+          action: 'SHOW_TOAST',
+          title: msg.title,
+          message: msg.message,
+        }).catch(() => null);
       }
 
       if (msg.action === 'QUEUE_UPDATED') refreshBadge();

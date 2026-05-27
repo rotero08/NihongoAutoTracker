@@ -1401,12 +1401,28 @@
                         style="font-weight: bold; font-size: 11.5px; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em;"
                         >Branding Style</span
                     >
-                    <span
-                        title="Adaptive: logo & icons match your active theme colors. Classic: uses the original static branding style."
-                        style="display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--color-border); color: var(--color-text-muted); font-size: 9px; font-weight: bold; cursor: help;"
+                    <div
+                        class="tooltip-wrap"
+                        style="cursor: help; display: inline-flex;"
                     >
-                        i
-                    </span>
+                        <span
+                            style="display: inline-flex; align-items: center; justify-content: center; background: var(--color-surface); color: var(--color-accent); border: 1px solid var(--color-border); border-radius: 50%; width: 16px; height: 16px; font-size: 10px; font-weight: bold; font-family: var(--font-mono);"
+                            >i</span
+                        >
+                        <span
+                            class="tooltip"
+                            style="width: 280px; white-space: normal; line-height: 1.4; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: 6px; padding: 10px; font-weight: normal; font-size: 11px; text-transform: none; letter-spacing: normal;"
+                        >
+                            <strong
+                                style="color: var(--color-accent); display: block; margin-bottom: 4px;"
+                                >Adaptive vs Classic Style</strong
+                            >
+                            Choose <strong>Adaptive</strong> to dynamically
+                            align the extension logo and toolbar icons with your
+                            active color palette, or <strong>Classic</strong> to
+                            preserve the original static brand style.
+                        </span>
+                    </div>
                 </div>
                 <span style="font-size: 10px; color: var(--color-text-muted);"
                     >Configure logo & icon appearance</span

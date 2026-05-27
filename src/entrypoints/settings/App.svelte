@@ -353,6 +353,24 @@
 {/if}
 
 <style>
+  /* Force clean and complete theme-adaptive background stretching across settings page layers */
+  :global(html),
+  :global(body) {
+    background-color: var(--color-background) !important;
+    color: var(--color-text) !important;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+  }
+  :global(.shell) {
+    background-color: var(--color-background) !important;
+    min-height: 100vh;
+  }
+  :global(.main) {
+    background-color: var(--color-background) !important;
+    flex: 1;
+  }
+
   /* Force system theme-adaptive green on all matched list checkmarks and settings status elements globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: var(--color-api-green) !important;
