@@ -353,10 +353,11 @@
             });
     }
 
-    // AniList linkage helpers
+    // AniList linkage helpers with Svelte 5 two-way state sync bindings (Issue 5 Fix)
     function handleAnilistInput(query: string, instant = false) {
         clearTimeout(linkDebounce);
         query = query.trim();
+        anilistSearchQuery = query;
         if (query.length < 2) {
             anilistResults = [];
             return;
@@ -411,14 +412,10 @@
         await ttuLinkStorage.setValue(links);
 
         const queue = await readingQueueStorage.getValue();
-        const parsedRaw = parseTitleWithConfig(title).query;
-        const existing = queue.find((q: any) => {
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            ).query;
-            const qVolume = Math.max(1, Number(q.volume || 1));
-            return qParsed === parsedRaw && qVolume === targetVolume;
-        });
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
+        );
 
         if (existing) {
             existing.mediaId = m.contentId;
@@ -451,19 +448,10 @@
 
         // 2. Fetch and align with exactly the same parsed query matching used by the watcher
         const queue = await readingQueueStorage.getValue();
-        const parsedRaw = parseTitleWithConfig(title).query;
-        const parsedVolume = parseTitleWithConfig(title).volume;
-        const targetVolume = Math.max(
-            1,
-            Number(linkedMedia?.volume || parsedVolume || 1),
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
         );
-        const existing = queue.find((q: any) => {
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            ).query;
-            const qVolume = Math.max(1, Number(q.volume || 1));
-            return qParsed === parsedRaw && qVolume === targetVolume;
-        });
 
         if (existing) {
             existing.mediaId = "web-reading";
@@ -569,16 +557,10 @@
         }
 
         const queue = await readingQueueStorage.getValue();
-        const existing = queue.find((q: any) => {
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            ).query;
-            const qVolume = Math.max(1, Number(q.volume || 1));
-            return (
-                qParsed === parseTitleWithConfig(title).query &&
-                qVolume === oldVolume
-            );
-        });
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
+        );
         if (existing) {
             existing.volume = next;
             await readingQueueStorage.setValue(queue);
@@ -842,7 +824,7 @@
                     ></path>
                 </svg>
                 <span
-                    >Tracking active — Waiting for Jiten to process layout...</span
+                    >Synced with Reader — Waiting for Jiten to process layout...</span
                 >
             </div>
         {/if}
@@ -880,10 +862,7 @@
                         <input
                             type="text"
                             class="nt-ttu-vol-input"
-                            value={volInputVal}
-                            onchange={(e) =>
-                                (volInputVal =
-                                    Number(e.currentTarget.value) || 1)}
+                            bind:value={volInputVal}
                             onblur={commitVolEdit}
                             onkeydown={(e) => {
                                 e.stopPropagation();
@@ -946,9 +925,9 @@
                                 id="nt-ttu-link-input"
                                 class="nt-ttu-link-input"
                                 placeholder="Search AniList..."
-                                value={anilistSearchQuery}
-                                oninput={(e) =>
-                                    handleAnilistInput(e.currentTarget.value)}
+                                bind:value={anilistSearchQuery}
+                                oninput={() =>
+                                    handleAnilistInput(anilistSearchQuery)}
                                 onfocus={handleSearchFocus}
                                 onblur={handleSearchBlur}
                                 onkeydown={(e) => e.stopPropagation()}
@@ -963,10 +942,7 @@
                                 <input
                                     type="text"
                                     class="nt-ttu-vol-input"
-                                    value={volInputVal}
-                                    onchange={(e) =>
-                                        (volInputVal =
-                                            Number(e.currentTarget.value) || 1)}
+                                    bind:value={volInputVal}
                                     onblur={commitVolEdit}
                                     onkeydown={(e) => {
                                         e.stopPropagation();
@@ -1188,6 +1164,11 @@
         justify-content: center;
         user-select: none;
     }
+    :global(#nt-ttu-chrono-btn:focus),
+    :global(#nt-ttu-chrono-btn:focus-visible),
+    :global(#nt-ttu-chrono-btn:active) {
+        color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+    }
     :global(#nt-ttu-chrono-btn:hover) {
         opacity: 0.7;
         color: var(
@@ -1282,11 +1263,9 @@
         font-size: 10px;
         color: var(--color-text-muted, var(--nt-muted, #aaa)) !important;
     }
+
     :global(.nt-ttu-stat-val) {
-        font-family: var(
-            --font-mono,
-            var(--nt-font-mono, monospace)
-        ) !important;
+        font-family: var(--font-mono, --nt-font-mono, monospace) !important;
         font-size: 14px;
         color: var(--color-text, var(--nt-text, #fff)) !important;
         cursor: pointer;
@@ -1296,6 +1275,7 @@
         transition: background 0.2s;
         text-align: center;
     }
+
     :global(.nt-ttu-stat-val:hover) {
         background: var(
             --color-surface-alt,
@@ -1306,9 +1286,11 @@
             var(--nt-border-hover, #555)
         ) !important;
     }
+
     :global(.nt-ttu-stat-val.no-hover) {
         cursor: default;
     }
+
     :global(.nt-ttu-stat-val.no-hover:hover) {
         background: transparent;
         border-color: transparent;
@@ -1319,6 +1301,7 @@
         gap: 8px;
         justify-content: center;
     }
+
     :global(.nt-ttu-btn-icon) {
         background: transparent;
         color: var(--color-text-muted, var(--nt-muted, #aaa)) !important;
@@ -1331,6 +1314,7 @@
         transition: all 0.2s;
         border-radius: 50%;
     }
+
     :global(.nt-ttu-btn-icon:hover:not(:disabled)) {
         background: var(
             --color-surface-alt,
@@ -1338,9 +1322,11 @@
         ) !important;
         color: var(--color-text, var(--nt-text, #fff)) !important;
     }
+
     :global(.nt-ttu-btn-icon.primary) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
+
     :global(.nt-ttu-btn-icon.primary:hover:not(:disabled)) {
         background: color-mix(
             in srgb,
@@ -1352,11 +1338,13 @@
             var(--nt-accentHover, #ffd060)
         ) !important;
     }
+
     :global(.nt-ttu-btn-icon svg) {
         width: 18px;
         height: 18px;
         fill: currentColor;
     }
+
     :global(#nt-ttu-btn-settings svg) {
         width: 15px !important;
         height: 15px !important;
@@ -1366,6 +1354,13 @@
     :global(#nt-ttu-btn-toggle) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
+
+    :global(#nt-ttu-btn-toggle:focus),
+    :global(#nt-ttu-btn-toggle:focus-visible),
+    :global(#nt-ttu-btn-toggle:active) {
+        color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+    }
+
     :global(#nt-ttu-btn-toggle:hover) {
         color: var(
             --color-accent-hover,
@@ -1387,6 +1382,7 @@
         opacity: 0.9;
         animation: nt-fade-pulse 1.8s ease-in-out infinite;
     }
+
     :global(.nt-ttu-spinner) {
         will-change: transform, opacity;
         transform: translateZ(0);
@@ -1405,6 +1401,7 @@
         border-top: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
         padding-top: 12px;
     }
+
     :global(.nt-ttu-link-compact) {
         display: flex;
         align-items: center;
@@ -1427,6 +1424,7 @@
                 transparent
             ) !important;
     }
+
     :global(.nt-ttu-link-compact-inner) {
         display: flex !important;
         align-items: center !important;
@@ -1435,22 +1433,25 @@
         flex: 1 !important;
         min-width: 0 !important;
     }
+
     :global(.nt-ttu-link-compact-inner span) {
         white-space: normal !important;
         word-break: break-word !important;
         flex: 1 !important;
         min-width: 0 !important;
-        text-align: center !important; /* Centered instead of left-aligned as requested */
+        text-align: center !important;
         display: -webkit-box !important;
         -webkit-line-clamp: 3 !important;
-        line-clamp: 3 !important; /* Added for standard CSS compatibility */
+        line-clamp: 3 !important;
         -webkit-box-orient: vertical !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
     }
+
     :global(.nt-ttu-link-compact-inner:hover) {
         opacity: 0.8;
     }
+
     :global(.nt-ttu-unlink-btn) {
         background: none;
         border: none;
@@ -1462,9 +1463,11 @@
         opacity: 0.6;
         transition: opacity 0.15s;
     }
+
     :global(.nt-ttu-unlink-btn:hover) {
         opacity: 1;
     }
+
     :global(.nt-ttu-vol-pill) {
         background: transparent;
         border: none;
@@ -1476,12 +1479,15 @@
         opacity: 0.95;
         white-space: nowrap;
     }
+
     :global(.nt-ttu-vol-pill:hover) {
         opacity: 1;
     }
+
     :global(.nt-ttu-vol-pill:active) {
         transform: scale(0.92);
     }
+
     :global(.nt-ttu-link-compact-inner svg) {
         width: 12px;
         height: 12px;
@@ -1499,17 +1505,20 @@
         gap: 6px;
         position: relative;
     }
+
     :global(.nt-ttu-link-edit-row) {
         display: flex;
         align-items: center;
         gap: 6px;
         width: 100%;
     }
+
     :global(.nt-ttu-link-vol-anchor) {
         display: flex;
         align-items: center;
         flex: 0 0 auto;
     }
+
     :global(.nt-ttu-link-wrap) {
         display: flex;
         align-items: center;
@@ -1527,14 +1536,17 @@
         box-sizing: border-box;
         height: 26px !important;
     }
+
     :global(.nt-ttu-link-wrap:focus-within) {
         border-color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
+
     :global(.nt-ttu-link-wrap svg) {
         width: 12px;
         height: 12px;
         stroke: var(--color-text-muted, var(--nt-muted, #aaa)) !important;
     }
+
     :global(.nt-ttu-link-input) {
         flex: 1;
         min-width: 0;
@@ -1547,10 +1559,12 @@
         height: 100% !important;
         outline: none !important;
     }
+
     :global(.nt-ttu-link-input::placeholder) {
         color: var(--color-text-muted, var(--nt-muted, #aaa)) !important;
         opacity: 0.6;
     }
+
     :global(.nt-ttu-vol-input) {
         width: 36px;
         background: transparent;
@@ -1563,6 +1577,7 @@
         outline: none !important;
         padding: 0 2px;
     }
+
     :global(.nt-ttu-vol-input:focus) {
         border-bottom-color: var(
             --color-accent-hover,
@@ -1583,9 +1598,11 @@
         box-shadow: none !important;
         background: transparent !important;
     }
+
     :global(.nt-ttu-link-results.open) {
         display: flex;
     }
+
     :global(.nt-ttu-link-item) {
         width: 100%;
         box-sizing: border-box;
@@ -1599,12 +1616,14 @@
         text-align: left;
         color: var(--color-text, var(--nt-text, #fff)) !important;
     }
+
     :global(.nt-ttu-link-item:hover) {
         background: var(
             --color-surface-alt,
             var(--nt-surfaceAlt, #13131f)
         ) !important;
     }
+
     :global(.nt-ttu-link-cover) {
         width: 20px;
         height: 30px;
@@ -1612,12 +1631,14 @@
         border-radius: 2px;
         flex-shrink: 0;
     }
+
     :global(.nt-ttu-link-info) {
         display: flex;
         flex-direction: column;
         overflow: hidden;
         flex: 1;
     }
+
     :global(.nt-ttu-link-t) {
         font-size: 10px;
         color: var(--color-text, var(--nt-text, #fff)) !important;
@@ -1625,6 +1646,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
     }
+
     :global(.nt-ttu-link-item:hover .nt-ttu-link-t) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
@@ -1633,6 +1655,7 @@
         border-top: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
         font-size: 12px;
     }
+
     :global(.nt-ttu-history summary) {
         padding: 10px 12px;
         cursor: pointer;
@@ -1641,6 +1664,7 @@
         user-select: none;
         transition: background 0.2s;
     }
+
     :global(.nt-ttu-history summary:hover) {
         background: var(
             --color-surface-alt,
@@ -1648,6 +1672,7 @@
         ) !important;
         color: var(--color-text, var(--nt-text, #fff)) !important;
     }
+
     :global(.nt-ttu-history-list) {
         max-height: 140px;
         overflow-y: auto;
@@ -1656,6 +1681,7 @@
         flex-direction: column;
         gap: 4px;
     }
+
     :global(.nt-ttu-history-item) {
         display: flex;
         align-items: center;
@@ -1669,6 +1695,7 @@
         padding: 6px 8px;
         border-radius: 4px;
     }
+
     :global(.nt-ttu-history-del) {
         background: none;
         border: none;
@@ -1679,6 +1706,7 @@
         padding: 0 2px;
         opacity: 0.75;
     }
+
     :global(.nt-ttu-history-del:hover) {
         opacity: 1;
     }

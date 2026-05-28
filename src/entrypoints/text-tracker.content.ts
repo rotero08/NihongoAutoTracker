@@ -4,41 +4,38 @@
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { JP_DOMAINS_DEFAULT, JP_RE, DEFAULT_TITLE_REGEXES } from '@/lib/constants';
+import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
-import { readingQueueStorage } from '@/lib/storage/queues';
-import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
+import { updateReadingQueueAtomic, readingQueueStorage } from '@/lib/storage/queues';
+import { ttuLinkStorage, ttuHistoryStorage } from '@/lib/storage/ttu';
 import {
-  applyOverlayPosition,
-  enforceOverlayLayout,
   getOverlayDismissed,
+  applyOverlayPosition,
   injectOverlayCustomOverrides,
-  injectThemeStyles,
+  enforceOverlayLayout,
+  updatePauseIconState,
   isWebsiteOverlaySkipped,
-  runOverlaySetup,
-  updatePauseIconState
+  injectThemeStyles
 } from '@/lib/ui/reader-overlay';
-import {
-  getActiveThemeName,
-  getReaderConfig,
-  updateActiveThemeStyles,
-  applyActiveTheme
-} from '@/lib/ui/text-tracker-theme-manager';
-import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
+import { getActiveThemeName, getReaderConfig, applyActiveTheme } from '@/lib/ui/text-tracker-theme-manager';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
+import { DOMMutationStabilizer } from '@/lib/utils/dom-mutation-stabilizer';
+import { OverlayController } from '@/lib/utils/overlay-controller';
+import { mount, unmount } from 'svelte';
+import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
+import type { QueuedReadingLog, ReadingMediaData } from '@/lib/types';
 
-/** Helper to securely insert HTML elements bypassing innerHTML strict validator rules */
-function setSafeHTML(el: HTMLElement, html: string) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  el.textContent = '';
-  while (doc.body.firstChild) {
-    el.appendChild(doc.body.firstChild);
-  }
-}
+// Extreme performance and build guard check [1]
+const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && !!window.location.hostname && (
+  window.self === window.top ||
+  window.location.hostname.includes('manga.manabe.es') ||
+  window.location.hostname.includes('reader.ttsu.app') ||
+  window.location.hostname.includes('app.yatsu.moe') ||
+  window.location.hostname.includes('yomiyasu')
+);
 
 let currentConfig: any = {};
 let isAnalyzingPage = false;
@@ -49,34 +46,26 @@ let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
 
+// Mounted Svelte Component instance reference
+let mountedChronoComponent: any = null;
+
 // ── Performance caches ──────────────────────────────────────────────────────
 let _readingViewCache: boolean | null = null;
 let _readingViewCacheTime = 0;
 const READING_VIEW_CACHE_TTL = 500; // ms
 
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
-let _overlayCache: HTMLElement | null = null;
 
 let _mutationRafScheduled = false;
+let _instantThemeSyncScheduled = false;
 let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
-// Dynamic stabilization grace period state variables (Goal 2)
-let hasInitialJitenParseOccurred = false;
-let isGracePeriodActive = false;
-let graceTimeout: any = null;
-let lastJitenMutationTime = 0;
+// Central instances for extracted utilities
+const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
-// Silent grace period state variables for continuous running timer updates (Point 2A)
-let isSilentGraceActive = false;
-let silentGraceTimeout: any = null;
-let lastSilentMutationTime = 0;
-
-// Background tracking throttle timestamp (Point 3)
-let lastBackgroundCharCheck = 0;
-
-function setChronoButtonDisabled(disabled: boolean, message?: string) {
+const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
   const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLButtonElement;
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   if (btn) {
@@ -84,20 +73,19 @@ function setChronoButtonDisabled(disabled: boolean, message?: string) {
     if (disabled) {
       btn.classList.add('nt-btn-suspended');
       btn.style.setProperty('opacity', '0.6', 'important');
-      btn.style.setProperty('pointer-events', 'auto', 'important'); // Keep hover triggers active so tooltip works (Issue 2 Fix)
-      btn.style.setProperty('cursor', 'help', 'important'); // Change barred cursor to a help question-mark cursor
+      btn.style.setProperty('pointer-events', 'auto', 'important');
+      btn.style.setProperty('cursor', 'help', 'important');
 
-      // Inject beautifully styled custom HTML tooltip aligned left (Issue 1 Fix)
       if (!tooltip && wrapper) {
         tooltip = document.createElement('div');
         tooltip.className = 'nt-chrono-tooltip';
         Object.assign(tooltip.style, {
           position: 'absolute',
           bottom: '38px',
-          left: '0', // Align left edge with button start (extends to the right, resolving clipping)
+          left: '0',
           transform: 'translateY(5px)',
           background: 'rgba(20, 20, 25, 0.95)',
-          color: '#f5a623', // Amber color matches theme perfectly
+          color: '#f5a623',
           padding: '6px 12px',
           borderRadius: '4px',
           fontSize: '11px',
@@ -123,24 +111,27 @@ function setChronoButtonDisabled(disabled: boolean, message?: string) {
       if (tooltip) tooltip.remove();
     }
   }
-}
+};
 
-function updateDropdownOverlayState(active: boolean, message?: string) {
+const updateDropdownOverlayState = (active: boolean, message?: string) => {
   const dropdown = document.getElementById('nt-ttu-dropdown');
   if (!dropdown) return;
 
-  let overlay = dropdown.querySelector('.nt-stabilize-overlay') as HTMLElement;
+  const overlay = dropdown.querySelector('.nt-stabilize-overlay') as HTMLElement | null;
   if (active) {
     dropdown.style.setProperty('pointer-events', 'none', 'important');
     if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.className = 'nt-stabilize-overlay';
-      Object.assign(overlay.style, {
+      const newOverlay = document.createElement('div');
+      newOverlay.className = 'nt-stabilize-overlay';
+      Object.assign(newOverlay.style, {
         position: 'absolute',
-        top: '0', left: '0', right: '0', bottom: '0',
+        top: '0',
+        left: '0',
+        right: '0',
+        bottom: '0',
         background: 'rgba(15, 15, 20, 0.75)',
-        backdropFilter: 'blur(2.5px)', // Blurs the dropdown content underneath (Issue 1 Fix)
-        webkitBackdropFilter: 'blur(2.5px)', // Safari support
+        backdropFilter: 'blur(2.5px)',
+        webkitBackdropFilter: 'blur(2.5px)',
         color: '#aaa',
         display: 'flex',
         alignItems: 'center',
@@ -150,148 +141,66 @@ function updateDropdownOverlayState(active: boolean, message?: string) {
         padding: '16px',
         borderRadius: '8px',
         zIndex: '9999'
-      });
-      dropdown.appendChild(overlay);
+      } as any);
+      dropdown.appendChild(newOverlay);
+      newOverlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
+    } else {
+      overlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
     }
-    overlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
   } else {
     dropdown.style.removeProperty('pointer-events');
     if (overlay) overlay.remove();
   }
-}
+};
 
-// Goal 2: Infinite-precision Dynamic Debounce Stabilization (Visual overlay for stopped timer)
-function runGracePeriodIfJiten() {
-  const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
-  if (!isJitenActive) return;
-
-  lastJitenMutationTime = Date.now();
-  if (isGracePeriodActive) {
-    if (graceTimeout) clearTimeout(graceTimeout);
-    graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
-    return;
-  }
-
-  isGracePeriodActive = true;
-  setChronoButtonDisabled(true);
-  updateDropdownOverlayState(true);
-
-  if (graceTimeout) clearTimeout(graceTimeout);
-  graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
-}
-
-function checkGracePeriodStabilization() {
-  const timeSinceLastMutation = Date.now() - lastJitenMutationTime;
-  if (timeSinceLastMutation < 300) {
-    if (graceTimeout) clearTimeout(graceTimeout);
-    graceTimeout = setTimeout(checkGracePeriodStabilization, 300 - timeSinceLastMutation);
-    return;
-  }
-
-  isGracePeriodActive = false;
-  hasInitialJitenParseOccurred = true; // Mark parsing as completed
-  setChronoButtonDisabled(false);
-  updateDropdownOverlayState(false);
-  if (ttuState.running) {
-    recalculateChars();
-  }
-}
-
-// Point 2A: Silent Background Protection during running sessions
-function runSilentGracePeriodIfJiten() {
-  const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
-  if (!isJitenActive) return;
-
-  lastSilentMutationTime = Date.now();
-  if (isSilentGraceActive) {
-    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
-    silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300);
-    return;
-  }
-
-  setSilentGraceActiveState(true);
-
-  if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
-  silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300);
-}
-
-function checkSilentGraceStabilization() {
-  const timeSinceLastMutation = Date.now() - lastSilentMutationTime;
-  if (timeSinceLastMutation < 300) {
-    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
-    silentGraceTimeout = setTimeout(checkSilentGraceStabilization, 300 - timeSinceLastMutation);
-    return;
-  }
-
-  setSilentGraceActiveState(false);
-  recalculateChars();
-}
-
-function setSilentGraceActiveState(active: boolean) {
-  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-  isSilentGraceActive = active;
-  if (wrapper) {
-    // Triggers a custom event in the UI controller to toggle the plain sync notice (Issue 2 Fix)
-    wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
-  }
-
-  // Edge Case 2: Handle button locked tooltip when closed and running Jiten operations
-  const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
-  if (btn && wrapper) {
-    let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
-    if (active) {
-      btn.classList.add('nt-btn-suspended-running');
-      btn.style.setProperty('cursor', 'help', 'important');
-      if (!tooltip) {
-        tooltip = document.createElement('div');
-        tooltip.className = 'nt-chrono-tooltip';
-        Object.assign(tooltip.style, {
-          position: 'absolute',
-          bottom: '38px',
-          left: '0',
-          transform: 'translateY(5px)',
-          background: 'rgba(20, 20, 25, 0.95)',
-          color: '#f5a623',
-          padding: '6px 12px',
-          borderRadius: '4px',
-          fontSize: '11px',
-          whiteSpace: 'nowrap',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
-          border: '1px solid rgba(245, 166, 35, 0.3)',
-          zIndex: '10000',
-          opacity: '0',
-          pointerEvents: 'none',
-          transition: 'opacity 0.2s ease, transform 0.2s ease'
-        });
-        wrapper.appendChild(tooltip);
+const stabilizer = new DOMMutationStabilizer(
+  { get running() { return ttuState.running; } },
+  setChronoButtonDisabled,
+  updateDropdownOverlayState,
+  () => recalculateChars(),
+  (active) => {
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) {
+      wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
+    }
+    const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
+    if (btn && wrapper) {
+      let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+      if (active) {
+        btn.classList.add('nt-btn-suspended-running');
+        btn.style.setProperty('cursor', 'help', 'important');
+        if (!tooltip) {
+          tooltip = document.createElement('div');
+          tooltip.className = 'nt-chrono-tooltip';
+          Object.assign(tooltip.style, {
+            position: 'absolute',
+            bottom: '38px',
+            left: '0',
+            transform: 'translateY(5px)',
+            background: 'rgba(20, 20, 25, 0.95)',
+            color: '#f5a623',
+            padding: '6px 12px',
+            borderRadius: '4px',
+            fontSize: '11px',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
+            border: '1px solid rgba(245, 166, 35, 0.3)',
+            zIndex: '10000',
+            opacity: '0',
+            pointerEvents: 'none',
+            transition: 'opacity 0.2s ease, transform 0.2s ease'
+          });
+          wrapper.appendChild(tooltip);
+        }
+        tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
+      } else {
+        btn.classList.remove('nt-btn-suspended-running');
+        btn.style.removeProperty('cursor');
+        if (tooltip) tooltip.remove();
       }
-      tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
-    } else {
-      btn.classList.remove('nt-btn-suspended-running');
-      btn.style.removeProperty('cursor');
-      if (tooltip) tooltip.remove();
     }
   }
-}
-
-// Edge Case 1: Intercept timer pausing while silent/background parsing processes are running
-function handleTimerPaused() {
-  if (isSilentGraceActive) {
-    // Terminate running/silent grace parameters
-    setSilentGraceActiveState(false);
-    if (silentGraceTimeout) clearTimeout(silentGraceTimeout);
-    isSilentGraceActive = false;
-
-    // Transition straight into paused stabilization grace period overlays with safe state messages
-    isGracePeriodActive = true;
-    setChronoButtonDisabled(true, 'Waiting for Jiten to finish processing layout... Your tracking progress is safe.');
-    updateDropdownOverlayState(true, 'Waiting for Jiten to finish processing layout... Your tracking progress is safe.');
-
-    lastJitenMutationTime = lastSilentMutationTime;
-    if (graceTimeout) clearTimeout(graceTimeout);
-    graceTimeout = setTimeout(checkGracePeriodStabilization, 300);
-  }
-}
+);
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
@@ -317,7 +226,7 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
 
   await new Promise(r => setTimeout(r, 1500));
   const sample = (document.body?.textContent ?? '').slice(0, 8000);
-  const jpCount = (sample.match(JP_RE) ?? []).length;
+  const jpCount = (sample.match(/[\u3040-\u30ff\u4e00-\u9fff]/g) ?? []).length;
   const result = jpCount >= 40;
 
   addDebugLog('INFO', 'TextTracker', `Page Analysis`, {
@@ -352,9 +261,6 @@ const stateRefs: StateRefs = {
   sessionInitialStartChar: -1
 };
 
-/**
- * Reactive proxy container for the tracking state.
- */
 const ttuState = new Proxy({
   id: crypto.randomUUID(),
   running: false,
@@ -367,7 +273,12 @@ const ttuState = new Proxy({
       const isRunning = !!value;
       target.running = isRunning;
       if (wasRunning && !isRunning) {
-        handleTimerPaused();
+        stabilizer.handleTimerPaused();
+      }
+      // Instantly dispatch to sync active state bindings and fix pause/resume bugs
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) {
+        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
       }
       return true;
     }
@@ -381,6 +292,11 @@ const ttuState = new Proxy({
     }
     if (prop === 'chars') {
       target.chars = Number(value) || 0;
+      // Instantly dispatch to sync active state bindings and fix pause/resume bugs
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) {
+        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      }
       return true;
     }
     (target as any)[prop] = value;
@@ -404,7 +320,7 @@ function getTTUTitle() {
 }
 
 function parseTitleWithConfig(docTitle: string) {
-  return parseTitle(docTitle, currentConfig.titleRegexes || DEFAULT_TITLE_REGEXES);
+  return parseTitle(docTitle, currentConfig.titleRegexes);
 }
 
 // Global cached layout mode tracker to sanitize continuous <-> paginated switches
@@ -421,31 +337,66 @@ function isReadingViewActive(): boolean {
     return _readingViewCache;
   }
   const path = window.location.pathname;
-  if (path.includes('/settings') || path === '/' || path === '') {
-    _readingViewCache = false;
-    _readingViewCacheTime = now;
-    return false;
+
+  // Only restrict generic homepages on non-reader websites
+  const adapter = getActiveReaderAdapter();
+  if (!adapter) {
+    if (path.includes('/settings') || path === '/' || path === '') {
+      _readingViewCache = false;
+      _readingViewCacheTime = now;
+      return false;
+    }
+  } else {
+    if (path.includes('/settings')) {
+      _readingViewCache = false;
+      _readingViewCacheTime = now;
+      return false;
+    }
   }
+
   const hasContainer = !!document.querySelector(
-    '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper'
+    '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, .writing-container, #writing-container'
   );
   _readingViewCache = hasContainer;
   _readingViewCacheTime = now;
   return hasContainer;
 }
 
-/** Invalidate the reading view cache when we know the DOM has meaningfully changed */
 function invalidateReadingViewCache() {
   _readingViewCache = null;
 }
 
-/** Retrieve the cached overlay element when possible to limit DOM query overhead */
-function getOverlayElement(): HTMLElement | null {
-  if (_overlayCache && _overlayCache.isConnected) {
-    return _overlayCache;
+function safelySetAdapterName(adapter: any, name: string | null) {
+  if (!adapter) return;
+  try {
+    Object.defineProperty(adapter, 'name', {
+      value: name,
+      writable: true,
+      configurable: true
+    });
+  } catch (e) {
+    try {
+      adapter.name = name;
+    } catch (err) { }
   }
-  _overlayCache = document.getElementById('nt-ttu-chrono-wrapper');
-  return _overlayCache;
+}
+
+function getActiveThemeConfig(cfg: any) {
+  const activeThemeCfg = { ...cfg, syncPopupWithReaderTheme: true };
+  const adapter = getActiveReaderAdapter();
+  if (adapter) {
+    const name = adapter.name || '';
+    if (name.includes('Yatsu')) {
+      activeThemeCfg.ttuThemeOverride = cfg.yatsuThemeOverride;
+      activeThemeCfg.ttuThemeOverrideId = cfg.yatsuThemeOverrideId;
+      activeThemeCfg.ttuCustomColors = cfg.yatsuCustomColors;
+    } else if (name.includes('YomiYasu') || name.includes('YomuYasu')) {
+      activeThemeCfg.ttuThemeOverride = cfg.yomiyasuThemeOverride;
+      activeThemeCfg.ttuThemeOverrideId = cfg.yomiyasuThemeOverrideId;
+      activeThemeCfg.ttuCustomColors = cfg.yomiyasuCustomColors;
+    }
+  }
+  return activeThemeCfg;
 }
 
 async function liveSyncQueue() {
@@ -459,6 +410,7 @@ async function liveSyncQueue() {
     const secs = Math.round(ttuState.timeMs / 1000);
 
     const queue = await readingQueueStorage.getValue();
+    // Legacy matching: fall back to raw title matching when necessary
     let existing = queue.find(q => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
 
     const linkMap = await ttuLinkStorage.getValue() || {};
@@ -556,7 +508,6 @@ async function saveSessionAndQueue() {
 function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
 
-  // Return cached result if the target element is still in the DOM
   if (_insertPointCache && _insertPointCache.el.isConnected) {
     return _insertPointCache;
   }
@@ -589,11 +540,8 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
-/**
- * Perform progression mapping and dispatch instant UI updates.
- */
 function recalculateChars() {
-  if (!ttuState.running || isGracePeriodActive) return;
+  if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
 
   if (!isReadingViewActive()) {
     ttuState.running = false;
@@ -609,7 +557,6 @@ function recalculateChars() {
       stateRefs.globalSessionStartChar = current;
     }
 
-    // Scroll Alignment Grace Window
     if (Date.now() < _transitionGraceUntil) {
       stateRefs.globalSessionStartChar = current;
       return;
@@ -626,9 +573,6 @@ function recalculateChars() {
   }
 }
 
-/**
- * Targets and observes Svelte/TTU's progress changes directly.
- */
 function setupProgressObserver() {
   if (progressObserver) return;
 
@@ -644,28 +588,30 @@ function setupProgressObserver() {
   progressObserver.observe(target, { childList: true, characterData: true, subtree: true });
 }
 
-async function checkAndRunOverlay(cfg: any) {
-  if (window.self !== window.top) return;
-  if (isWebsiteOverlaySkipped(cfg)) return;
-
-  // Explicitly skip on YomiYasu Reader's top-level domain to avoid generic overlay injection
-  if (window.location.hostname.includes('manga.manabe.es')) return;
-
-  if (isAnalyzingPage) return;
-  const existing = getOverlayElement();
-  if (existing) return;
-
-  isAnalyzingPage = true;
-  try {
-    const isJP = await isJapanesePage(cfg);
-    if (isJP && cfg.overlayPosition !== 'hidden' && !getOverlayElement()) {
-      runOverlaySetup(cfg);
-    }
-  } catch (e) {
-    addDebugLog('ERROR', 'TextTracker', 'Error during overlay builder execution', { error: e });
-  } finally {
-    isAnalyzingPage = false;
+function runInstantThemeSync() {
+  _lastThemeCheckTime = Date.now();
+  const activeThemeCfg = getActiveThemeConfig(currentConfig);
+  const adapter = getActiveReaderAdapter();
+  const originalName = adapter ? adapter.name : null;
+  if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu') || originalName.includes('YomuYasu'))) {
+    safelySetAdapterName(adapter, 'ッツ Ebook Reader');
   }
+  const activeTheme = getActiveThemeName(activeThemeCfg);
+  if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
+    applyActiveTheme(activeThemeCfg).catch(() => { });
+  }
+  if (adapter && originalName) {
+    safelySetAdapterName(adapter, originalName);
+  }
+}
+
+function scheduleInstantThemeSync() {
+  if (_instantThemeSyncScheduled) return;
+  _instantThemeSyncScheduled = true;
+  requestAnimationFrame(() => {
+    _instantThemeSyncScheduled = false;
+    runInstantThemeSync();
+  });
 }
 
 async function setupTTUChronometer() {
@@ -682,29 +628,49 @@ async function setupTTUChronometer() {
     const pt = findTTUInsertPoint();
     if (!pt) return;
 
-    setupTTUChronometerUI(pt, ttuState, stateRefs, {
-      getTTUTitle,
-      parseTitleWithConfig,
-      extractTTUCharCount: () => {
-        // Run deep coordinate checking synchronously on-demand
-        return extractAdvancedCharCount(undefined, true);
-      },
-      getReaderName,
-      getCurrentReaderConfig: () => getReaderConfig(currentConfig),
-      liveSyncQueue,
-      saveSessionAndQueue
+    const wrapper = document.createElement('div');
+    wrapper.id = 'nt-ttu-chrono-wrapper';
+
+    // Enable FAB floating styling classes when Svelte is not loaded inside standard footers
+    const isFloating = !document.getElementById('ttu-page-footer') && !document.querySelector('div[title="Click to copy Progress"]');
+    if (isFloating) {
+      wrapper.classList.add('nt-floating');
+    }
+
+    pt.el.insertAdjacentElement(pt.pos, wrapper);
+
+    // Mount Svelte 5 component inside our wrapper directly
+    mountedChronoComponent = mount(TtuChronoDropdown, {
+      target: wrapper,
+      props: {
+        ttuState,
+        stateRefs,
+        getTTUTitle,
+        parseTitleWithConfig,
+        extractTTUCharCount: () => extractAdvancedCharCount(undefined, ttuState.running),
+        getReaderName,
+        getCurrentReaderConfig: () => {
+          const rCfg = getReaderConfig(currentConfig) || {};
+          return {
+            ...rCfg,
+            hideUnavailableActions: currentConfig.hideUnavailableActions ?? false
+          };
+        },
+        liveSyncQueue,
+        saveSessionAndQueue,
+        get isGracePeriodActive() { return stabilizer.getGracePeriodActive(); },
+        get isSilentGraceActive() { return stabilizer.getSilentGraceActive(); }
+      }
     });
 
     setupProgressObserver();
-    runGracePeriodIfJiten();
+    stabilizer.runGracePeriodIfJiten();
 
     if ((window as any).ntChronoInterval) {
       clearInterval((window as any).ntChronoInterval);
     }
 
-    // High temporal resolution interval (200ms) for an instantaneous experience
     (window as any).ntChronoInterval = setInterval(() => {
-      // Suspend calculations if tab is in the background
       if (document.hidden) {
         if (ttuState.running) {
           stateRefs.globalLastTick = Date.now();
@@ -715,27 +681,24 @@ async function setupTTUChronometer() {
       if (!isReadingViewActive()) {
         if (ttuState.running) {
           ttuState.running = false;
-          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          const wr = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
         return;
       }
 
-      if (ttuState.running && !isGracePeriodActive) {
+      if (ttuState.running && !stabilizer.getGracePeriodActive()) {
         const now = Date.now();
         const elapsed = now - stateRefs.globalLastTick;
 
         ttuState.timeMs += elapsed;
 
-        // Point 3 Optimization: Skip coordinate calculation when the dropdown menu is closed
         const dropdown = document.getElementById('nt-ttu-dropdown');
         const isDropdownOpen = !!(dropdown && dropdown.classList.contains('open'));
 
-        // Silent Background Protection during active running mutations (Point 2A)
-        if (isSilentGraceActive) {
-          // Suspends progress checking during parsing
-        } else if (isDropdownOpen || (now - lastBackgroundCharCheck) >= 5000) {
-          lastBackgroundCharCheck = now;
+        if (stabilizer.getSilentGraceActive()) {
+          // Suspend checks
+        } else if (isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
             const { current } = charData;
@@ -756,14 +719,13 @@ async function setupTTUChronometer() {
         }
         stateRefs.globalLastTick = now;
 
-        // Perform layout re-paints only when a whole second transition takes place
         const lastSec = Math.floor((ttuState.timeMs - elapsed) / 1000);
         const currSec = Math.floor(ttuState.timeMs / 1000);
 
         if (currSec !== lastSec) {
-          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wrapper) {
-            wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          const wr = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wr) {
+            wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
           }
         }
 
@@ -775,10 +737,29 @@ async function setupTTUChronometer() {
   }
 }
 
-// ── Ultra-Performant Interaction Hooks ────────────────────────────────────────
-if (typeof window !== 'undefined') {
+function isTargetInIgnoredContainer(target: HTMLElement): boolean {
+  let el: HTMLElement | null = target;
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  const overlay = document.getElementById('nt-overlay');
+
+  while (el) {
+    if (el === wrapper || el === overlay) return true;
+    const cl = el.className;
+    if (cl && typeof cl === 'string') {
+      const lowerCl = cl.toLowerCase();
+      if (lowerCl.includes('nt-toast')) {
+        return true;
+      }
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
+// Memory Safe Event Listeners inside relevant frames [1]
+if (isRelevantFrame) {
   const handleScrollUpdate = () => {
-    if (!ttuState.running || !isReadingViewActive() || isGracePeriodActive) return;
+    if (!ttuState.running || !isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
     if (scrollTimeout) clearTimeout(scrollTimeout);
 
     scrollTimeout = setTimeout(() => {
@@ -790,13 +771,13 @@ if (typeof window !== 'undefined') {
   window.addEventListener('resize', handleScrollUpdate, { passive: true });
 
   window.addEventListener('click', () => {
-    if (ttuState.running && isReadingViewActive() && !isGracePeriodActive) {
+    if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
 
   window.addEventListener('keyup', (e) => {
-    if (ttuState.running && isReadingViewActive() && !isGracePeriodActive && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
+    if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
@@ -814,7 +795,6 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
 }
 
 function isChapterLoading(): boolean {
-  // Center screen loader check
   const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
   if (loader && loader.querySelector('svg')) {
     return true;
@@ -845,7 +825,6 @@ function isDictNode(node: Node): boolean {
   return false;
 }
 
-// Highly optimized rendering batcher aligning with paint frames (replaces queueMicrotask)
 function scheduleMutations() {
   if (_mutationRafScheduled) return;
   _mutationRafScheduled = true;
@@ -855,7 +834,8 @@ function scheduleMutations() {
   });
 }
 
-if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
+// CPU and Memory optimized MutationObservers restricted strictly to relevant frames [1]
+if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   const isInlineTag = (tag: string) => /^(SPAN|RUBY|RT|RP|A|I|B|EM|STRONG|FONT|CODE)$/i.test(tag);
 
   const observer = new MutationObserver((mutations) => {
@@ -863,24 +843,15 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
       const target = m.target as HTMLElement;
       if (!target) continue;
 
-      // Goal 1: Bypass inline structural mutations immediately to prevent DOM walk overhead
       if (isInlineTag(target.tagName)) continue;
 
-      // Ignore mutations inside our chrono wrapper, overlays, and toasts
-      if (target.id === 'nt-ttu-chrono-wrapper' || target.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+      if (isTargetInIgnoredContainer(target)) {
         continue;
       }
 
-      // Ignore inline word modifications from Jiten, Yomichan, and Yomitan
-      if (target.classList.contains('jiten-word') || target.closest('.jiten-word, .yomichan, .yomitan')) {
-        continue;
-      }
-
-      // Ignore Jiten / Yomichan / Yomitan childList modifications
       if (m.type === 'childList') {
         let isDictionaryMutation = true;
 
-        // Perform fast, zero-allocation imperative iterations
         for (let i = 0; i < m.addedNodes.length; i++) {
           if (!isDictNode(m.addedNodes[i])) {
             isDictionaryMutation = false;
@@ -897,8 +868,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
           }
         }
 
-        // Dynamic Jiten parser detection & routing (Goal 2 & Point 2A)
-        if (!isGracePeriodActive && !isSilentGraceActive) {
+        if (!stabilizer.getGracePeriodActive() && !stabilizer.getSilentGraceActive()) {
           let hasJitenAdded = false;
           for (let i = 0; i < m.addedNodes.length; i++) {
             const node = m.addedNodes[i];
@@ -913,9 +883,9 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
           }
           if (hasJitenAdded) {
             if (ttuState.running) {
-              runSilentGracePeriodIfJiten();
+              stabilizer.runSilentGracePeriodIfJiten();
             } else {
-              runGracePeriodIfJiten();
+              stabilizer.runGracePeriodIfJiten();
             }
           }
         }
@@ -923,10 +893,20 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
         if (isDictionaryMutation) {
           continue;
         }
+
+        // Trigger immediate theme sync when the reader view is active and loading structural changes
+        if (isReadingViewActive()) {
+          scheduleInstantThemeSync();
+        }
       }
 
-      // For attribute modifications, we only care about high-level structural components (body, containers, etc.)
       if (m.type === 'attributes') {
+        if (target.nodeType === Node.ELEMENT_NODE) {
+          const el = target as HTMLElement;
+          if (el.matches('#reader-container, .reader-wrapper, .reader-container, main, #app, body, html')) {
+            scheduleInstantThemeSync();
+          }
+        }
         const tag = target.tagName;
         if (tag !== 'BODY' && tag !== 'HTML' && !target.classList.contains('book-content-container') && !target.id?.includes('ttu') && !target.className?.includes('reader')) {
           continue;
@@ -938,7 +918,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
 }
 
 function handleMutations() {
@@ -946,17 +926,16 @@ function handleMutations() {
 
   const isLoaderActive = isChapterLoading();
 
-  // Prevent corrupting session references when Svelte is displaying a transition loading spinner
   if (isReadingViewActive() && isLoaderActive) {
     if (lastLoggedPaginatedMode === false) {
-      _transitionGraceUntil = Date.now() + 400; // Trigger alignment grace window only on continuous loads
+      _transitionGraceUntil = Date.now() + 400;
     }
-    runGracePeriodIfJiten();
+    stabilizer.runGracePeriodIfJiten();
     return;
   }
 
-  // 1. TTU Chrono insert check
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  const adapter = getActiveReaderAdapter();
   if (isReadingViewActive()) {
     const target = findTTUInsertPoint();
     if (target) {
@@ -973,32 +952,24 @@ function handleMutations() {
       }
     }
   } else {
-    if (wrapper) wrapper.remove();
+    if (wrapper) {
+      if (mountedChronoComponent) {
+        unmount(mountedChronoComponent);
+        mountedChronoComponent = null;
+      }
+      wrapper.remove();
+    }
   }
 
-  // Yatsu whispersync layout adjustment
-  if (wrapper) {
-    const isYatsu = window.location.hostname.includes('app.yatsu.moe');
-    const isWhispersyncActive = isYatsu && !!(
-      document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
-      Array.from(document.querySelectorAll('button, div, span')).some(el =>
-        el.textContent?.toLowerCase().includes('whispersync')
-      )
-    );
-    if (isWhispersyncActive) {
-      wrapper.style.setProperty('margin-left', '12px', 'important');
-      wrapper.style.setProperty('gap', '12px', 'important');
-    } else if (isYatsu) {
-      wrapper.style.removeProperty('margin-left');
-      wrapper.style.removeProperty('gap');
-    }
+  // Polymorphic adapters styles hook
+  if (wrapper && adapter) {
+    adapter.onUpdateStyles?.(wrapper);
   }
 
   if (ttuState.running && isReadingViewActive()) {
     setupProgressObserver();
   }
 
-  // 2. Section transition detector (throttled to max once per 50ms)
   const now = Date.now();
   if ((now - _lastSectionCheckTime) >= 50) {
     _lastSectionCheckTime = now;
@@ -1007,7 +978,6 @@ function handleMutations() {
       const { total, sectionIndex, isPaginated } = charData;
       const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-      // View-Mode Switch Safeguard
       if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
         stateRefs.globalSessionStartChar = -1;
         stateRefs.globalManualCharOffset = 0;
@@ -1021,7 +991,7 @@ function handleMutations() {
         stateRefs.globalLastTick = Date.now();
         lastLoggedPaginatedMode = isPaginated;
         if (!isPaginated) {
-          _transitionGraceUntil = Date.now() + 400; // Trigger grace window on continuous view switches
+          _transitionGraceUntil = Date.now() + 400;
         }
         recalculateChars();
         return;
@@ -1034,10 +1004,8 @@ function handleMutations() {
       }
 
       if (stateRefs.lastSectionIndex !== activeSection) {
-        // Reset dynamic stabilization trigger flag on chapter transitions
-        hasInitialJitenParseOccurred = false;
+        stabilizer.resetJitenParseFlag();
 
-        // Handle temporary non-text pages without wiping state
         if (activeSection === -1) {
           if (!isReadingViewActive()) {
             stateRefs.lastSectionIndex = -1;
@@ -1046,43 +1014,49 @@ function handleMutations() {
             recalculateChars();
           }
         } else {
-          if (activeSection > stateRefs.lastSectionIndex) {
-            if (stateRefs.visitedSections.has(activeSection)) {
-              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-            } else {
-              // Accumulate using the verified non-zero previous chapter total
-              stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-            }
-          } else {
-            if (stateRefs.visitedSections.has(activeSection)) {
-              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-            } else {
-              stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-            }
-          }
+          // Fetch current volume to match the correct volume-specific state refs
+          const rawTitle = getTTUTitle();
+          const parsedVolume = parseTitleWithConfig(rawTitle).volume;
+          ttuLinkStorage.getValue().then((links) => {
+            const linkedMedia = (links || {})[rawTitle];
+            const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
 
-          // Sync baseline progress boundary
-          if (isPaginated) {
-            if (activeSection < stateRefs.sessionInitialSectionIndex) {
-              stateRefs.globalSessionStartChar = total;
-            } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
-              stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
+            if (activeSection > stateRefs.lastSectionIndex) {
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+              } else {
+                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+              }
             } else {
-              stateRefs.globalSessionStartChar = 0;
+              if (stateRefs.visitedSections.has(activeSection)) {
+                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+              } else {
+                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+              }
             }
-          }
 
-          stateRefs.lastSectionIndex = activeSection;
-          stateRefs.lastSectionTotal = total;
+            if (isPaginated) {
+              if (activeSection < stateRefs.sessionInitialSectionIndex) {
+                stateRefs.globalSessionStartChar = total;
+              } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
+                stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
+              } else {
+                stateRefs.globalSessionStartChar = 0;
+              }
+            }
 
-          if (ttuState.running) {
-            runSilentGracePeriodIfJiten();
-          } else {
-            runGracePeriodIfJiten();
-          }
-          recalculateChars();
+            stateRefs.lastSectionIndex = activeSection;
+            stateRefs.lastSectionTotal = total;
+
+            if (ttuState.running) {
+              stabilizer.runSilentGracePeriodIfJiten();
+            } else {
+              stabilizer.runGracePeriodIfJiten();
+            }
+            recalculateChars();
+          });
         }
       } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
         stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
@@ -1090,28 +1064,21 @@ function handleMutations() {
     }
   }
 
-  // 3. Theme change tracking (throttled to max once per 2s)
   if ((now - _lastThemeCheckTime) >= 2000) {
-    _lastThemeCheckTime = now;
-    const activeTheme = getActiveThemeName(currentConfig);
-    if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
-      updateActiveThemeStyles(activeTheme, currentConfig);
-    }
+    scheduleInstantThemeSync();
   }
 
-  // 4. Non-reader Overlay recovery check
-  const adapter = getActiveReaderAdapter();
   if (!adapter) {
     if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
-      const overlay = getOverlayElement();
+      const overlay = overlayController.getOverlayElement();
       if (!overlay) {
-        checkAndRunOverlay(currentConfig);
+        overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
       }
     }
   }
 }
 
-if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
+if (isRelevantFrame && typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
   browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
     if (req.action === 'GET_ACTIVE_TIME') {
       const nt = (window as any).__nt_tracker_session_active_ms__;
@@ -1126,14 +1093,20 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
   });
 }
 
-window.addEventListener('message', (event) => {
-  if (event.data?.action === 'SHOW_TOAST') {
-    if (window.self !== window.top) return;
-    const title = String(event.data.title || '');
-    const msg = event.data.message || '';
-    showToast(title, msg, event.data.error || title.toLowerCase().includes('fail') || event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
-  }
-});
+if (isRelevantFrame) {
+  window.addEventListener('message', (event) => {
+    if (event.data?.action === 'SHOW_TOAST') {
+      if (window.self !== window.top) return;
+      const title = String(event.data.title || '');
+      const msg = event.data.message || '';
+      showToast(
+        title,
+        msg,
+        event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error')
+      );
+    }
+  });
+}
 
 function startTimeTracker() {
   let activeMs = 0, lastStamp = Date.now(), isVisible = !document.hidden, isPaused = false;
@@ -1147,155 +1120,10 @@ function startTimeTracker() {
   (window as any).__nt_tracker_session_active_ms__ = {
     getTotal,
     setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); },
-    pause: (p) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
+    pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
     isPaused: () => isPaused
   };
 }
-
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes['config']) {
-    const newCfg: any = changes['config'].newValue || {};
-    currentConfig = newCfg;
-    const cfg = newCfg;
-
-    const themeName = getActiveThemeName(newCfg);
-    try {
-      updateActiveThemeStyles(themeName, newCfg);
-    } catch (e) {
-      // Prevent crash on standard webpages
-    }
-
-    const adapter = getActiveReaderAdapter();
-    if (adapter) {
-      const oldReaderCfg = getReaderConfig(changes['config'].oldValue || {});
-      const newReaderCfg = getReaderConfig(newCfg);
-      const wasEnabled = oldReaderCfg.enabled;
-      const isEnabled = newReaderCfg.enabled;
-
-      if (!isEnabled && wasEnabled) {
-        const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-        if (wrapper) wrapper.remove();
-        if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
-      } else if (isEnabled && !wasEnabled) {
-        setupTTUChronometer();
-      }
-
-      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-      if (wrapper) {
-        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-      }
-    } else {
-      if (window.self !== window.top) return;
-
-      if (isWebsiteOverlaySkipped(newCfg) || getOverlayDismissed()) {
-        const overlay = getOverlayElement();
-        if (overlay) overlay.style.display = 'none';
-        return;
-      }
-
-      let customColors: any = undefined;
-      if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
-        const id = themeName.replace('custom_', '').replace('custom-', '');
-        const customTheme = (newCfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
-        if (customTheme) {
-          customColors = customTheme.colors;
-        } else if (newCfg.customColors) {
-          customColors = newCfg.customColors;
-        }
-      }
-
-      injectThemeStyles(themeName, cfg.font ?? 'sans', customColors);
-
-      const existingOverlay = getOverlayElement();
-      if (existingOverlay) {
-        const overlayPos = newCfg.overlayPosition ?? 'top-right';
-        if (overlayPos !== 'hidden') {
-          existingOverlay.style.setProperty('display', 'flex', 'important');
-          applyOverlayPosition(existingOverlay, overlayPos);
-          injectOverlayCustomOverrides();
-          enforceOverlayLayout(existingOverlay);
-
-          const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
-          if (pauseBtn) {
-            updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
-          }
-          const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
-          if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
-          const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
-          if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
-        } else {
-          existingOverlay.style.setProperty('display', 'none', 'important');
-        }
-        return;
-      }
-
-      checkAndRunOverlay(newCfg);
-    }
-  }
-
-  if (area === 'local' && changes['ttuHistory']) {
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) {
-      wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-      wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
-    }
-  }
-
-  if (area === 'local' && changes['readingQueue']) {
-    const queue = (changes['readingQueue'].newValue as any[]) || [];
-    const rawTitle = getTTUTitle();
-    const parsedRaw = parseTitleWithConfig(rawTitle).query;
-
-    const existing = queue.find((q: any) => {
-      const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '').query;
-      return qParsed === parsedRaw;
-    });
-
-    if (!existing && ttuState.timeMs > 0) {
-      ttuState.timeMs = 0;
-      ttuState.chars = 0;
-      stateRefs.globalLastTick = Date.now();
-
-      const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-      stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
-
-      stateRefs.globalManualCharOffset = 0;
-
-      const timeVal = document.querySelector('#nt-ttu-val-time');
-      const charsVal = document.querySelector('#nt-ttu-val-chars');
-      if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
-      if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
-    } else if (existing) {
-      ttuLinkStorage.getValue().then(links => {
-        links = links || {};
-        let updated = false;
-
-        if (existing.mediaId && existing.mediaId !== 'web-reading') {
-          if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
-            links[rawTitle] = {
-              mediaId: existing.mediaId,
-              volume: existing.volume || 1,
-              mediaData: existing.mediaData
-            };
-            updated = true;
-          }
-        } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
-          if (links[rawTitle]) {
-            delete links[rawTitle];
-            updated = true;
-          }
-        }
-
-        if (updated) {
-          ttuLinkStorage.setValue(links).then(() => {
-            const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-            if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-          });
-        }
-      });
-    }
-  }
-});
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -1303,18 +1131,173 @@ export default defineContentScript({
   cssInjectionMode: 'manifest',
 
   async main() {
+    // Return early on non-relevant frames to prevent multiple Svelte instances and massive memory usage [1]
+    if (!isRelevantFrame) return;
+
     currentConfig = await configStorage.getValue() || {};
     const cfg = currentConfig;
 
-    const themeName = getActiveThemeName(cfg);
-    updateActiveThemeStyles(themeName, cfg);
-
+    // Force syncPopupWithReaderTheme to true in the reader site context so that
+    // reader site override theme is always applied to the reader page itself.
+    const activeThemeCfg = getActiveThemeConfig(cfg);
     const adapter = getActiveReaderAdapter();
+    const originalName = adapter ? adapter.name : null;
+    if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu') || originalName.includes('YomuYasu'))) {
+      safelySetAdapterName(adapter, 'ッツ Ebook Reader');
+    }
+    await applyActiveTheme(activeThemeCfg);
+    if (adapter && originalName) {
+      safelySetAdapterName(adapter, originalName);
+    }
+
+    // Modern frame-safe watcher placed at the top-level of main() to support standard page overlays (Issue 1 Fix)
+    configStorage.watch((newCfg) => {
+      if (newCfg) {
+        currentConfig = newCfg;
+        const activeThemeCfg = getActiveThemeConfig(newCfg);
+        const adapter = getActiveReaderAdapter();
+        const originalName = adapter ? adapter.name : null;
+        if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu') || originalName.includes('YomuYasu'))) {
+          safelySetAdapterName(adapter, 'ッツ Ebook Reader');
+        }
+        applyActiveTheme(activeThemeCfg).catch(() => { });
+        if (adapter && originalName) {
+          safelySetAdapterName(adapter, originalName);
+        }
+
+        if (adapter) {
+          const isEnabled = getReaderConfig(newCfg).enabled;
+          if (!isEnabled) {
+            const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+            if (wrapper) {
+              if (mountedChronoComponent) {
+                unmount(mountedChronoComponent);
+                mountedChronoComponent = null;
+              }
+              wrapper.remove();
+            }
+            if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
+          } else {
+            setupTTUChronometer();
+          }
+
+          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        } else {
+          // Standard web pages overlay recovery and dynamic update styles
+          if (isWebsiteOverlaySkipped(newCfg) || newCfg.overlayPosition === 'hidden' || getOverlayDismissed()) {
+            const overlay = overlayController.getOverlayElement();
+            if (overlay) overlay.style.display = 'none';
+            return;
+          }
+
+          let customColors: any = undefined;
+          const themeName = getActiveThemeName(newCfg);
+          if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
+            const id = themeName.replace('custom_', '').replace('custom-', '');
+            const customTheme = (newCfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
+            if (customTheme) {
+              customColors = customTheme.colors;
+            } else if (newCfg.customColors) {
+              customColors = newCfg.customColors;
+            }
+          }
+
+          injectThemeStyles(themeName, newCfg.font ?? 'sans', customColors);
+
+          const existingOverlay = overlayController.getOverlayElement();
+          if (existingOverlay) {
+            const overlayPos = newCfg.overlayPosition ?? 'top-right';
+            if (overlayPos !== 'hidden') {
+              existingOverlay.style.setProperty('display', 'flex', 'important');
+              applyOverlayPosition(existingOverlay, overlayPos);
+              injectOverlayCustomOverrides();
+              enforceOverlayLayout(existingOverlay);
+
+              const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
+              if (pauseBtn) {
+                updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
+              }
+              const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
+              if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
+              const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
+              if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
+            } else {
+              existingOverlay.style.setProperty('display', 'none', 'important');
+            }
+          } else {
+            overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
+          }
+        }
+      }
+    });
+
     if (adapter) {
       const readerCfg = getReaderConfig(cfg);
       if (!readerCfg.enabled) return;
       startTimeTracker();
       setupTTUChronometer();
+
+      ttuHistoryStorage.watch(() => {
+        const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+        if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
+      });
+
+      readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
+        const currentQueue = queue || [];
+        const rawTitle = getTTUTitle();
+        const parsedRaw = parseTitleWithConfig(rawTitle).query;
+
+        // Legacy matching rules to ensure consistent title synchronization and queue matches
+        const existing = currentQueue.find((q: any) => {
+          const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '').query;
+          return qParsed === parsedRaw;
+        });
+
+        if (!existing && ttuState.timeMs > 0) {
+          ttuState.timeMs = 0;
+          ttuState.chars = 0;
+          stateRefs.globalLastTick = Date.now();
+
+          const initCount = extractAdvancedCharCount(undefined, ttuState.running);
+          stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+          stateRefs.globalManualCharOffset = 0;
+
+          const timeVal = document.querySelector('#nt-ttu-val-time');
+          const charsVal = document.querySelector('#nt-ttu-val-chars');
+          if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
+          if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+        } else if (existing) {
+          ttuLinkStorage.getValue().then(links => {
+            links = links || {};
+            let updated = false;
+
+            if (existing.mediaId && existing.mediaId !== 'web-reading') {
+              if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
+                links[rawTitle] = {
+                  mediaId: existing.mediaId,
+                  volume: existing.volume || 1,
+                  mediaData: existing.mediaData as ReadingMediaData
+                };
+                updated = true;
+              }
+            } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
+              if (links[rawTitle]) {
+                delete links[rawTitle];
+                updated = true;
+              }
+            }
+
+            if (updated) {
+              ttuLinkStorage.setValue(links).then(() => {
+                const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+                if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+              });
+            }
+          });
+        }
+      });
+
       return;
     }
 
@@ -1325,6 +1308,7 @@ export default defineContentScript({
     if (window.self !== window.top) return;
 
     let customColors: any = undefined;
+    const themeName = getActiveThemeName(cfg);
     if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
       const id = themeName.replace('custom_', '').replace('custom-', '');
       const customTheme = (cfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
@@ -1336,6 +1320,6 @@ export default defineContentScript({
     }
 
     injectThemeStyles(themeName, cfg.font ?? 'sans', customColors);
-    checkAndRunOverlay(cfg);
+    overlayController.checkAndRunOverlay(cfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
   },
 });

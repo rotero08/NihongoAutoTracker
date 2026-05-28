@@ -185,18 +185,36 @@ export function detectReaderThemeColors(): any {
     let bgColor = bodyStyle.backgroundColor;
 
     let textColor = bodyStyle.color;
-    const contentEl = document.querySelector('.book-content, .book-content-container, .reader-container, .text-container, p, span, h1, div[class*="content"]');
-    if (contentEl) {
+    const contentEl = document.querySelector(
+      '.book-content p, .book-content-container p, #reader-container p, .reader-container p, .reader-wrapper p, ' +
+      '.book-content, .book-content-container, #reader-container, .reader-container, .reader-wrapper'
+    );
+    if (contentEl && !contentEl.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
       textColor = window.getComputedStyle(contentEl).color;
     }
 
-    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'transparent') {
-      const container = document.querySelector(
-        '.book-content-container, .book-content, [data-ref="container"], .reader-container, #ttu-page-footer, #root, #app'
-      );
-      if (container) {
-        const containerStyle = window.getComputedStyle(container);
-        bgColor = containerStyle.backgroundColor;
+    if (!bgColor || bgColor === 'rgba(0, 0, 0, 0)' || bgColor === 'rgba(0,0,0,0)' || bgColor === 'transparent') {
+      const selectors = [
+        '.book-content-container',
+        '.book-content',
+        '[data-ref="container"]',
+        '.reader-container',
+        '#reader-container',
+        '.reader-wrapper',
+        'main',
+        '#ttu-page-footer',
+        '#root',
+        '#app'
+      ];
+      for (const sel of selectors) {
+        const el = document.querySelector(sel);
+        if (el) {
+          const bg = window.getComputedStyle(el).backgroundColor;
+          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgba(0,0,0,0)' && bg !== 'transparent') {
+            bgColor = bg;
+            break;
+          }
+        }
       }
     }
 
@@ -206,18 +224,11 @@ export function detectReaderThemeColors(): any {
     const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
     const isDark = hslBg.l < 50;
 
-    const shiftedBgHsl = {
-      h: (hslBg.h + 12) % 360,
-      s: Math.max(10, Math.min(90, isDark ? hslBg.s + 5 : hslBg.s - 5)),
-      l: isDark ? Math.min(95, hslBg.l + 4) : Math.max(5, hslBg.l - 4)
-    };
-    const shiftedBg = hslToRgb(shiftedBgHsl.h, shiftedBgHsl.s, shiftedBgHsl.l);
-
-    let background = `rgb(${shiftedBg.r}, ${shiftedBg.g}, ${shiftedBg.b})`;
-    let surface = isDark ? adjustLightness(shiftedBg, 6) : adjustLightness(shiftedBg, -6);
-    let surfaceAlt = isDark ? adjustLightness(shiftedBg, 12) : adjustLightness(shiftedBg, -12);
-    let border = isDark ? adjustLightness(shiftedBg, 22) : adjustLightness(shiftedBg, -22);
-    let borderHover = isDark ? adjustLightness(shiftedBg, 32) : adjustLightness(shiftedBg, -32);
+    let background = `rgb(${parsedBg.r}, ${parsedBg.g}, ${parsedBg.b})`;
+    let surface = isDark ? adjustLightness(parsedBg, 6) : adjustLightness(parsedBg, -6);
+    let surfaceAlt = isDark ? adjustLightness(parsedBg, 12) : adjustLightness(parsedBg, -12);
+    let border = isDark ? adjustLightness(parsedBg, 22) : adjustLightness(parsedBg, -22);
+    let borderHover = isDark ? adjustLightness(parsedBg, 32) : adjustLightness(parsedBg, -32);
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
     let accent = isDark ? '#f0b429' : '#b45309';
@@ -291,12 +302,91 @@ export function updateActiveThemeStyles(themeName: string, cfg: any) {
   }
 }
 
-export function applyActiveTheme(cfg: any): Promise<void> {
+export async function applyActiveTheme(cfg: any): Promise<void> {
   try {
-    const themeName = getActiveThemeName(cfg);
-    updateActiveThemeStyles(themeName, cfg);
+    let themeName = cfg.theme ?? 'dark-amber';
+    let customColors = undefined;
+
+    // Detect if we are in an extension popup / options page (Issue 2 Fix)
+    const isExtensionPage = typeof window !== 'undefined' &&
+      (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+
+    if (isExtensionPage) {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const activeTab = tabs[0];
+      if (activeTab && activeTab.url) {
+        const urlObj = new URL(activeTab.url);
+        const host = urlObj.hostname;
+
+        // Find if there is an adapter for this host
+        const { READER_ADAPTERS } = await import('@/lib/adapters/readers');
+        const adapter = READER_ADAPTERS.find(a => host.includes(a.hostname));
+
+        if (adapter && cfg.syncPopupWithReaderTheme !== false) {
+          let override: string | undefined;
+          if (adapter.hostname === 'reader.ttsu.app') {
+            override = cfg.ttuThemeOverride;
+          } else if (adapter.hostname === 'app.yatsu.moe') {
+            override = cfg.yatsuThemeOverride;
+          } else if (adapter.hostname === 'manga.manabe.es') {
+            override = cfg.yomiyasuThemeOverride || cfg.manabeThemeOverride;
+          }
+
+          if (override && override !== 'global') {
+            themeName = override;
+          }
+
+          if (themeName === 'match-reader') {
+            const stored = await browser.storage.local.get(`local:readerColors:${host}`);
+            customColors = stored[`local:readerColors:${host}`];
+          }
+        }
+      }
+    } else {
+      themeName = getActiveThemeName(cfg);
+      if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
+        customColors = getCustomColorsForSite(cfg);
+      } else if (themeName === 'match-reader') {
+        customColors = detectReaderThemeColors();
+      }
+    }
+
+    const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
+    if (themeName === 'match-reader' && !isExtensionPage) {
+      const detectedColors = detectReaderThemeColors();
+      if (detectedColors) {
+        const host = window.location.hostname;
+        await browser.storage.local.set({
+          [`local:readerColors:${host}`]: detectedColors,
+          [`readerColors:${host}`]: detectedColors
+        });
+        applyCustomThemeToDoc(detectedColors);
+        applyThemeToDocument("dark-amber", cfg.font ?? "sans", detectedColors, { useStaticInPageLogo });
+        injectThemeStyles('custom', cfg.font ?? 'sans');
+      } else {
+        clearCustomThemeFromDoc();
+        applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+        injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
+      }
+    } else if (themeName === 'match-reader' && isExtensionPage && customColors) {
+      applyThemeToDocument("dark-amber", cfg.font ?? "sans", customColors, { useStaticInPageLogo });
+    } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
+      const colors = isExtensionPage ? customColors : getCustomColorsForSite(cfg);
+      if (colors) {
+        applyCustomThemeToDoc(colors);
+        applyThemeToDocument("dark-amber", cfg.font ?? "sans", colors, { useStaticInPageLogo });
+        injectThemeStyles('custom', cfg.font ?? 'sans');
+      } else {
+        clearCustomThemeFromDoc();
+        applyThemeToDocument('dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+        injectThemeStyles('dark-amber', cfg.font ?? 'sans');
+      }
+    } else {
+      clearCustomThemeFromDoc();
+      applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+      injectThemeStyles(themeName, cfg.font ?? 'sans');
+    }
   } catch (e) { }
-  return Promise.resolve();
 }
 
 export function applyCustomThemeToDoc(customColors: any) {
