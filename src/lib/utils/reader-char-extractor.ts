@@ -1,7 +1,6 @@
 /**
- * @license BSD-3-Clause
- * Copyright (c) 2026, ッツ Reader Authors
- * All rights reserved.
+ * Code for calculating the character count inside ttu and all ttu forks
+ * Takes whisper ttsu sync and Jiten into account for its calculations
  */
 
 import { addDebugLog } from '@/lib/storage/debug';

@@ -7,8 +7,9 @@ import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
-import { updateReadingQueueAtomic, readingQueueStorage } from '@/lib/storage/queues';
+import { readingQueueStorage } from '@/lib/storage/queues';
 import { ttuLinkStorage, ttuHistoryStorage } from '@/lib/storage/ttu';
+import { TimerEngine } from '@/lib/utils/timer'; // Class unified
 import {
   getOverlayDismissed,
   applyOverlayPosition,
@@ -18,7 +19,7 @@ import {
   isWebsiteOverlaySkipped,
   injectThemeStyles
 } from '@/lib/ui/reader-overlay';
-import { getActiveThemeName, getReaderConfig, applyActiveTheme } from '@/lib/ui/text-tracker-theme-manager';
+import { getActiveThemeName, getReaderConfig, applyActiveTheme, applyCustomThemeToDoc, clearCustomThemeFromDoc } from '@/lib/ui/text-tracker-theme-manager';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
@@ -418,7 +419,7 @@ async function liveSyncQueue() {
     const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
 
     const queue = await readingQueueStorage.getValue();
-    // Resolve matching rules aligned strictly with the custom target overridden volume index (Issue 4 & Sync Fix)
+    // Resolve matching rules aligned strictly with the custom target overridden volume index
     let existing = queue.find(q => {
       if (q.originalTitle === rawTitle) return true;
       const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
@@ -848,20 +849,22 @@ function scheduleMutations() {
   }, 120);
 }
 
-// CPU and Memory optimized MutationObservers restricted strictly to relevant frames [1]
-if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
+// Optimized MutationObserver scoping strictly to reader containers and checking elements locally (Task 6.1 & 6.2)
+let activeMutationObserver: MutationObserver | null = null;
+let currentObservedElement: Element | null = null;
+
+function setupOptimizedMutationObserver() {
+  if (typeof window === 'undefined' || typeof MutationObserver === 'undefined') return;
+
   const isInlineTag = (tag: string) => /^(SPAN|RUBY|RT|RP|A|I|B|EM|STRONG|FONT|CODE)$/i.test(tag);
 
-  const observer = new MutationObserver((mutations) => {
+  const observerCallback = (mutations: MutationRecord[]) => {
     for (const m of mutations) {
       const target = m.target as HTMLElement;
       if (!target) continue;
 
       if (isInlineTag(target.tagName)) continue;
-
-      if (isTargetInIgnoredContainer(target)) {
-        continue;
-      }
+      if (isTargetInIgnoredContainer(target)) continue;
 
       if (m.type === 'childList') {
         let isDictionaryMutation = true;
@@ -889,7 +892,8 @@ if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver 
             if (node.nodeType === Node.ELEMENT_NODE) {
               const el = node as HTMLElement;
               const cl = el.className;
-              if (el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || (cl && cl.toLowerCase().indexOf('jiten') !== -1)) {
+              // Check elements directly from added nodes array to skip global document lookups
+              if (el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || (cl && typeof cl === 'string' && cl.toLowerCase().indexOf('jiten') !== -1)) {
                 hasJitenAdded = true;
                 break;
               }
@@ -897,14 +901,14 @@ if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver 
           }
           if (hasJitenAdded) {
             if (ttuState.running) {
-              stabilizer.runSilentGracePeriodIfJiten();
+              stabilizer.runSilentGracePeriodIfJiten(true);
             } else {
-              stabilizer.runGracePeriodIfJiten();
+              stabilizer.runGracePeriodIfJiten(true);
             }
           }
         }
 
-        // Run the fast theme sync check anyway to guarantee the matched theme persists (Jiten Fix)
+        // Run the fast theme sync check anyway to guarantee the matched theme persists
         if (isReadingViewActive()) {
           scheduleInstantThemeSync();
         }
@@ -930,9 +934,75 @@ if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver 
       scheduleMutations();
       break;
     }
-  });
+  };
 
-  observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
+  const findReaderContainer = (): Element | null => {
+    const selectors = [
+      '.book-content-container',
+      '.book-content',
+      '[data-ref="container"]',
+      '.reader-container',
+      '#reader-container',
+      '.reader-wrapper',
+      '.writing-container',
+      '#writing-container'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && !el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+        return el;
+      }
+    }
+    return null;
+  };
+
+  const startObserver = () => {
+    const targetEl = findReaderContainer() || document.body || document.documentElement;
+
+    if (activeMutationObserver && currentObservedElement === targetEl) {
+      return;
+    }
+
+    if (activeMutationObserver) {
+      activeMutationObserver.disconnect();
+    }
+
+    activeMutationObserver = new MutationObserver(observerCallback);
+    currentObservedElement = targetEl;
+
+    activeMutationObserver.observe(targetEl, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-theme']
+    });
+
+    addDebugLog('INFO', 'TextTracker', `MutationObserver restricted target`, {
+      tagName: targetEl.tagName,
+      className: targetEl.className,
+      isReaderContainer: targetEl !== document.body && targetEl !== document.documentElement
+    });
+  };
+
+  startObserver();
+
+  // Watch for reader containers mounting periodically if currently observing body/html root
+  const checkInterval = setInterval(() => {
+    const container = findReaderContainer();
+    if (container && currentObservedElement !== container) {
+      startObserver();
+    }
+  }, 1000);
+
+  window.addEventListener('unload', () => {
+    clearInterval(checkInterval);
+    if (activeMutationObserver) activeMutationObserver.disconnect();
+  });
+}
+
+// CPU and Memory optimized MutationObservers restricted strictly to relevant frames [1]
+if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
+  setupOptimizedMutationObserver();
 }
 
 function handleMutations() {
@@ -973,7 +1043,7 @@ function handleMutations() {
       }
       wrapper.remove();
     }
-    // Prevent observers from remaining detached in memory (Memory Fix)
+    // Prevent observers from remaining detached in memory
     if (progressObserver) {
       progressObserver.disconnect();
       progressObserver = null;
@@ -1127,20 +1197,14 @@ if (isRelevantFrame) {
   });
 }
 
+// Unified class-based initialization of standard visual overlay timer tracking (Task 3)
 function startTimeTracker() {
-  let activeMs = 0, lastStamp = Date.now(), isVisible = !document.hidden, isPaused = false;
-  const accrue = () => { if (isVisible && !isPaused) { activeMs += Date.now() - lastStamp; lastStamp = Date.now(); } };
-  const getTotal = () => activeMs + (isVisible && !isPaused ? Date.now() - lastStamp : 0);
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { accrue(); isVisible = false; } else { lastStamp = Date.now(); isVisible = true; }
-  });
-
+  const timer = new TimerEngine();
   (window as any).__nt_tracker_session_active_ms__ = {
-    getTotal,
-    setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); },
-    pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
-    isPaused: () => isPaused
+    getTotal: () => timer.getTotal(),
+    setMs: (ms: number) => timer.setMs(ms),
+    pause: (p: boolean) => timer.pause(p),
+    isPaused: () => timer.getIsPaused()
   };
 }
 
@@ -1150,7 +1214,7 @@ export default defineContentScript({
   cssInjectionMode: 'manifest',
 
   async main() {
-    // Return early on non-relevant frames to prevent multiple Svelte instances and massive memory usage [1]
+    // Return early on non-relevant frames to prevent multiple Svelte instances
     if (!isRelevantFrame) return;
 
     currentConfig = await configStorage.getValue() || {};
@@ -1169,7 +1233,6 @@ export default defineContentScript({
       safelySetAdapterName(adapter, originalName);
     }
 
-    // Modern frame-safe watcher placed at the top-level of main() to support standard page overlays (Issue 1 Fix)
     configStorage.watch((newCfg) => {
       if (newCfg) {
         currentConfig = newCfg;
@@ -1271,7 +1334,7 @@ export default defineContentScript({
         const linkedMedia = linkMap[rawTitle];
         const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
-        // Volume-specific queue matching to prevent cross-linking between different volumes (Issue 3 Fix)
+        // Volume-specific queue matching to prevent cross-linking between different volumes
         const existing = currentQueue.find((q: any) => {
           if (q.originalTitle === rawTitle) return true;
           const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
@@ -1279,7 +1342,7 @@ export default defineContentScript({
         });
 
         if (!existing && ttuState.timeMs > 0) {
-          // Safety lock: only reset session if this session was previously synced to avoid resetting early configurations (Progress Save Fix)
+          // Safety lock: only reset session if this session was previously synced to avoid resetting early configurations
           if (hasSyncedThisSession) {
             ttuState.timeMs = 0;
             ttuState.chars = 0;
@@ -1313,7 +1376,7 @@ export default defineContentScript({
             } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
               if (links[rawTitle]) {
                 const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
-                // Avoid deleting link map entry if it matches a custom unmatched volume override (Issue 4 Sync Fix)
+                // Avoid deleting link map entry if it matches a custom unmatched volume override
                 if (links[rawTitle].volume === parsedVol) {
                   delete links[rawTitle];
                   updated = true;

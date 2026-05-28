@@ -18,8 +18,8 @@
  * extend `getBadgeConfig()` to accept a site identifier.
  */
 
-import type { UITheme } from './types';
-import { DEFAULT_THEME } from './types';
+import type { UITheme } from '@/lib/types';
+import { DEFAULT_THEME } from '@/lib/types';
 
 /* ── CSS class constants (prevent magic strings in content script) ── */
 export const BADGE_ID = 'nt-status-badge';

@@ -6,6 +6,12 @@
  * ensures consistent behavior between content scripts, popup, and settings.
  */
 
+/* ── Storage Keys (Task 5) ── */
+export const THEME_CACHE_KEY = 'nta-theme-cache' as const;
+export const FONT_CACHE_KEY = 'nta-font-cache' as const;
+export const CUSTOM_COLORS_CACHE_KEY = 'nta-custom-colors-cache' as const;
+export const ACTIVE_SETTINGS_TAB_KEY = 'local:activeSettingsTab' as const;
+
 /* ── Host lists ───────────────────────────────────────────────────────────── */
 
 /**

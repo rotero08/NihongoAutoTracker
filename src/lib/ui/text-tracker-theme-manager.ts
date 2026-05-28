@@ -1,11 +1,14 @@
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
-import { applyThemeToDocument } from '@/lib/ui/themes';
+import { applyThemeToDocument, applyCustomThemeToDoc, clearCustomThemeFromDoc } from '@/lib/ui/themes';
 
 // High-performance cache for computed DOM theme checks to avoid layout thrashing
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
 const THEME_DETECTION_CACHE_TTL = 1500; // ms
+
+// Re-export styling handlers to maintain library compatibility
+export { applyCustomThemeToDoc, clearCustomThemeFromDoc };
 
 export function getActiveThemeName(cfg: any): string {
   const adapter = getActiveReaderAdapter();
@@ -41,7 +44,7 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
 
   let val = colorStr.trim();
 
-  // Recursively resolve var(...) references if we are in a DOM environment (Goal 1 Fix)
+  // Recursively resolve var(...) references if we are in a DOM environment
   if (typeof window !== 'undefined' && val.startsWith('var(')) {
     const match = val.match(/var\((--[^,)]+)/);
     if (match) {
@@ -143,7 +146,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
   const host = typeof window !== 'undefined' ? window.location.hostname : '';
   let cssVars: string[] = [];
 
-  // Site-specific variable prioritization to match the correct theme accents (peach/lavender/mint) uniformly (Issue Accent Fix)
+  // Site-specific variable prioritization to match the correct theme accents
   if (host.includes('yatsu.moe')) {
     cssVars = ['--yatsu-accent', '--yatsu-primary', '--color-primary', '--color-accent', '--accent-color'];
   } else if (host.includes('ttsu.app') || host.includes('manabe.es') || host.includes('yomiyasu')) {
@@ -177,7 +180,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
     return isDark ? '#f5a623' : '#92400e';
   }
 
-  // 2. Active, highlighted, or selected elements
+  // Active, highlighted, or selected elements
   const specificSelectors = [
     '[class*="accent"]', '[class*="highlight"]', '[class*="active"]', '[class*="selected"]',
     '.active', '.selected', '.is-active', '.is-selected', '.tab-active', '[aria-selected="true"]',
@@ -187,11 +190,9 @@ function findDOMAccentColor(isDark: boolean): string | null {
   for (const selector of specificSelectors) {
     try {
       const elements = document.querySelectorAll(selector);
-      // Limit checked loop size to avoid freezing pages containing thousands of matching classes
       const scanLimit = Math.min(elements.length, 15);
       for (let i = 0; i < scanLimit; i++) {
         const el = elements[i] as HTMLElement;
-        // Exclude our own extension wrappers to avoid circular style inheritance
         if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
           continue;
         }
@@ -227,16 +228,14 @@ function findDOMAccentColor(isDark: boolean): string | null {
     } catch (e) { }
   }
 
-  // 3. Fallback generic interactive tags (links, buttons)
+  // Fallback generic interactive tags
   const genericSelectors = ['a', 'button'];
   for (const selector of genericSelectors) {
     try {
       const elements = document.querySelectorAll(selector);
-      // Limit scanned fallback tags to prevent frame drop logs
       const scanLimit = Math.min(elements.length, 10);
       for (let i = 0; i < scanLimit; i++) {
         const el = elements[i] as HTMLElement;
-        // Exclude our own extension wrappers to avoid circular style inheritance
         if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
           continue;
         }
@@ -328,7 +327,7 @@ export function detectReaderThemeColors(): any {
       accent = extractedAccent;
     }
 
-    // Mathematically adjust the matched active color to ensure ideal legibility and saturation (Contrast Fix)
+    // Mathematically adjust the matched active color to ensure ideal legibility and contrast
     const rgbAccent = parseColorToRgb(accent);
     const hslAccent = rgbToHsl(rgbAccent.r, rgbAccent.g, rgbAccent.b);
 
@@ -380,7 +379,6 @@ export function updateActiveThemeStyles(themeName: string, cfg: any) {
   if (themeName === 'match-reader') {
     const detectedColors = detectReaderThemeColors();
     if (detectedColors) {
-      // Cache the detected colors in storage so the popup can sync with them
       const host = window.location.hostname;
       browser.storage.local.set({
         [`local:readerColors:${host}`]: detectedColors,
@@ -470,7 +468,7 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
 
       const detectedColors = detectReaderThemeColors();
       if (detectedColors) {
-        // Fallback to cached valid values to bypass transient amber resets on page loads (Accent Reload Fix)
+        // Fallback to cached valid values to bypass transient amber resets on page loads
         const defaultAccent = detectedColors.background === '#07070e' ? '#f5a623' : '#92400e';
         if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
           detectedColors.accent = cachedColors.accent;
@@ -508,71 +506,6 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
       injectThemeStyles(themeName, cfg.font ?? 'sans');
     }
   } catch (e) { }
-}
-
-export function applyCustomThemeToDoc(customColors: any) {
-  if (!customColors) return;
-  const root = document.documentElement;
-  const mapping: Record<string, string> = {
-    "--color-background": customColors.background,
-    "--color-surface": customColors.surface,
-    "--color-surface-alt": customColors.surfaceAlt || customColors.surface,
-    "--color-border": customColors.border,
-    "--color-border-hover": customColors.borderHover || customColors.border,
-    "--color-text": customColors.text,
-    "--color-text-muted": customColors.textMuted,
-    "--color-text-dimmed": customColors.textMuted,
-    "--color-accent": customColors.accent,
-    "--color-accent-hover": customColors.accentHover || customColors.accent,
-    "--color-success": customColors.success || customColors.accent,
-
-    // Also map to reader-overlay specific namespaces so floating dashboards align
-    "--nt-background": customColors.background,
-    "--nt-surface": customColors.surface,
-    "--nt-surface-alt": customColors.surfaceAlt || customColors.surface,
-    "--nt-border": customColors.border,
-    "--nt-border-hover": customColors.borderHover || customColors.border,
-    "--nt-text": customColors.text,
-    "--nt-text-muted": customColors.textMuted,
-    "--nt-text-dimmed": customColors.textMuted,
-    "--nt-accent": customColors.accent,
-    "--nt-accent-hover": customColors.accentHover || customColors.accent,
-    "--nt-success": customColors.success || customColors.accent,
-  };
-  for (const [prop, val] of Object.entries(mapping)) {
-    if (val) root.style.setProperty(prop, val, 'important');
-  }
-}
-
-export function clearCustomThemeFromDoc() {
-  const root = document.documentElement;
-  const props = [
-    "--color-background",
-    "--color-surface",
-    "--color-surface-alt",
-    "--color-border",
-    "--color-border-hover",
-    "--color-text",
-    "--color-text-muted",
-    "--color-text-dimmed",
-    "--color-accent",
-    "--color-accent-hover",
-    "--color-success",
-    "--nt-background",
-    "--nt-surface",
-    "--nt-surface-alt",
-    "--nt-border",
-    "--nt-border-hover",
-    "--nt-text",
-    "--nt-text-muted",
-    "--nt-text-dimmed",
-    "--nt-accent",
-    "--nt-accent-hover",
-    "--nt-success"
-  ];
-  for (const prop of props) {
-    root.style.removeProperty(prop);
-  }
 }
 
 export function getReaderConfig(cfg: any) {

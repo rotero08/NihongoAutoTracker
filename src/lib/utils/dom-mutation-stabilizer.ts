@@ -38,9 +38,10 @@ export class DOMMutationStabilizer {
 
     /**
      * Infinite-precision Dynamic Debounce Stabilization (Visual overlay for stopped timer)
+     * accepts optional fast bypass parameter to skip costly document.querySelector runs (Task 6.2)
      */
-    public runGracePeriodIfJiten(): void {
-        const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+    public runGracePeriodIfJiten(alreadyDetected?: boolean): void {
+        const isJitenActive = alreadyDetected ?? !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
         if (!isJitenActive) return;
 
         this.lastJitenMutationTime = Date.now();
@@ -81,8 +82,8 @@ export class DOMMutationStabilizer {
     /**
      * Silent Background Protection during running sessions
      */
-    public runSilentGracePeriodIfJiten(): void {
-        const isJitenActive = !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+    public runSilentGracePeriodIfJiten(alreadyDetected?: boolean): void {
+        const isJitenActive = alreadyDetected ?? !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
         if (!isJitenActive) return;
 
         this.lastSilentMutationTime = Date.now();

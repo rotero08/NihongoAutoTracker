@@ -6,7 +6,7 @@
   import QueueList from "@/components/popup/QueueList.svelte";
   import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
   import CustomSelect from "@/components/settings/CustomSelect.svelte";
-  import { notify } from "@/lib/api/youtube"; // Route notifications to the unified smart helper
+  import { notify } from "@/lib/utils/toast"; // Moved from youtube.ts
   import {
     submitLog,
     resolveVideoChannelMedia,
@@ -14,9 +14,16 @@
   import { stripVideoTitle } from "@/lib/utils/text-parsing";
   import {
     applyThemeToDocument,
+    applyCustomThemeToDoc,
+    clearCustomThemeFromDoc,
     THEME_OPTIONS,
     FONT_OPTIONS,
   } from "@/lib/ui/themes";
+  import {
+    THEME_CACHE_KEY,
+    FONT_CACHE_KEY,
+    CUSTOM_COLORS_CACHE_KEY,
+  } from "@/lib/constants";
   import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
 
@@ -69,12 +76,10 @@
   /* ── Synchronous Theme Cache Initialization ── */
   const cachedTheme =
     typeof window !== "undefined"
-      ? localStorage.getItem("nta-theme-cache")
+      ? localStorage.getItem(THEME_CACHE_KEY)
       : null;
   const cachedFont =
-    typeof window !== "undefined"
-      ? localStorage.getItem("nta-font-cache")
-      : null;
+    typeof window !== "undefined" ? localStorage.getItem(FONT_CACHE_KEY) : null;
   if (cachedTheme || cachedFont) {
     const themeToApply = cachedTheme || "dark-amber";
     const fontToApply = cachedFont || "sans";
@@ -87,13 +92,13 @@
       });
     } else {
       try {
-        const cachedColorsStr = localStorage.getItem("nta-custom-colors-cache");
+        const cachedColorsStr = localStorage.getItem(CUSTOM_COLORS_CACHE_KEY);
         if (cachedColorsStr) {
           const cachedColors = JSON.parse(cachedColorsStr);
           applyThemeToDocument("dark-amber", fontToApply, cachedColors, {
             useStaticInPageLogo: false,
           });
-          applyCustomTheme(cachedColors);
+          applyCustomThemeToDoc(cachedColors);
         }
       } catch (e) {}
     }
@@ -188,7 +193,7 @@
       applyThemeToDocument("dark-amber", fontVal, matchedColors, {
         useStaticInPageLogo,
       });
-      applyCustomTheme(matchedColors);
+      applyCustomThemeToDoc(matchedColors);
     } else if (isCustomThemeId(themeVal)) {
       const activeThemeObj = (cfg?.customThemes ?? []).find(
         (t: any) => t.id === themeVal,
@@ -197,20 +202,20 @@
         applyThemeToDocument("dark-amber", fontVal, activeThemeObj.colors, {
           useStaticInPageLogo,
         });
-        applyCustomTheme(activeThemeObj.colors);
+        applyCustomThemeToDoc(activeThemeObj.colors);
       } else if (cfg?.customColors) {
         applyThemeToDocument("dark-amber", fontVal, cfg.customColors, {
           useStaticInPageLogo,
         });
-        applyCustomTheme(cfg.customColors);
+        applyCustomThemeToDoc(cfg.customColors);
       } else {
-        clearCustomTheme();
+        clearCustomThemeFromDoc();
         applyThemeToDocument("dark-amber", fontVal, undefined, {
           useStaticInPageLogo,
         });
       }
     } else {
-      clearCustomTheme();
+      clearCustomThemeFromDoc();
       applyThemeToDocument(themeVal, fontVal, undefined, {
         useStaticInPageLogo,
       });
@@ -268,103 +273,29 @@
     if (cfg) {
       const themeVal = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
       const fontVal = cfg.font ?? "sans";
-      localStorage.setItem("nta-theme-cache", themeVal);
-      localStorage.setItem("nta-font-cache", fontVal);
+      localStorage.setItem(THEME_CACHE_KEY, themeVal);
+      localStorage.setItem(FONT_CACHE_KEY, fontVal);
       if (isCustomThemeId(themeVal)) {
         const activeThemeObj = (cfg.customThemes ?? []).find(
           (t: any) => t.id === themeVal,
         );
         if (activeThemeObj) {
           localStorage.setItem(
-            "nta-custom-colors-cache",
+            CUSTOM_COLORS_CACHE_KEY,
             JSON.stringify(activeThemeObj.colors),
           );
         } else if (cfg.customColors) {
           localStorage.setItem(
-            "nta-custom-colors-cache",
+            CUSTOM_COLORS_CACHE_KEY,
             JSON.stringify(cfg.customColors),
           );
         }
       } else {
-        localStorage.removeItem("nta-custom-colors-cache");
+        localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
       }
     }
 
     applyInitialTheme(cfg, activeUrl, detectedColors);
-  }
-
-  function applyCustomTheme(colors: any) {
-    if (!colors) return;
-    const root = document.documentElement;
-    const defaultColors = {
-      background: "#07070e",
-      surface: "#0d0d1c",
-      surfaceAlt: "#10101f",
-      border: "#1a2235",
-      borderHover: "#222d42",
-      text: "#dde4f0",
-      textMuted: "#7a8ca5",
-      accent: "#f0b429",
-      accentHover: "#ffd060",
-      success: "#3ddc84",
-    };
-
-    root.style.setProperty(
-      "--color-background",
-      colors.background || defaultColors.background,
-    );
-    root.style.setProperty(
-      "--color-surface",
-      colors.surface || defaultColors.surface,
-    );
-    root.style.setProperty(
-      "--color-surface-alt",
-      colors.surfaceAlt || colors.surface || defaultColors.surfaceAlt,
-    );
-    root.style.setProperty(
-      "--color-border",
-      colors.border || defaultColors.border,
-    );
-    root.style.setProperty(
-      "--color-border-hover",
-      colors.borderHover || colors.border || defaultColors.borderHover,
-    );
-    root.style.setProperty("--color-text", colors.text || defaultColors.text);
-    root.style.setProperty(
-      "--color-text-muted",
-      colors.textMuted || defaultColors.textMuted,
-    );
-    root.style.setProperty(
-      "--color-text-dimmed",
-      colors.textMuted || defaultColors.textMuted,
-    );
-    root.style.setProperty(
-      "--color-accent",
-      colors.accent || defaultColors.accent,
-    );
-    root.style.setProperty(
-      "--color-accent-hover",
-      colors.accentHover || colors.accent || defaultColors.accentHover,
-    );
-    root.style.setProperty(
-      "--color-success",
-      colors.success || defaultColors.success,
-    );
-  }
-
-  function clearCustomTheme() {
-    const root = document.documentElement;
-    root.style.removeProperty("--color-background");
-    root.style.removeProperty("--color-surface");
-    root.style.removeProperty("--color-surface-alt");
-    root.style.removeProperty("--color-border");
-    root.style.removeProperty("--color-border-hover");
-    root.style.removeProperty("--color-text");
-    root.style.removeProperty("--color-text-muted");
-    root.style.removeProperty("--color-text-dimmed");
-    root.style.removeProperty("--color-accent");
-    root.style.removeProperty("--color-accent-hover");
-    root.style.removeProperty("--color-success");
   }
 
   function decorateDropdownOptions() {
@@ -455,25 +386,25 @@
         syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
 
         if (val) {
-          localStorage.setItem("nta-theme-cache", nextTheme);
-          localStorage.setItem("nta-font-cache", nextFont);
+          localStorage.setItem(THEME_CACHE_KEY, nextTheme);
+          localStorage.setItem(FONT_CACHE_KEY, nextFont);
           if (isCustomThemeId(nextTheme)) {
             const activeThemeObj = (val.customThemes ?? []).find(
               (t: any) => t.id === nextTheme,
             );
             if (activeThemeObj) {
               localStorage.setItem(
-                "nta-custom-colors-cache",
+                CUSTOM_COLORS_CACHE_KEY,
                 JSON.stringify(activeThemeObj.colors),
               );
             } else if (val.customColors) {
               localStorage.setItem(
-                "nta-custom-colors-cache",
+                CUSTOM_COLORS_CACHE_KEY,
                 JSON.stringify(val.customColors),
               );
             }
           } else {
-            localStorage.removeItem("nta-custom-colors-cache");
+            localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
           }
         }
 
@@ -601,9 +532,9 @@
         cfg.selectedThemeId = undefined;
         cfg.customColors = undefined;
         selectedTheme = "dark-amber";
-        localStorage.setItem("nta-theme-cache", "dark-amber");
-        localStorage.removeItem("nta-custom-colors-cache");
-        clearCustomTheme();
+        localStorage.setItem(THEME_CACHE_KEY, "dark-amber");
+        localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
+        clearCustomThemeFromDoc();
         applyThemeToDocument("dark-amber", selectedFont);
       }
       await configStorage.setValue(cfg);
@@ -612,7 +543,7 @@
     }
 
     selectedTheme = val;
-    localStorage.setItem("nta-theme-cache", val);
+    localStorage.setItem(THEME_CACHE_KEY, val);
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     if (isCustomThemeId(val)) {
       cfg.theme = val;
@@ -623,7 +554,7 @@
       if (activeThemeObj) {
         cfg.customColors = { ...activeThemeObj.colors };
         localStorage.setItem(
-          "nta-custom-colors-cache",
+          CUSTOM_COLORS_CACHE_KEY,
           JSON.stringify(activeThemeObj.colors),
         );
       }
@@ -632,15 +563,15 @@
         useStaticInPageLogo,
       });
       if (activeThemeObj) {
-        applyCustomTheme(activeThemeObj.colors);
+        applyCustomThemeToDoc(activeThemeObj.colors);
       }
     } else {
       cfg.theme = val;
       cfg.selectedThemeId = undefined;
       cfg.customColors = undefined;
-      localStorage.removeItem("nta-custom-colors-cache");
+      localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
       await configStorage.setValue(cfg);
-      clearCustomTheme();
+      clearCustomThemeFromDoc();
       applyThemeToDocument(val, selectedFont, undefined, {
         useStaticInPageLogo,
       });
@@ -649,7 +580,7 @@
 
   async function handleQuickFont(val: string) {
     selectedFont = val;
-    localStorage.setItem("nta-font-cache", val);
+    localStorage.setItem(FONT_CACHE_KEY, val);
     const cfg = (await configStorage.getValue()) as any;
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     await configStorage.setValue({ ...cfg, font: val });
@@ -661,7 +592,7 @@
         useStaticInPageLogo,
       });
       if (activeThemeObj) {
-        applyCustomTheme(activeThemeObj.colors);
+        applyCustomThemeToDoc(activeThemeObj.colors);
       }
     } else {
       applyThemeToDocument(selectedTheme, val, undefined, {

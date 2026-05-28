@@ -255,7 +255,7 @@ export function applyThemeToDocument(
     const hslBackground = rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b);
     const isBackgroundDark = hslBackground.l < 50;
 
-    // Determine accent relative luminance dynamically for accurate perceived human eye brightness contrast
+    // Determine accent relative luminance dynamically for contrast
     const parsedAccent = parseColorToRgb(accent);
     const r = parsedAccent.r / 255;
     const g = parsedAccent.g / 255;
@@ -317,6 +317,71 @@ export function applyThemeToDocument(
     Object.entries(variables).forEach(([key, value]) => {
         root.style.setProperty(key, value);
     });
+}
+
+export function applyCustomThemeToDoc(customColors: any) {
+    if (!customColors) return;
+    const root = document.documentElement;
+    const mapping: Record<string, string> = {
+        "--color-background": customColors.background,
+        "--color-surface": customColors.surface,
+        "--color-surface-alt": customColors.surfaceAlt || customColors.surface,
+        "--color-border": customColors.border,
+        "--color-border-hover": customColors.borderHover || customColors.border,
+        "--color-text": customColors.text,
+        "--color-text-muted": customColors.textMuted,
+        "--color-text-dimmed": customColors.textMuted,
+        "--color-accent": customColors.accent,
+        "--color-accent-hover": customColors.accentHover || customColors.accent,
+        "--color-success": customColors.success || customColors.accent,
+
+        // Also map to reader-overlay specific namespaces
+        "--nt-background": customColors.background,
+        "--nt-surface": customColors.surface,
+        "--nt-surface-alt": customColors.surfaceAlt || customColors.surface,
+        "--nt-border": customColors.border,
+        "--nt-border-hover": customColors.borderHover || customColors.border,
+        "--nt-text": customColors.text,
+        "--nt-text-muted": customColors.textMuted,
+        "--nt-text-dimmed": customColors.textMuted,
+        "--nt-accent": customColors.accent,
+        "--nt-accent-hover": customColors.accentHover || customColors.accent,
+        "--nt-success": customColors.success || customColors.accent,
+    };
+    for (const [prop, val] of Object.entries(mapping)) {
+        if (val) root.style.setProperty(prop, val, 'important');
+    }
+}
+
+export function clearCustomThemeFromDoc() {
+    const root = document.documentElement;
+    const props = [
+        "--color-background",
+        "--color-surface",
+        "--color-surface-alt",
+        "--color-border",
+        "--color-border-hover",
+        "--color-text",
+        "--color-text-muted",
+        "--color-text-dimmed",
+        "--color-accent",
+        "--color-accent-hover",
+        "--color-success",
+        "--nt-background",
+        "--nt-surface",
+        "--nt-surface-alt",
+        "--nt-border",
+        "--nt-border-hover",
+        "--nt-text",
+        "--nt-text-muted",
+        "--nt-text-dimmed",
+        "--nt-accent",
+        "--nt-accent-hover",
+        "--nt-success"
+    ];
+    for (const prop of props) {
+        root.style.removeProperty(prop);
+    }
 }
 
 export function clearThemeOverrides() {

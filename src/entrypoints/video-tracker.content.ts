@@ -116,7 +116,6 @@ const badgeRenderer = new BadgeRenderer(
   }
 );
 
-const boundVideos = new WeakSet<HTMLVideoElement>();
 let trackedVideo: HTMLVideoElement | null = null;
 let currentUrl = '';
 let channelId: string | null = null;
@@ -217,10 +216,25 @@ async function handleBadgeClick() {
   });
 }
 
+// Memory Leak Fix variables to cleanly track/unbind video listeners (Task 7)
+let activeVideoElement: HTMLVideoElement | null = null;
+let boundVideoListeners: Record<string, EventListener> = {};
+
+function unbindActiveVideoListeners() {
+  if (activeVideoElement) {
+    for (const [event, listener] of Object.entries(boundVideoListeners)) {
+      activeVideoElement.removeEventListener(event, listener);
+    }
+    boundVideoListeners = {};
+    activeVideoElement = null;
+  }
+}
+
 const attach = (vid: HTMLVideoElement) => {
   if (isYouTubeShorts()) {
     engine.flushPlayClock();
     document.getElementById('nt-status-badge')?.remove();
+    unbindActiveVideoListeners();
     trackedVideo = null;
     return;
   }
@@ -242,7 +256,11 @@ const attach = (vid: HTMLVideoElement) => {
     engine.finalizeSession(currentUrl);
   }
 
+  // Clean up prior event listeners before mapping new ones (Task 7 Fix)
+  unbindActiveVideoListeners();
+
   trackedVideo = vid;
+  activeVideoElement = vid;
   currentUrl = cleanedHref;
   channelId = null;
   cachedChannelName = '';
@@ -250,6 +268,88 @@ const attach = (vid: HTMLVideoElement) => {
   document.getElementById('nt-status-badge')?.remove();
 
   engine.initSession(currentUrl, 0);
+
+  // Define named event references for precise GC tracking and teardown (Task 7 Fix)
+  const onPlaying = () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.startPlayClock();
+  };
+
+  const onPlay = () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.startPlayClock();
+    if (vid.currentTime < 5) engine.setHasTriggered(false);
+  };
+
+  const onPause = () => { engine.flushPlayClock(); };
+  const onWaiting = () => { engine.flushPlayClock(); };
+  const onSeeking = () => { engine.flushPlayClock(); };
+
+  const onSeeked = () => {
+    if (isYouTubeShorts()) return;
+    if (vid.currentTime < 5) engine.setHasTriggered(false);
+    if (!vid.paused && !vid.ended && !isAdPlaying()) {
+      engine.startPlayClock();
+    }
+  };
+
+  const onTimeUpdate = async () => {
+    if (isYouTubeShorts()) return;
+    const now = performance.now();
+    if (now - lastTickTime < 1000) return;
+    lastTickTime = now;
+
+    if (isAdPlaying()) {
+      engine.flushPlayClock(true);
+      document.getElementById('nt-status-badge')?.remove();
+      return;
+    }
+
+    await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
+  };
+
+  const onEnded = async () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.flushPlayClock();
+    if (engine.getHasTriggered()) return;
+
+    resolvePageLanguageAndType();
+    const skipMusic = isMusicVideoCached && !cachedConfig.logMusicVideos;
+
+    if (isJapaneseVideoCached && !skipMusic && engine.reachedQueueThreshold(cachedConfig, vid)) {
+      await engine.finalizeSession(currentUrl);
+      resetSession();
+    }
+  };
+
+  const onEmptied = async () => {
+    engine.flushPlayClock();
+    const urlNow = cleanUrl(window.location.href);
+    if (urlNow !== currentUrl) {
+      resolvePageLanguageAndType();
+      if (!engine.getHasTriggered() && engine.getWatchedSecs() >= 1 && isJapaneseVideoCached && !isMusicVideoCached && !isYouTubeShorts()) {
+        await engine.finalizeSession(currentUrl);
+      }
+      resetSession();
+      document.getElementById('nt-status-badge')?.remove();
+    }
+  };
+
+  boundVideoListeners = {
+    playing: onPlaying,
+    play: onPlay,
+    pause: onPause,
+    waiting: onWaiting,
+    seeking: onSeeking,
+    seeked: onSeeked,
+    timeupdate: onTimeUpdate,
+    ended: onEnded,
+    emptied: onEmptied
+  };
+
+  for (const [event, listener] of Object.entries(boundVideoListeners)) {
+    vid.addEventListener(event, listener);
+  }
 
   if (!vid.paused && !vid.ended && !isAdPlaying()) {
     engine.startPlayClock();
@@ -298,84 +398,6 @@ const attach = (vid: HTMLVideoElement) => {
       handleBadgeClick
     );
   })();
-
-  if (boundVideos.has(vid)) {
-    if (!vid.paused && !vid.ended && !isAdPlaying()) {
-      engine.startPlayClock();
-    }
-    return;
-  }
-  boundVideos.add(vid);
-
-  if (!vid.paused && !vid.ended && !isAdPlaying()) {
-    engine.startPlayClock();
-  }
-
-  vid.addEventListener('playing', () => {
-    if (isAdPlaying() || isYouTubeShorts()) return;
-    engine.startPlayClock();
-  });
-
-  vid.addEventListener('play', () => {
-    if (isAdPlaying() || isYouTubeShorts()) return;
-    engine.startPlayClock();
-    if (vid.currentTime < 5) engine.setHasTriggered(false);
-  });
-
-  const stopClock = () => { engine.flushPlayClock(); };
-  vid.addEventListener('pause', stopClock);
-  vid.addEventListener('waiting', stopClock);
-  vid.addEventListener('seeking', stopClock);
-
-  vid.addEventListener('seeked', () => {
-    if (isYouTubeShorts()) return;
-    if (vid.currentTime < 5) engine.setHasTriggered(false);
-    if (!vid.paused && !vid.ended && !isAdPlaying()) {
-      engine.startPlayClock();
-    }
-  });
-
-  vid.addEventListener('timeupdate', async () => {
-    if (isYouTubeShorts()) return;
-    const now = performance.now();
-    if (now - lastTickTime < 1000) return;
-    lastTickTime = now;
-
-    if (isAdPlaying()) {
-      engine.flushPlayClock(true);
-      document.getElementById('nt-status-badge')?.remove();
-      return;
-    }
-
-    await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
-  });
-
-  vid.addEventListener('ended', async () => {
-    if (isAdPlaying() || isYouTubeShorts()) return;
-    engine.flushPlayClock();
-    if (engine.getHasTriggered()) return;
-
-    resolvePageLanguageAndType();
-    const skipMusic = isMusicVideoCached && !cachedConfig.logMusicVideos;
-
-    if (isJapaneseVideoCached && !skipMusic && engine.reachedQueueThreshold(cachedConfig, vid)) {
-      await engine.finalizeSession(currentUrl);
-      resetSession();
-    }
-  });
-
-  vid.addEventListener('emptied', async () => {
-    engine.flushPlayClock();
-    const urlNow = cleanUrl(window.location.href);
-    if (urlNow !== currentUrl) {
-      resolvePageLanguageAndType();
-      if (!engine.getHasTriggered() && engine.getWatchedSecs() >= 1 && isJapaneseVideoCached && !isMusicVideoCached && !isYouTubeShorts()) {
-        await engine.finalizeSession(currentUrl);
-      }
-      resetSession();
-      document.getElementById('nt-status-badge')?.remove();
-    }
-  });
 };
 
 function isPlaylistOrPodcastPage(): boolean {
@@ -634,6 +656,7 @@ export default defineContentScript({
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
       engine.flushPlayClock();
+      unbindActiveVideoListeners(); // Clean up prior listeners immediately when switching videos (Task 7 Fix)
       trackedVideo = null;
     });
 
