@@ -4,13 +4,13 @@ import { applyThemeToDocument, applyCustomThemeToDoc, clearCustomThemeFromDoc, p
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
-const THEME_DETECTION_CACHE_TTL = 1500; // ms
+const THEME_DETECTION_CACHE_TTL = 100; // ms (Responsive refresh)
 
 /* Throttled accent search to shield CPU on translation mutations */
 let _cachedAccentColor: string | null = null;
 let _isAccentCached = false;
 let _lastAccentCheckTime = 0;
-const ACCENT_CACHE_TTL = 10000; // 10 seconds cache
+const ACCENT_CACHE_TTL = 100; // ms (Responsive refresh)
 
 export { applyCustomThemeToDoc, clearCustomThemeFromDoc };
 
