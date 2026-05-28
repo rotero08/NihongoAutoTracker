@@ -64,6 +64,9 @@ let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
+let _lastRecalculateTime = 0;
+const RECALCULATE_THROTTLE_MS = 250; // Throttles layout calculation to avoid dropped frames on active scrolling
+
 // Track to verify if our local session has successfully synced to standard storage queues (Sync Fix)
 let hasSyncedThisSession = false;
 
@@ -554,6 +557,17 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
 
 function recalculateChars() {
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
+
+  const now = Date.now();
+  if (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS) {
+    // Schedule a delayed execution if we throttled it, to guarantee we catch the final state
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      recalculateChars();
+    }, RECALCULATE_THROTTLE_MS);
+    return;
+  }
+  _lastRecalculateTime = now;
 
   if (!isReadingViewActive()) {
     ttuState.running = false;

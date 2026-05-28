@@ -160,7 +160,22 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
     const defaultVal = { r: 7, g: 7, b: 14 };
     if (!colorStr) return defaultVal;
 
-    const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    let val = colorStr.trim();
+
+    // Recursively resolve var(...) references if running inside a DOM environment
+    if (typeof window !== 'undefined' && val.startsWith('var(')) {
+        const match = val.match(/var\((--[^,)]+)/);
+        if (match) {
+            const varName = match[1].trim();
+            const resolved = window.getComputedStyle(document.documentElement).getPropertyValue(varName).trim() ||
+                window.getComputedStyle(document.body).getPropertyValue(varName).trim();
+            if (resolved && resolved !== val) {
+                return parseColorToRgb(resolved);
+            }
+        }
+    }
+
+    const rgbMatch = val.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
     if (rgbMatch) {
         return {
             r: parseInt(rgbMatch[1], 10),
@@ -169,8 +184,8 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
         };
     }
 
-    if (colorStr.startsWith('#')) {
-        let hex = colorStr.slice(1);
+    if (val.startsWith('#')) {
+        let hex = val.slice(1);
         if (hex.length === 3) {
             hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
         }

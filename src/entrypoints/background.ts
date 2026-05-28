@@ -10,7 +10,7 @@
 
 import { defineBackground } from '#imports';
 import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
-import { notify } from '@/lib/api/youtube';
+import { notify } from '@/lib/utils/toast';
 import { JP_ALL_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
@@ -19,8 +19,8 @@ import { storage } from 'wxt/utils/storage';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 
 export default defineBackground(() => {
-  // Gracefully fall back to browserAction if action is undefined (supports Manifest V2 in Firefox)
-  const actionAPI = browser.action || (browser as any).browserAction;
+  // Use WXT's normalized action API which unifies Manifest V2 and Manifest V3 environments
+  const actionAPI = browser.action;
 
   /* ── Context Menu Creation ──────────────────────────────────────────────── */
 

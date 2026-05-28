@@ -43,7 +43,6 @@ export interface TrackerConfig {
 
   /* ── Auto-Send Queue Settings ── */
   autoSendEndOfDay?: boolean;
-  warnUntracked?: boolean;
   warnSendAll?: boolean;
   debugMode?: boolean;
 
@@ -159,21 +158,6 @@ export interface DebugLogEntry {
   message: string;
   data?: string;
   timestamp: string;
-}
-
-/* ── TTU Reader Variables ── */
-export interface TTULinkedBook {
-  title?: string;
-  mediaId: string | number;
-  mediaData: ReadingMediaData;
-  volume: number;
-}
-
-export interface TTUHistorySession {
-  id: string;
-  date: string;
-  timeMs: number;
-  chars: number;
 }
 
 /* ── Theme Compilation Colors ── */

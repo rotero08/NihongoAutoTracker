@@ -22,10 +22,8 @@
         isSilentGraceActive,
     } = $props();
 
-    // Reactive Svelte States (Synchronized with global plain proxies)
-    let running = $state(false);
-    let timeMs = $state(0);
-    let chars = $state(0);
+    // Trigger state to handle reactivity for non-reactive outside mutations (like setInterval)
+    let updateTick = $state(0);
 
     // Search, Linked Media, and History States
     let isDropdownOpen = $state(false);
@@ -59,13 +57,23 @@
     let cachedHistoryChars = $derived(
         pastSessions.reduce((acc, s) => acc + s.chars, 0),
     );
-    let totalMins = $derived(cachedHistoryMins + Math.floor(timeMs / 60000));
-    let totalChars = $derived(cachedHistoryChars + chars);
+    let totalMins = $derived(
+        updateTick >= 0
+            ? cachedHistoryMins + Math.floor(ttuState.timeMs / 60000)
+            : 0,
+    );
+    let totalChars = $derived(
+        updateTick >= 0 ? cachedHistoryChars + ttuState.chars : 0,
+    );
     let sessSpeed = $derived(
-        timeMs > 0 ? Math.round((chars / (timeMs / 60000)) * 60) : 0,
+        updateTick >= 0 && ttuState.timeMs > 0
+            ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60)
+            : 0,
     );
     let totSpeed = $derived(
-        totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0,
+        updateTick >= 0 && totalMins > 0
+            ? Math.round((totalChars / totalMins) * 60)
+            : 0,
     );
 
     // Dynamic Svelte State to Sync Config instantly without Reloads
@@ -95,9 +103,7 @@
     onMount(() => {
         readerConfig = getCurrentReaderConfig();
         const handleLinkerRefresh = () => {
-            running = ttuState.running;
-            timeMs = ttuState.timeMs;
-            chars = ttuState.chars;
+            updateTick++;
             readerConfig = getCurrentReaderConfig(); // Sync reader config immediately on change events
             refreshLinkerUI();
         };
@@ -260,9 +266,7 @@
                 }
                 await updateHistoryData();
                 await refreshLinkerUI();
-                running = ttuState.running;
-                timeMs = ttuState.timeMs;
-                chars = ttuState.chars;
+                updateTick++;
             }
         }, 280);
     }
@@ -285,7 +289,6 @@
     function toggleTimer() {
         const wasRunning = ttuState.running;
         ttuState.running = !ttuState.running;
-        running = ttuState.running;
 
         if (ttuState.running) {
             const currentCount = extractTTUCharCount()
@@ -300,8 +303,7 @@
         } else if (wasRunning) {
             stateRefs.globalLastTick = Date.now();
         }
-        timeMs = ttuState.timeMs;
-        chars = ttuState.chars;
+        updateTick++;
     }
 
     function resetSession(e: MouseEvent) {
@@ -319,17 +321,14 @@
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
 
-        // Sync back to local reactive state
-        timeMs = 0;
-        chars = 0;
+        updateTick++;
     }
 
     async function handleSaveSession(e: MouseEvent) {
         e.stopPropagation();
         await saveSessionAndQueue();
         await updateHistoryData();
-        timeMs = ttuState.timeMs;
-        chars = ttuState.chars;
+        updateTick++;
     }
 
     async function handleDirectSend(e: MouseEvent) {
@@ -351,9 +350,8 @@
                 showToast("Success", "Logged directly to Nihongo Tracker!");
                 ttuState.timeMs = 0;
                 ttuState.chars = 0;
-                timeMs = 0;
-                chars = 0;
                 await updateHistoryData();
+                updateTick++;
             } else {
                 showToast("Error", "Direct send failed");
             }
@@ -560,7 +558,7 @@
         }
         if (ms >= 0) {
             ttuState.timeMs = ms;
-            timeMs = ms;
+            updateTick++;
         }
     }
 
@@ -586,7 +584,7 @@
             if (diff < 0) diff = 0;
             stateRefs.globalManualCharOffset = val - diff;
             ttuState.chars = val;
-            chars = val;
+            updateTick++;
         }
     }
 
@@ -678,8 +676,7 @@
                     stateRefs.lastSectionTotal = 0;
                     stateRefs.visitedSections.clear();
 
-                    timeMs = 0;
-                    chars = 0;
+                    updateTick++;
                 }
             }
             await refreshLinkerUI(true);
@@ -774,7 +771,9 @@
     <svg viewBox="0 0 24 24" fill="currentColor">
         <path
             id="nt-ttu-main-icon-path"
-            d={running ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z" : "M8 5v14l11-7z"}
+            d={ttuState.running
+                ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
+                : "M8 5v14l11-7z"}
             style="fill: currentColor !important;"
         />
     </svg>
@@ -808,7 +807,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-time"
                         onclick={startTimeEdit}
-                        title="Edit">{fmt(timeMs)}</button
+                        title="Edit">{fmt(ttuState.timeMs)}</button
                     >
                 {/if}
             </div>
@@ -836,7 +835,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-chars"
                         onclick={startCharsEdit}
-                        title="Edit">{chars}</button
+                        title="Edit">{ttuState.chars}</button
                     >
                 {/if}
             </div>
@@ -852,11 +851,11 @@
                 class="nt-ttu-btn-icon"
                 id="nt-ttu-btn-toggle"
                 onclick={toggleTimer}
-                title={running ? "Pause Timer" : "Start Timer"}
+                title={ttuState.running ? "Pause Timer" : "Start Timer"}
             >
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path
-                        d={running
+                        d={ttuState.running
                             ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
                             : "M8 5v14l11-7z"}
                         style="fill: currentColor !important;"

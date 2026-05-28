@@ -259,24 +259,80 @@ export function showToast(title: string, msg: string, err = false): void {
 }
 
 /**
- * System-wide user notification helper (Task 4).
- * Safely resolves browser and chrome contexts from globalThis to satisfy compilation parameters.
+ * System-wide user notification helper (Task 1 & 4).
+ * Combines OS-level browser notifications with contextual page-level DOM toasts.
  */
 export function notify(title: string, message: string): void {
-  const browserAPI = typeof (globalThis as any).browser !== 'undefined'
-    ? (globalThis as any).browser
-    : (typeof (globalThis as any).chrome !== 'undefined' ? (globalThis as any).chrome : null);
+  try {
+    const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
+    const hasDocument = typeof document !== 'undefined';
 
-  if (browserAPI && browserAPI.notifications && typeof browserAPI.notifications.create === 'function') {
-    browserAPI.notifications.create({
-      type: 'basic',
-      iconUrl: browserAPI.runtime?.getURL('/assets/icon-128.png') || browserAPI.runtime?.getURL('/icon/128.png') || '',
-      title,
-      message
-    }).catch(() => {
-      showToast(title, message, title.toLowerCase().includes('error') || title.toLowerCase().includes('fail'));
-    });
-  } else {
-    showToast(title, message, title.toLowerCase().includes('error') || title.toLowerCase().includes('fail'));
+    // 1. Direct local rendering if running inside a context with active DOM (settings, popup, content script)
+    if (hasDocument) {
+      showToast(title, message, isError);
+    }
+
+    // 2. Direct browser/chrome notification creation if permissions and API are available
+    if (typeof browser !== 'undefined') {
+      if (browser.notifications && typeof browser.notifications.create === 'function') {
+        // Safe casting parameter with 'as any' to avoid WXT PublicPath type mismatches
+        const iconUrl = browser.runtime?.getURL('/assets/icon-128.png' as any) || browser.runtime?.getURL('/icon/128.png' as any) || '';
+        browser.notifications.create({
+          type: 'basic',
+          iconUrl,
+          title,
+          message
+        }).catch(() => {
+          // Fall back to tab message relay if OS notifications fail
+          relayToastToActiveTab(title, message, isError);
+        });
+        return;
+      }
+
+      // 3. Fallback: Relay the notification to the active tab's content script to render an in-page toast
+      relayToastToActiveTab(title, message, isError);
+    }
+  } catch (_err) {
+    // Safe guard: notification system must remain completely non-throwing
   }
+}
+
+function relayToastToActiveTab(title: string, message: string, isError: boolean) {
+  if (typeof browser === 'undefined' || !browser.tabs || !browser.tabs.query) {
+    if (browser.runtime?.sendMessage) {
+      browser.runtime.sendMessage({ action: 'NOTIFY', title, message }).catch(() => null);
+    }
+    return;
+  }
+
+  browser.tabs.query({ active: true, currentWindow: true })
+    .then((tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id) return;
+      const url = tab.url || "";
+
+      // Bypass restricted browser-specific page boundaries
+      const isRestricted =
+        url.startsWith('chrome://') ||
+        url.startsWith('about:') ||
+        url.startsWith('https://chromewebstore.google.com/') ||
+        url.startsWith('https://addons.mozilla.org/');
+
+      if (isRestricted) return;
+
+      if (browser.scripting && browser.scripting.executeScript && !url.startsWith('chrome-extension://') && !url.startsWith('moz-extension://')) {
+        browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: showToast,
+          args: [title, message, isError]
+        }).catch(() => {
+          if (tab.id) {
+            browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+          }
+        });
+      } else {
+        browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+      }
+    })
+    .catch(() => null);
 }

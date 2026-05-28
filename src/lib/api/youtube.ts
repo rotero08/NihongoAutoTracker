@@ -9,78 +9,10 @@
 
 import { showToast } from '../utils/toast';
 
-/**
- * Send a toast notification that works across extension contexts.
- *
- * From a content script: injects the toast directly into the page DOM.
- * From the background script: uses browser.scripting.executeScript to
- * inject the toast into the active tab.
- * From popup/settings: sends a message to the background to relay.
- *
- * @param title - Notification title (bold text)
- * @param message - Notification body text
- */
-export function notify(title: string, message: string): void {
-  try {
-    const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
+// Export consolidated notify utility to preserve module contract compatibility
+export { notify } from '../utils/toast';
 
-    /* 1. Direct local render if running inside the settings page */
-    if (typeof document !== 'undefined' && window.location.href.includes('settings.html')) {
-      showToast(title, message, isError);
-      return;
-    }
-
-    /* 2. Direct local render if running inside a restricted tab context / extension page */
-    if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
-      browser.tabs
-        .query({ active: true, currentWindow: true })
-        .then((tabs) => {
-          const tab = tabs[0];
-          const tabId = tab?.id;
-          const url = tab?.url || "";
-
-          const isRestricted =
-            url.startsWith('chrome://') ||
-            url.startsWith('about:') ||
-            url.startsWith('https://chromewebstore.google.com/') ||
-            url.startsWith('https://addons.mozilla.org/');
-
-          if (isRestricted) {
-            // Render locally within popup DOM when active tab is a system or local tab
-            if (typeof document !== 'undefined') {
-              showToast(title, message, isError);
-            }
-            return;
-          }
-
-          if (tabId && browser.scripting && browser.scripting.executeScript && !url.startsWith('chrome-extension://') && !url.startsWith('moz-extension://')) {
-            browser.scripting
-              .executeScript({
-                target: { tabId },
-                func: showToast,
-                args: [title, message, isError],
-              })
-              .catch(() => null);
-          } else if (tabId) {
-            browser.tabs
-              .sendMessage(tabId, { action: 'SHOW_TOAST', title, message })
-              .catch(() => null);
-          }
-        })
-        .catch(() => null);
-      return;
-    }
-
-    /* 3. Otherwise, relay through the background script messaging system */
-    if (browser.runtime?.sendMessage) {
-      browser.runtime
-        .sendMessage({ action: 'NOTIFY', title, message })
-        .catch(() => null);
-    }
-  } catch (_e) {
-    /* Notification is best-effort — never throw */
-  }
-}
+const activeHandleFetches = new Map<string, Promise<string | null>>();
 
 /**
  * Fetch video metadata from a YouTube watch page.
@@ -117,7 +49,6 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
 
     /* Extract channel thumbnail from microformat */
     const microformat = data.microformat?.playerMicroformatRenderer || {};
-    const ownerProfile = microformat.ownerProfileUrl || '';
     const channelImage =
       data.endscreen?.endscreenRenderer?.elements?.[0]?.endscreenElementRenderer?.image
         ?.thumbnails?.[0]?.url || '';
@@ -146,16 +77,6 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
  *
  * @returns Channel ID string (e.g., "UCxxxxxx") or null if not found
  */
-// Add these cache containers at the top of the file (outside the function)
-const handleCache = new Map<string, string>();
-const activeHandleFetches = new Map<string, Promise<string | null>>();
-
-/**
- * Extract the YouTube channel ID from the current page's DOM.
- * Looks for the canonical channel URL in various YouTube elements.
- *
- * @returns Channel ID string (e.g., "UCxxxxxx") or null if not found
- */
 export async function getYouTubeChannelId(): Promise<string | null> {
   /* Try the channel link in the owner info section */
   const channelLink = document.querySelector<HTMLAnchorElement>(
@@ -167,14 +88,16 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     const idMatch = href.match(/\/channel\/([^/?]+)/);
     if (idMatch) return idMatch[1];
 
-    /* Handle @handle format — need to resolve to channel ID */
+    /* Handle @handle format — resolve and cache persistently to prevent redundant API fetches */
     const handleMatch = href.match(/\/@([^/?]+)/);
     if (handleMatch) {
       const handle = handleMatch[1];
 
-      // Return from cache if already resolved
-      if (handleCache.has(handle)) {
-        return handleCache.get(handle) || null;
+      // Retrieve persistent handle cache from browser storage with safe assertion to prevent indexing errors
+      const storageData = await browser.storage.local.get('handleCache');
+      const handleCacheObj = (storageData.handleCache || {}) as Record<string, string>;
+      if (handleCacheObj[handle]) {
+        return handleCacheObj[handle];
       }
 
       // Check if there is an active HTTP fetch in progress for this handle
@@ -189,7 +112,9 @@ export async function getYouTubeChannelId(): Promise<string | null> {
           const cidMatch = text.match(/"channelId":"([^"]+)"/);
           if (cidMatch) {
             const channelId = cidMatch[1];
-            handleCache.set(handle, channelId);
+            const freshCache = ((await browser.storage.local.get('handleCache')).handleCache || {}) as Record<string, string>;
+            freshCache[handle] = channelId;
+            await browser.storage.local.set({ handleCache: freshCache });
             return channelId;
           }
         } catch {
