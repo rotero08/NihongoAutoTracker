@@ -56,6 +56,16 @@ export default defineConfig({
   /* ── Svelte integration via WXT module ─────────────────────── */
   modules: ['@wxt-dev/module-svelte'],
 
+  /* ── Svelte Compiler Customizations ────────────────────────── */
+  svelte: {
+    vite: {
+      compilerOptions: {
+        // Disables HMR compilation to prevent SSR/vite-node pre-rendering crashes in dev mode
+        hmr: false,
+      },
+    },
+  },
+
   webExt: {
     // Keep profile changes across restarts for both Firefox and Chromium browsers
     keepProfileChanges: true,

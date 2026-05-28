@@ -3,49 +3,27 @@
  */
 import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
-import { submitLog } from '@/lib/api/nihongotracker';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
-import { videoQueueStorage } from '@/lib/storage/queues';
+import { videoQueueStorage, updateVideoQueueAtomic } from '@/lib/storage/queues';
 import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
-import { applyThemeToDocument, DYNAMIC_LOGO_SVG, getTheme } from '@/lib/ui/themes';
-import { shouldHideBadge } from '@/lib/ui/video-badge';
+import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
-import { isLikelyJapanese, isMusic } from '@/lib/utils/japanese';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
-import { fmtSecs } from '@/lib/utils/time';
 import { cleanUrl } from '@/lib/utils/url';
+import { getActiveVideoAdapter } from '@/lib/adapters/video';
+import { submitLog } from '@/lib/api/nihongotracker';
+import { shouldHideBadge } from '@/lib/ui/video-badge';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,
-  getChannelMediaData,
-  getChannelNameFallback,
-  getYouTubeChannelId
+  getChannelMediaData
 } from '@/lib/utils/youtube-extraction';
+import { PlayerTrackerEngine } from '@/lib/utils/player-tracker-engine';
+import { BadgeRenderer } from '@/lib/utils/badge-renderer';
+import { setSafeHTML } from '@/lib/utils/dom';
 
-/** Helper to securely insert HTML elements bypassing innerHTML strict validator rules */
-function setSafeHTML(el: HTMLElement, html: string) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  el.textContent = '';
-  while (doc.body.firstChild) {
-    el.appendChild(doc.body.firstChild);
-  }
-}
-
-// Bound gradient stops and text fills to theme-controlled properties to natively adapt across light and dark modes
-const inlineLogo = DYNAMIC_LOGO_SVG;
-
-if (typeof browser !== 'undefined' && browser.runtime?.onMessage) {
-  browser.runtime.onMessage.addListener((req: any) => {
-    if (req?.action === 'SHOW_TOAST') {
-      if (window.self !== window.top) return;
-    }
-  });
-}
-
-// Stores bound video contexts to avoid duplicate event listener registration
-const boundVideos = new WeakSet<HTMLVideoElement>();
+let cachedConfig: any = {};
 
 // Cached page-level classification to prevent high-frequency DOM reflows
 let isMusicVideoCached = false;
@@ -54,28 +32,28 @@ let metadataResolved = false;
 let lastAnalyzedUrl = '';
 let lastAnalyzedTitle = '';
 
+function isYouTubeShorts(): boolean {
+  return typeof window !== 'undefined' && window.location.pathname.startsWith('/shorts/');
+}
+
 function resolvePageLanguageAndType() {
   const currentUrl = window.location.href;
   const currentTitle = document.title;
+  const adapter = getActiveVideoAdapter();
+  if (!adapter) return;
 
-  // Re-resolve only if the URL or title shifts
   if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved) {
     return;
   }
 
-  // Prevent caching generic metadata transitions
   const isGenericTitle = currentTitle === 'YouTube' || currentTitle === '';
 
-  isMusicVideoCached = isMusic();
-  isJapaneseVideoCached = isLikelyJapanese();
+  isMusicVideoCached = adapter.isMusic();
+  isJapaneseVideoCached = adapter.isLikelyJapanese();
   lastAnalyzedUrl = currentUrl;
   lastAnalyzedTitle = currentTitle;
 
-  if (!isGenericTitle) {
-    metadataResolved = true;
-  } else {
-    metadataResolved = false;
-  }
+  metadataResolved = !isGenericTitle;
 
   addDebugLog('INFO', 'VideoTracker', 'Resolved video classification metadata', {
     title: currentTitle,
@@ -85,7 +63,6 @@ function resolvePageLanguageAndType() {
   });
 }
 
-/** Detect if an ad is currently playing on the video player (cached 500ms) */
 let _adPlayingCached = false;
 let _adPlayingLastCheck = 0;
 
@@ -96,258 +73,453 @@ function isAdPlaying(): boolean {
 
   const host = window.location.hostname;
   if (host.includes('youtube.com')) {
-    _adPlayingCached = !!document.querySelector('.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+    _adPlayingCached = !!document.querySelector(
+      '.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting'
+    );
     return _adPlayingCached;
   }
   _adPlayingCached = false;
   return false;
 }
 
-function reachedQueueThreshold(cfg: any, liveSecs: number, vid: HTMLVideoElement): boolean {
-  const tType = cfg.queueThresholdType ?? 'time';
-  const tValue = cfg.queueThresholdValue ?? 1;
-  if (tType === 'percent') {
-    if (!vid.duration || vid.duration <= 0) return false;
-    return (vid.currentTime / vid.duration) * 100 >= tValue;
-  }
-  return (liveSecs / 60) >= tValue;
-}
-
-async function upsertQueueLive(secs: number, videoTitle: string, channelName: string, url: string, channelId: string | null, sessionId: string) {
-  const clean = cleanUrl(url);
-  const finalTitle = stripVideoTitle(videoTitle);
-
-  let validChannelName = channelName;
-  if (!validChannelName || validChannelName === finalTitle) {
-    validChannelName = await getChannelNameFallback();
-  }
-
-  const queue = await videoQueueStorage.getValue();
-  const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
-  const mediaData = await getChannelMediaData(channelId, validChannelName);
-
-  await addDebugLog('INFO', 'VideoTracker', `Upserting queue for session`, { secs, url: clean, finalTitle, channelName, channelId });
-
-  if (idx !== -1) {
-    const item = queue[idx] as any;
-    item.sessions = item.sessions || [];
-
-    const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
-    if (sIdx >= 0) {
-      item.sessions[sIdx].secs = secs;
-      item.sessions[sIdx].date = new Date().toISOString();
-    } else {
-      item.sessions.push({ id: sessionId, secs, date: new Date().toISOString() });
-    }
-
-    const completedSecs = item.sessions.reduce((a: number, s: any) => a + s.secs, 0);
-    item.time = Math.max(1, Math.round(completedSecs / 60));
-    item.description = finalTitle;
-    item.contentTitleNative = channelName;
-    if (channelId && !item.channelId) item.channelId = channelId;
-    item.mediaData = { ...(item.mediaData || {}), ...mediaData };
-    item.mediaId = item.mediaData?.channelId || item.channelId || item.mediaId || "web-video";
-    delete item._currentSecs;
-  } else {
-    queue.push({
-      id: crypto.randomUUID(),
-      contentTitleNative: channelName,
-      contentTitleEnglish: clean,
-      time: Math.max(1, Math.round(secs / 60)),
-      date: new Date().toISOString(),
-      private: false, tags: [],
-      description: finalTitle,
-      sessions: [{ id: sessionId, secs, date: new Date().toISOString() }],
+const engine = new PlayerTrackerEngine(
+  (currentSecs, totalSecs) => {
+    if (!trackedVideo || !currentUrl || isYouTubeShorts()) return;
+    badgeRenderer.ensureCounter(
+      currentSecs,
+      totalSecs,
+      currentUrl,
       channelId,
-      mediaId: mediaData?.channelId || channelId || "web-video",
-      mediaData,
-    } as any);
+      cachedChannelName,
+      cachedConfig,
+      trackedVideo,
+      state,
+      handleBadgeClick
+    );
+  },
+  () => resetSession(),
+  () => {
+    resolvePageLanguageAndType();
+    return { isJapanese: isJapaneseVideoCached, isMusic: isMusicVideoCached };
   }
-  await videoQueueStorage.setValue([...queue]);
-  try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length }); } catch { }
-}
+);
 
-async function finalizeSession(secs: number, url: string, sessionId: string) {
-  if (secs < 1) return;
-  const clean = cleanUrl(url);
-  await addDebugLog('INFO', 'VideoTracker', `Finalizing session metrics`, { secs, url: clean, sessionId });
-
-  const queue = await videoQueueStorage.getValue();
-  const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
-  if (idx === -1) return;
-
-  const item = queue[idx] as any;
-  item.sessions = item.sessions || [];
-
-  const sIdx = item.sessions.findIndex((s: any) => s.id === sessionId);
-  if (sIdx >= 0) {
-    item.sessions[sIdx].secs = secs;
-  } else {
-    item.sessions.push({ id: sessionId, secs, date: new Date().toISOString() });
+const badgeRenderer = new BadgeRenderer(
+  (vid) => {
+    const adapter = getActiveVideoAdapter();
+    return adapter ? adapter.getTimestampContainer?.(vid) || null : null;
+  },
+  isAdPlaying,
+  () => {
+    resolvePageLanguageAndType();
+    return { isJapanese: isJapaneseVideoCached, isMusic: isMusicVideoCached };
   }
+);
 
-  item.time = Math.max(1, Math.round(item.sessions.reduce((a: number, s: any) => a + s.secs, 0) / 60));
-  delete item._currentSecs;
+const boundVideos = new WeakSet<HTMLVideoElement>();
+let trackedVideo: HTMLVideoElement | null = null;
+let currentUrl = '';
+let channelId: string | null = null;
+let cachedChannelName = '';
+let lastTickTime = 0;
+const state = { hasTriggered: false, isManualLogging: false };
 
-  await videoQueueStorage.setValue([...queue]);
-  try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length }); } catch { }
-}
+const resetSession = () => {
+  engine.reset();
+  currentUrl = cleanUrl(window.location.href);
+  const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+  if (badgeLabel) badgeLabel.textContent = "0:00";
+};
 
-async function removeFromQueue(url: string) {
-  const clean = cleanUrl(url);
-  const queue = await videoQueueStorage.getValue();
-  const next = queue.filter(q => q.contentTitleEnglish !== clean);
-  if (next.length !== queue.length) {
-    await videoQueueStorage.setValue(next);
-    try { browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: next.length }); } catch { }
-  }
-}
-
-let watchedSecs = 0, completedSessionSecs = 0, lastSyncSecs = 0, lastAutoCheckSecs = 0, _lastCounterPaint = 0;
-let cachedConfig: any = {};
-let playClockStart = -1;
-
-function flushPlayClock(discard = false) {
-  if (playClockStart < 0) return;
-  const elapsed = (performance.now() - playClockStart) / 1000;
-  playClockStart = -1;
-  if (!discard && elapsed > 0 && elapsed < 7200) {
-    watchedSecs += elapsed;
-  }
-}
-
-const getLiveWatched = () => watchedSecs + (playClockStart >= 0 ? (performance.now() - playClockStart) / 1000 : 0);
-const getTotal = () => completedSessionSecs + getLiveWatched();
-
-function getTimestampContainer(vid: HTMLVideoElement): { el: HTMLElement; isFallback: boolean } | null {
-  const host = window.location.hostname;
-  if (host.includes('youtube.com')) {
-    const el = document.querySelector('.ytp-left-controls') as HTMLElement;
-    if (el) return { el, isFallback: false };
-  }
-  if (host.includes('crunchyroll.com')) {
-    const el = document.querySelector('.vmp-controls__left') || document.querySelector('.velocity-controls');
-    if (el) return { el: el as HTMLElement, isFallback: false };
-  }
-  if (host.includes('animekai')) {
-    const el = document.querySelector('.plyr__controls__item.plyr__time--current') || document.querySelector('.jw-controlbar-left-group');
-    if (el) return { el: el as HTMLElement, isFallback: false };
-  }
-  const fallback = document.querySelector('.video-player-container') || document.querySelector('#movie_player') || document.querySelector('.plyr__video-wrapper') || document.querySelector('.jw-media') || vid.parentElement;
-  if (fallback) return { el: fallback as HTMLElement, isFallback: true };
-  return null;
-}
-
-function ensureCounter(currentSecs: number, totalSecs: number, title: string, url: string, channelId: string | null, state: { hasTriggered: boolean; isManualLogging: boolean }, vid: HTMLVideoElement, cfg: any, cachedChannelName: string, onReset: () => void) {
-  let el = document.getElementById('nt-status-badge') as HTMLElement | null;
-
-  // Fast path: if badge exists and we painted less than 500ms ago, update only dynamic texts
-  const now = performance.now();
-  if (el && now - _lastCounterPaint < 500) {
-    const timeLabel = el.querySelector<HTMLElement>('.nt-time-label');
-    if (timeLabel) {
-      const multiSession = totalSecs > currentSecs + 2;
-      const showTotal = cfg.showTotalInBadge ?? true;
-      const currentStr = fmtSecs(currentSecs);
-      timeLabel.textContent = (multiSession && showTotal) ? `${currentStr} / ${fmtSecs(totalSecs)}` : currentStr;
-    }
+async function handleBadgeClick() {
+  if (isYouTubeShorts()) return;
+  const existingPopup = document.getElementById('nt-modal-popup');
+  if (existingPopup) {
+    const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
+    if (typeof closer === 'function') closer(false);
+    else existingPopup.remove();
+    state.isManualLogging = false;
     return;
   }
 
-  resolvePageLanguageAndType();
-  const shouldHide = shouldHideBadge(cfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
-  if (shouldHide) { el?.remove(); return; }
+  if (state.isManualLogging) return;
+  state.isManualLogging = true;
 
-  const multiSession = totalSecs > currentSecs + 2;
-  const showTotal: boolean = cfg.showTotalInBadge ?? true;
-
-  if (!el) {
-    const containerData = getTimestampContainer(vid);
-    if (!containerData) return;
-    el = document.createElement('div');
-    el.id = 'nt-status-badge';
-    el.style.position = 'relative';
-    el.style.cursor = 'pointer';
-
-    el.style.display = 'inline-flex';
-    el.style.alignItems = 'center';
-    el.style.height = '100%';
-    el.style.padding = '0 6px';
-
-    if (containerData.isFallback) el.classList.add('nt-absolute-pill');
-
-    setSafeHTML(el, `<div class="nt-pill-visual-wrapper" style="display:flex; align-items:center; gap:6px; filter:none !important; box-shadow:none !important;">
-    <div class="nt-badge-logo" style="width:18px; height:18px; flex-shrink:0; pointer-events:none; display:flex; align-items:center; justify-content:center; filter:none !important; box-shadow:none !important;">
-    ${inlineLogo}
-    </div>
-    <span class="nt-time-label">0:00</span>
-    </div>`);
-
-    el.onclick = async (e) => {
-      if ((e.target as HTMLElement).closest('#nt-modal-popup')) return;
-      const existingPopup = document.getElementById('nt-modal-popup');
-      if (existingPopup) {
-        const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
-        if (typeof closer === 'function') closer(false);
-        else existingPopup.remove();
-        return;
-      }
-      if (state.isManualLogging) return;
-      state.isManualLogging = true;
-
-      const liveCfg = await configStorage.getValue() as any;
-      const liveShowTotal = liveCfg.showTotalInBadge ?? true;
-      const channelName = cachedChannelName || await getChannelNameFallback();
-
-      let finalTitle = stripVideoTitle(document.title);
-
-      if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-        const data = await fetchYouTubeVideoData(window.location.href);
-        if (data?.video?.title) {
-          finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
-        }
-      }
-
-      addDebugLog('INFO', 'VideoTracker', `Opening Manual Log Overlay`, {
-        videoTitle: finalTitle,
-        currentSecs,
-        totalSecs
-      });
-
-      showNTEditModal(el!, cachedConfig.theme, {
-        channelName,
-        videoTitle: finalTitle,
-        url,
-        totalSecs,
-        videoDurationSecs: vid.duration && !isNaN(vid.duration) && vid.duration > 0 ? vid.duration : totalSecs,
-        showTotal: liveShowTotal,
-        channelId,
-        onToggleShowTotal: async (v) => { const c = await configStorage.getValue() as any; await configStorage.setValue({ ...c, showTotalInBadge: v }); }
-      }, async final => {
-        try {
-          state.hasTriggered = true;
-          const mediaData = await getChannelMediaData(channelId, final.title);
-          const ok = await submitLog({ type: "video", mediaId: mediaData.channelId || channelId || "web-video", description: final.desc, mediaData, episodes: 0, time: Math.floor(final.time), pages: 0, date: final.date || new Date().toISOString(), unknownDate: false });
-          if (ok) {
-            if (final.clearSessions) { await removeFromQueue(url); onReset(); } else state.hasTriggered = false;
-          } else state.hasTriggered = false;
-        } catch (err) { state.hasTriggered = false; }
-      }, (submitted) => { state.isManualLogging = false; if (!submitted) state.hasTriggered = false; });
-    };
-    containerData.el.appendChild(el);
+  const liveCfg = await configStorage.getValue() as any;
+  const liveShowTotal = liveCfg.showTotalInBadge ?? true;
+  const adapter = getActiveVideoAdapter();
+  if (!adapter) {
+    state.isManualLogging = false;
+    return;
   }
 
-  _lastCounterPaint = now;
+  const channelName = cachedChannelName || await adapter.getChannelName();
+  let finalTitle = stripVideoTitle(document.title);
 
-  const timeLabel = el.querySelector<HTMLElement>('.nt-time-label')!;
-  const currentStr = fmtSecs(currentSecs);
-  timeLabel.textContent = (multiSession && showTotal) ? `${currentStr} / ${fmtSecs(totalSecs)}` : currentStr;
-  el.title = 'Log this video manually';
+  if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+    const data = await fetchYouTubeVideoData(window.location.href);
+    if (data?.video?.title) {
+      finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
+    }
+  }
+
+  const badgeEl = document.getElementById('nt-status-badge');
+  if (!badgeEl || !trackedVideo) {
+    state.isManualLogging = false;
+    return;
+  }
+
+  showNTEditModal(badgeEl, cachedConfig.theme, {
+    channelName,
+    videoTitle: finalTitle,
+    url: currentUrl,
+    totalSecs: engine.getTotal(),
+    videoDurationSecs: trackedVideo.duration && !isNaN(trackedVideo.duration) && trackedVideo.duration > 0
+      ? trackedVideo.duration
+      : engine.getTotal(),
+    showTotal: liveShowTotal,
+    channelId,
+    onToggleShowTotal: async (v) => {
+      const c = await configStorage.getValue() as any;
+      await configStorage.setValue({ ...c, showTotalInBadge: v });
+    }
+  }, async final => {
+    try {
+      engine.setHasTriggered(true);
+      const mediaData = await getChannelMediaData(channelId, final.title);
+      const ok = await submitLog({
+        type: "video",
+        mediaId: mediaData.channelId || channelId || "web-video",
+        description: final.desc,
+        mediaData,
+        episodes: 0,
+        time: Math.floor(final.time),
+        pages: 0,
+        date: final.date || new Date().toISOString(),
+        unknownDate: false
+      });
+      if (ok) {
+        if (final.clearSessions) {
+          await updateVideoQueueAtomic(async (queue) => queue.filter(q => q.contentTitleEnglish !== currentUrl));
+          resetSession();
+        } else {
+          engine.setHasTriggered(false);
+        }
+      } else {
+        engine.setHasTriggered(false);
+      }
+    } catch (err) {
+      engine.setHasTriggered(false);
+    }
+  }, (submitted) => {
+    state.isManualLogging = false;
+    if (!submitted) engine.setHasTriggered(false);
+  });
+}
+
+const attach = (vid: HTMLVideoElement) => {
+  if (isYouTubeShorts()) {
+    engine.flushPlayClock();
+    document.getElementById('nt-status-badge')?.remove();
+    trackedVideo = null;
+    return;
+  }
+  const cleanedHref = cleanUrl(window.location.href);
+  const adapter = getActiveVideoAdapter();
+  if (!adapter) return;
+
+  if (currentUrl === cleanedHref && trackedVideo === vid) {
+    return;
+  }
+
+  addDebugLog('INFO', 'VideoTracker', `New Video Context Detected`, { url: cleanedHref });
+
+  document.getElementById('nt-playlist-modal')?.remove();
+  document.getElementById('nt-modal-popup')?.remove();
+
+  engine.flushPlayClock();
+  if (trackedVideo && engine.getWatchedSecs() >= 60 && currentUrl && !engine.getHasTriggered()) {
+    engine.finalizeSession(currentUrl);
+  }
+
+  trackedVideo = vid;
+  currentUrl = cleanedHref;
+  channelId = null;
+  cachedChannelName = '';
+  metadataResolved = false;
+  document.getElementById('nt-status-badge')?.remove();
+
+  engine.initSession(currentUrl, 0);
+
+  if (!vid.paused && !vid.ended && !isAdPlaying()) {
+    engine.startPlayClock();
+  }
+
+  const tryChannel = async () => {
+    const foundId = await adapter.getChannelId();
+    const foundName = await adapter.getChannelName();
+
+    if (foundId && foundId !== channelId) {
+      channelId = foundId;
+      addDebugLog('INFO', 'VideoTracker', `Channel ID Discovered`, { channelId: foundId });
+    }
+
+    if (foundName && foundName !== cachedChannelName) {
+      cachedChannelName = foundName;
+      addDebugLog('INFO', 'VideoTracker', `Channel Name Discovered`, { channelName: foundName });
+    }
+  };
+
+  tryChannel();
+  let pollCount = 0;
+  const poll = setInterval(async () => {
+    await tryChannel();
+    if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
+  }, 500);
+
+  (async () => {
+    const queue = await videoQueueStorage.getValue();
+    const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
+    const completedSessionSecs = existing
+      ? (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0)
+      : 0;
+
+    engine.initSession(currentUrl, completedSessionSecs);
+
+    badgeRenderer.ensureCounter(
+      engine.getLiveWatched(),
+      engine.getTotal(),
+      currentUrl,
+      channelId,
+      cachedChannelName,
+      cachedConfig,
+      vid,
+      state,
+      handleBadgeClick
+    );
+  })();
+
+  if (boundVideos.has(vid)) {
+    if (!vid.paused && !vid.ended && !isAdPlaying()) {
+      engine.startPlayClock();
+    }
+    return;
+  }
+  boundVideos.add(vid);
+
+  if (!vid.paused && !vid.ended && !isAdPlaying()) {
+    engine.startPlayClock();
+  }
+
+  vid.addEventListener('playing', () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.startPlayClock();
+  });
+
+  vid.addEventListener('play', () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.startPlayClock();
+    if (vid.currentTime < 5) engine.setHasTriggered(false);
+  });
+
+  const stopClock = () => { engine.flushPlayClock(); };
+  vid.addEventListener('pause', stopClock);
+  vid.addEventListener('waiting', stopClock);
+  vid.addEventListener('seeking', stopClock);
+
+  vid.addEventListener('seeked', () => {
+    if (isYouTubeShorts()) return;
+    if (vid.currentTime < 5) engine.setHasTriggered(false);
+    if (!vid.paused && !vid.ended && !isAdPlaying()) {
+      engine.startPlayClock();
+    }
+  });
+
+  vid.addEventListener('timeupdate', async () => {
+    if (isYouTubeShorts()) return;
+    const now = performance.now();
+    if (now - lastTickTime < 1000) return;
+    lastTickTime = now;
+
+    if (isAdPlaying()) {
+      engine.flushPlayClock(true);
+      document.getElementById('nt-status-badge')?.remove();
+      return;
+    }
+
+    await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
+  });
+
+  vid.addEventListener('ended', async () => {
+    if (isAdPlaying() || isYouTubeShorts()) return;
+    engine.flushPlayClock();
+    if (engine.getHasTriggered()) return;
+
+    resolvePageLanguageAndType();
+    const skipMusic = isMusicVideoCached && !cachedConfig.logMusicVideos;
+
+    if (isJapaneseVideoCached && !skipMusic && engine.reachedQueueThreshold(cachedConfig, vid)) {
+      await engine.finalizeSession(currentUrl);
+      resetSession();
+    }
+  });
+
+  vid.addEventListener('emptied', async () => {
+    engine.flushPlayClock();
+    const urlNow = cleanUrl(window.location.href);
+    if (urlNow !== currentUrl) {
+      resolvePageLanguageAndType();
+      if (!engine.getHasTriggered() && engine.getWatchedSecs() >= 1 && isJapaneseVideoCached && !isMusicVideoCached && !isYouTubeShorts()) {
+        await engine.finalizeSession(currentUrl);
+      }
+      resetSession();
+      document.getElementById('nt-status-badge')?.remove();
+    }
+  });
+};
+
+function isPlaylistOrPodcastPage(): boolean {
+  const pathname = window.location.pathname;
+  const href = window.location.href;
+
+  const isChannelRoute = pathname.startsWith('/@') ||
+    pathname.startsWith('/channel/') ||
+    pathname.startsWith('/c/') ||
+    pathname.startsWith('/user/');
+
+  if (isChannelRoute && !href.includes('list=')) {
+    return false;
+  }
+
+  return href.includes('list=') ||
+    pathname.startsWith('/playlist') ||
+    !!document.querySelector('ytd-playlist-header-renderer, ytd-playlist-panel-renderer');
+}
+
+function getActivePlaylistContainers(): HTMLElement[] {
+  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) {
+    return [];
+  }
+
+  const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+  const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+  const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
+
+  const containers: HTMLElement[] = [];
+  const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
+  const matches = document.querySelectorAll(selectors);
+
+  for (let i = 0; i < matches.length; i++) {
+    const el = matches[i];
+    if (el instanceof HTMLElement) {
+      if (el.offsetWidth > 0 || el.offsetHeight > 0) {
+        containers.push(el);
+      }
+    }
+  }
+  return containers;
+}
+
+function runPlaylistInjection(): boolean {
+  if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || isYouTubeShorts()) {
+    return false;
+  }
+
+  const targets = getActivePlaylistContainers();
+  if (targets.length === 0) {
+    return false;
+  }
+
+  let injectedAny = false;
+
+  for (const targetContainer of targets) {
+    if (targetContainer.querySelector('.nt-playlist-logger')) {
+      injectedAny = true;
+      continue;
+    }
+
+    try {
+      const btn = document.createElement('button');
+      btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
+      setSafeHTML(btn, `
+        <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)">
+          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/>
+        </svg>
+      `);
+
+      Object.assign(btn.style, {
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        margin: '0 4px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '40px',
+        height: '40px',
+        borderRadius: '50%',
+        transition: 'background-color 0.2s',
+        filter: 'none !important',
+        boxShadow: 'none !important',
+        flexShrink: '0'
+      });
+
+      btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+      btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
+      btn.onclick = (e) => {
+        e.stopPropagation();
+
+        const existingPlaylistModal = document.getElementById('nt-playlist-modal');
+        if (existingPlaylistModal) {
+          const closer = (existingPlaylistModal as any).__ntCloseModal as (() => void) | undefined;
+          if (typeof closer === 'function') closer();
+          else existingPlaylistModal.remove();
+          return;
+        }
+
+        const isInline = targetContainer.closest('ytd-playlist-panel-renderer') !== null;
+        showPlaylistSelectorModal(btn, isInline, cachedConfig.theme);
+      };
+
+      const overflowNode = targetContainer.querySelector(
+        'yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child'
+      );
+      if (overflowNode && overflowNode.parentElement === targetContainer) {
+        targetContainer.insertBefore(btn, overflowNode);
+      } else {
+        targetContainer.appendChild(btn);
+      }
+      injectedAny = true;
+    } catch (err) {
+      addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
+    }
+  }
+
+  return injectedAny;
+}
+
+function runVideoInjection() {
+  if (isYouTubeShorts()) {
+    document.getElementById('nt-status-badge')?.remove();
+    return;
+  }
+  const vid = document.querySelector<HTMLVideoElement>('video');
+  if (vid) {
+    try {
+      attach(vid);
+    } catch (err) { }
+  }
 }
 
 export default defineContentScript({
-  matches: ['*://*.youtube.com/*', '*://music.youtube.com/*', '*://*.crunchyroll.com/*', '*://*.animekai.to/*'],
+  matches: [
+    '*://*.youtube.com/*',
+    '*://music.youtube.com/*',
+    '*://*.crunchyroll.com/*',
+    '*://*.animekai.to/*'
+  ],
   cssInjectionMode: 'manifest',
+
   async main() {
     cachedConfig = await configStorage.getValue() || {};
 
@@ -372,390 +544,22 @@ export default defineContentScript({
 
     applyCachedTheme(cachedConfig);
 
-    let currentSessionId = crypto.randomUUID();
-    const state = { hasTriggered: false, isManualLogging: false };
-    let trackedVideo: HTMLVideoElement | null = null;
-    let currentUrl = '', channelId: string | null = null, cachedChannelName = '';
-    let lastTickTime = 0;
-
-    const resetSession = () => {
-      flushPlayClock();
-      watchedSecs = 0; completedSessionSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0;
-      currentSessionId = crypto.randomUUID(); state.hasTriggered = false; state.isManualLogging = false;
-      playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying()) ? performance.now() : -1;
-      const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
-      if (badgeLabel) badgeLabel.textContent = "0:00";
-    };
-
-    const attach = (vid: HTMLVideoElement) => {
-      const cleanedHref = cleanUrl(window.location.href);
-
-      if (currentUrl === cleanedHref && trackedVideo === vid) {
-        return;
+    window.addEventListener('play', (e) => {
+      if (isYouTubeShorts()) return;
+      const target = e.target as HTMLVideoElement;
+      if (target && target.tagName === 'VIDEO') {
+        attach(target);
       }
-
-      addDebugLog('INFO', 'VideoTracker', `New Video Context Detected`, { url: cleanedHref });
-
-      document.getElementById('nt-playlist-modal')?.remove();
-      document.getElementById('nt-modal-popup')?.remove();
-
-      flushPlayClock();
-      if (trackedVideo && watchedSecs >= 60 && currentUrl && !state.hasTriggered) {
-        finalizeSession(watchedSecs, currentUrl, currentSessionId);
-      }
-
-      trackedVideo = vid; currentUrl = cleanedHref; watchedSecs = 0; playClockStart = -1;
-      lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false; state.isManualLogging = false;
-      channelId = null; cachedChannelName = ''; completedSessionSecs = 0;
-      currentSessionId = crypto.randomUUID(); metadataResolved = false; _lastCounterPaint = 0;
-      document.getElementById('nt-status-badge')?.remove();
-
-      // Immediately set the play clock if the video is already actively playing to capture early watch progress
-      if (!vid.paused && !vid.ended && !isAdPlaying()) {
-        playClockStart = performance.now();
-      }
-
-      const tryChannel = async () => {
-        const foundId = await getYouTubeChannelId();
-        const foundName = await getChannelNameFallback();
-
-        if (foundId && foundId !== channelId) {
-          channelId = foundId;
-          addDebugLog('INFO', 'VideoTracker', `Channel ID Discovered`, { channelId: foundId });
-        }
-
-        if (foundName && foundName !== cachedChannelName) {
-          cachedChannelName = foundName;
-          addDebugLog('INFO', 'VideoTracker', `Channel Name Discovered`, { channelName: foundName });
-        }
-      };
-
-      tryChannel();
-      let pollCount = 0;
-      const poll = setInterval(async () => {
-        await tryChannel();
-        if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
-      }, 500);
-
-      (async () => {
-        const queue = await videoQueueStorage.getValue();
-        const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
-        if (existing) completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
-
-        // Instantly generate and inject the counter badge once queue data resolves to prevent UI latency
-        ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cachedConfig, cachedChannelName, resetSession);
-      })();
-
-      // Prevent duplicate event handlers on recycled <video> nodes
-      if (boundVideos.has(vid)) {
-        if (!vid.paused && !vid.ended && !isAdPlaying()) {
-          playClockStart = performance.now();
-        }
-        return;
-      }
-      boundVideos.add(vid);
-
-      if (!vid.paused && !vid.ended && !isAdPlaying()) {
-        playClockStart = performance.now();
-      }
-
-      vid.addEventListener('playing', () => {
-        if (isAdPlaying()) return;
-        playClockStart = performance.now();
-      });
-
-      vid.addEventListener('play', () => {
-        if (isAdPlaying()) return;
-        playClockStart = performance.now();
-        if (vid.currentTime < 5) state.hasTriggered = false;
-      });
-
-      const stopClock = () => { flushPlayClock(); };
-      vid.addEventListener('pause', stopClock);
-      vid.addEventListener('waiting', stopClock);
-      vid.addEventListener('seeking', stopClock);
-
-      vid.addEventListener('seeked', () => {
-        if (vid.currentTime < 5) state.hasTriggered = false;
-        if (!vid.paused && !vid.ended && !isAdPlaying()) {
-          playClockStart = performance.now();
-        }
-      });
-
-      vid.addEventListener('timeupdate', async () => {
-        // Throttle the evaluation tick to at most once per second (1000ms) to reduce CPU cycles
-        const now = performance.now();
-        if (now - lastTickTime < 1000) return;
-        lastTickTime = now;
-
-        if (isAdPlaying()) {
-          flushPlayClock(true);
-          document.getElementById('nt-status-badge')?.remove();
-          return;
-        }
-
-        if (playClockStart < 0 && !vid.paused && !vid.ended) {
-          playClockStart = performance.now();
-        }
-
-        const cfg = cachedConfig;
-        if (!state.hasTriggered) {
-          ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cfg, cachedChannelName, resetSession);
-        }
-        if (state.hasTriggered || vid.duration <= 0 || state.isManualLogging) return;
-
-        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-        const liveSecs = getLiveWatched();
-
-        if (!autoOn && reachedQueueThreshold(cfg, liveSecs, vid) && (liveSecs - lastSyncSecs) >= 10) {
-          lastSyncSecs = liveSecs;
-          resolvePageLanguageAndType();
-
-          // Allow logging music videos if explicitly configured
-          const skipMusic = isMusicVideoCached && !cfg.logMusicVideos;
-          if (isJapaneseVideoCached && !skipMusic) {
-            const chName = cachedChannelName || await getChannelNameFallback();
-            await upsertQueueLive(liveSecs, document.title, chName, currentUrl, channelId, currentSessionId);
-          }
-        }
-
-        if (autoOn && (liveSecs - lastAutoCheckSecs) >= 5) {
-          lastAutoCheckSecs = liveSecs;
-          resolvePageLanguageAndType();
-
-          // Allow logging music videos if explicitly configured
-          const skipMusic = isMusicVideoCached && !cfg.logMusicVideos;
-          if (isJapaneseVideoCached && !skipMusic) {
-            const threshType = cfg.thresholdType ?? 'percent';
-            const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-            const triggered = threshType === 'percent' ? (vid.currentTime / vid.duration) * 100 >= threshValue : (liveSecs / 60) >= threshValue;
-            if (triggered) {
-              state.hasTriggered = true;
-              const sessionMins = Math.max(1, Math.round(liveSecs / 60));
-              const chName = cachedChannelName || await getChannelNameFallback();
-              const mediaData = await getChannelMediaData(channelId, chName);
-              const finalTitle = stripVideoTitle(document.title);
-
-              const ok = await submitLog({
-                type: 'video', mediaId: mediaData.channelId || channelId || "web-video",
-                description: finalTitle, mediaData, time: sessionMins, date: new Date().toISOString(),
-                private: false, episodes: 0, pages: 0, unknownDate: false
-              });
-
-              if (ok) { removeFromQueue(currentUrl); resetSession(); } else state.hasTriggered = false;
-            }
-          }
-        }
-      });
-
-      vid.addEventListener('ended', async () => {
-        if (isAdPlaying()) return;
-        flushPlayClock();
-        if (state.hasTriggered) return;
-        const cfg = cachedConfig;
-        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-        resolvePageLanguageAndType();
-        if (!autoOn && isJapaneseVideoCached && !isMusicVideoCached && reachedQueueThreshold(cfg, watchedSecs, vid)) {
-          await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-          completedSessionSecs += watchedSecs; watchedSecs = 0; currentSessionId = crypto.randomUUID();
-        }
-      });
-
-      vid.addEventListener('emptied', async () => {
-        flushPlayClock();
-        const urlNow = cleanUrl(window.location.href);
-        if (urlNow !== currentUrl) {
-          resolvePageLanguageAndType();
-          if (!state.hasTriggered && watchedSecs >= 1 && isJapaneseVideoCached && !isMusicVideoCached) {
-            await finalizeSession(watchedSecs, currentUrl, currentSessionId);
-          }
-          watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
-          document.getElementById('nt-status-badge')?.remove();
-        }
-      });
-    };
-
-    browser.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes['config']) {
-        configStorage.getValue().then((c: any) => {
-          if (c) {
-            cachedConfig = c;
-            applyCachedTheme(c);
-
-            const badge = document.getElementById('nt-status-badge');
-            if (badge) {
-              resolvePageLanguageAndType();
-              const shouldHide = shouldHideBadge(c, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying();
-              if (shouldHide) {
-                badge.remove();
-              } else {
-                _lastCounterPaint = 0;
-                ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, trackedVideo!, c, cachedChannelName, resetSession);
-              }
-            }
-
-            // Handles live user config adjustments safely
-            if (c.enablePlaylistLogger === false) {
-              document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
-            } else {
-              runPlaylistInjection();
-            }
-          }
-        });
-      }
-      if (area === 'local' && changes['videoQueue']) {
-        const queue = Array.isArray(changes['videoQueue'].newValue) ? changes['videoQueue'].newValue : [];
-        const clean = cleanUrl(window.location.href);
-        if (!queue.some((q: any) => q.contentTitleEnglish === clean)) {
-          completedSessionSecs = 0; watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
-          playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying()) ? performance.now() : -1;
-          const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
-          if (badgeLabel) badgeLabel.textContent = "0:00";
-        }
-      }
-    });
+    }, true);
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;
 
-    /**
-     * Context check to block playlist logger badges from mounting inside generic channel page headers.
-     */
-    function isPlaylistOrPodcastPage(): boolean {
-      const pathname = window.location.pathname;
-      const href = window.location.href;
-
-      // Detect standard YouTube channel routes strictly (starts with /@, /channel/, /c/, /user/)
-      const isChannelRoute = pathname.startsWith('/@') ||
-        pathname.startsWith('/channel/') ||
-        pathname.startsWith('/c/') ||
-        pathname.startsWith('/user/');
-
-      // If viewing a channel route, only allow badge injection if there is an active playlist ID in the URL params
-      if (isChannelRoute && !href.includes('list=')) {
-        return false;
-      }
-
-      // Fallback: permit if the URL indicates playlist structures or a playlist UI is actively present
-      return href.includes('list=') ||
-        pathname.startsWith('/playlist') ||
-        !!document.querySelector('ytd-playlist-header-renderer, ytd-playlist-panel-renderer');
-    }
-
-    /**
-     * Resolves the target playlist header or action button containers strictly within the active visible contexts.
-     */
-    function getActivePlaylistContainers(): HTMLElement[] {
-      if (!isPlaylistOrPodcastPage()) {
-        return [];
-      }
-
-      const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-      const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-      const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
-
-      const containers: HTMLElement[] = [];
-      const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
-      const matches = document.querySelectorAll(selectors);
-
-      for (let i = 0; i < matches.length; i++) {
-        const el = matches[i];
-        if (el instanceof HTMLElement) {
-          if (el.offsetWidth > 0 || el.offsetHeight > 0) {
-            containers.push(el);
-          }
-        }
-      }
-      return containers;
-    }
-
-    /**
-     * Checks and injects the playlist logger button into the active visible containers.
-     */
-    function runPlaylistInjection(): boolean {
-      if (!cachedConfig || cachedConfig.enablePlaylistLogger === false) {
-        return false;
-      }
-
-      const targets = getActivePlaylistContainers();
-      if (targets.length === 0) {
-        return false;
-      }
-
-      let injectedAny = false;
-
-      for (const targetContainer of targets) {
-        if (targetContainer.querySelector('.nt-playlist-logger')) {
-          injectedAny = true;
-          continue;
-        }
-
-        try {
-          const btn = document.createElement('button');
-          btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-          setSafeHTML(btn, `<svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/></svg>`);
-
-          Object.assign(btn.style, {
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            margin: '0 4px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            transition: 'background-color 0.2s',
-            filter: 'none !important',
-            boxShadow: 'none !important',
-            flexShrink: '0'
-          });
-
-          btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
-          btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
-          btn.onclick = (e) => {
-            e.stopPropagation();
-            const isInline = targetContainer.closest('ytd-playlist-panel-renderer') !== null;
-            showPlaylistSelectorModal(btn, isInline, cachedConfig.theme);
-          };
-
-          const overflowNode = targetContainer.querySelector(
-            'yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child'
-          );
-          if (overflowNode && overflowNode.parentElement === targetContainer) {
-            targetContainer.insertBefore(btn, overflowNode);
-          } else {
-            targetContainer.appendChild(btn);
-          }
-          injectedAny = true;
-        } catch (err) {
-          addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
-        }
-      }
-
-      return injectedAny;
-    }
-
-    /**
-     * Helper to run basic video element check
-     */
-    function runVideoInjection() {
-      const vid = document.querySelector<HTMLVideoElement>('video');
-      if (vid) {
-        try {
-          attach(vid);
-        } catch (err) {
-          // Silent catch
-        }
-      }
-    }
-
-    /**
-     * Starts a short-lived MutationObserver on navigation to handle lazy-loaded elements.
-     * The observer runs for up to 10 seconds and then disconnects completely to ensure 0% idle CPU overhead.
-     */
     const startTargetedObserver = () => {
+      if (isYouTubeShorts()) {
+        document.getElementById('nt-status-badge')?.remove();
+        return;
+      }
       if (pageObserver) {
         pageObserver.disconnect();
         pageObserver = null;
@@ -765,9 +569,8 @@ export default defineContentScript({
         pageObserverTimeout = null;
       }
 
-      const currentUrl = window.location.href;
+      const activeUrlOnNavigation = window.location.href;
 
-      // Immediate injection attempts
       runVideoInjection();
       runPlaylistInjection();
 
@@ -775,7 +578,7 @@ export default defineContentScript({
       let rafPending = false;
 
       pageObserver = new MutationObserver((mutations) => {
-        if (window.location.href !== currentUrl) {
+        if (window.location.href !== activeUrlOnNavigation) {
           return;
         }
 
@@ -788,8 +591,6 @@ export default defineContentScript({
             const node = added[j];
             if (node instanceof HTMLElement) {
               const nodeName = node.nodeName;
-              // Check nodeName pattern (contains '-') to quickly identify custom tags (ytd-, yt-) and IDs
-              // of container panels without invoking slower .toLowerCase() or deeper searches on standard nodes.
               if (
                 nodeName.includes('-') ||
                 node.id === 'playlist-action-menu' ||
@@ -804,10 +605,9 @@ export default defineContentScript({
         }
 
         if (!isRelevant) return;
-
         if (rafPending) return;
-        rafPending = true;
 
+        rafPending = true;
         requestAnimationFrame(() => {
           rafPending = false;
           runVideoInjection();
@@ -825,14 +625,6 @@ export default defineContentScript({
       }, 10000);
     };
 
-    window.addEventListener('play', (e) => {
-      const target = e.target as HTMLVideoElement;
-      if (target && target.tagName === 'VIDEO') {
-        attach(target);
-      }
-    }, true);
-
-    // Initial load execution
     startTargetedObserver();
 
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
@@ -841,9 +633,50 @@ export default defineContentScript({
       clearExtractionCaches();
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
-      // Nullify reference on route changes to clear memory and support garbage collection
-      flushPlayClock();
+      engine.flushPlayClock();
       trackedVideo = null;
+    });
+
+    configStorage.watch((newCfg) => {
+      if (newCfg) {
+        cachedConfig = newCfg;
+        applyCachedTheme(newCfg);
+
+        const badge = document.getElementById('nt-status-badge');
+        if (badge && trackedVideo) {
+          resolvePageLanguageAndType();
+          const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();
+          if (shouldHide) {
+            badge.remove();
+          } else {
+            badgeRenderer.ensureCounter(
+              engine.getLiveWatched(),
+              engine.getTotal(),
+              currentUrl,
+              channelId,
+              cachedChannelName,
+              newCfg,
+              trackedVideo,
+              state,
+              handleBadgeClick
+            );
+          }
+        }
+
+        if (newCfg.enablePlaylistLogger === false) {
+          document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
+        } else {
+          runPlaylistInjection();
+        }
+      }
+    });
+
+    videoQueueStorage.watch((queue) => {
+      if (isYouTubeShorts()) return;
+      const clean = cleanUrl(window.location.href);
+      if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
+        resetSession();
+      }
     });
   },
 });

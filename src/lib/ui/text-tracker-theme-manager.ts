@@ -106,6 +106,79 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
   return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
 }
 
+function isValidAccent(rgb: { r: number, g: number, b: number }, isDark: boolean): boolean {
+  const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  if (hsl.s < 15) return false;
+  if (isDark) {
+    return hsl.l > 30 && hsl.l < 90;
+  } else {
+    return hsl.l > 10 && hsl.l < 70;
+  }
+}
+
+function findDOMAccentColor(isDark: boolean): string | null {
+  const selectors = [
+    '.active', '.selected', '.is-active', '.bg-primary', '.text-primary',
+    '[aria-selected="true"]', '.tab-active', '.btn-primary',
+    '.ttu-active', '[class*="active"]', '[class*="selected"]',
+    'a', 'button', 'svg[class*="active"]', 'span[class*="active"]'
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const elements = document.querySelectorAll(selector);
+      for (const el of Array.from(elements)) {
+        const style = window.getComputedStyle(el);
+
+        // Check background-color
+        const bg = style.backgroundColor;
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+          const rgb = parseColorToRgb(bg);
+          if (isValidAccent(rgb, isDark)) {
+            return bg;
+          }
+        }
+
+        // Check color
+        const col = style.color;
+        if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
+          const rgb = parseColorToRgb(col);
+          if (isValidAccent(rgb, isDark)) {
+            return col;
+          }
+        }
+
+        // Check border-color
+        const borderCol = style.borderColor || style.borderTopColor;
+        if (borderCol && borderCol !== 'rgba(0, 0, 0, 0)' && borderCol !== 'transparent') {
+          const rgb = parseColorToRgb(borderCol);
+          if (isValidAccent(rgb, isDark)) {
+            return borderCol;
+          }
+        }
+      }
+    } catch (e) { }
+  }
+
+  const rootStyle = window.getComputedStyle(document.documentElement);
+  const bodyStyle = window.getComputedStyle(document.body);
+  const cssVars = [
+    '--color-accent', '--color-primary', '--accent', '--primary',
+    '--theme-accent', '--theme-primary', '--ttu-accent', '--yatsu-accent'
+  ];
+  for (const cssVar of cssVars) {
+    const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
+    if (val) {
+      const rgb = parseColorToRgb(val);
+      if (isValidAccent(rgb, isDark)) {
+        return val;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function detectReaderThemeColors(): any {
   try {
     const bodyStyle = window.getComputedStyle(document.body);
@@ -147,8 +220,13 @@ export function detectReaderThemeColors(): any {
     let borderHover = isDark ? adjustLightness(shiftedBg, 32) : adjustLightness(shiftedBg, -32);
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
-    let accent = isDark ? 'var(--color-accent, #f0b429)' : 'var(--color-accent, #b45309)';
-    let accentHover = isDark ? 'var(--color-accent-hover, #ffd060)' : 'var(--color-accent-hover, #78350f)';
+    let accent = isDark ? '#f0b429' : '#b45309';
+    const extractedAccent = findDOMAccentColor(isDark);
+    if (extractedAccent) {
+      accent = extractedAccent;
+    }
+    const parsedAccent = parseColorToRgb(accent);
+    let accentHover = isDark ? adjustLightness(parsedAccent, 15) : adjustLightness(parsedAccent, -15);
 
     const greenHsl = {
       h: 135,
@@ -211,6 +289,14 @@ export function updateActiveThemeStyles(themeName: string, cfg: any) {
     applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
     injectThemeStyles(themeName, cfg.font ?? 'sans');
   }
+}
+
+export function applyActiveTheme(cfg: any): Promise<void> {
+  try {
+    const themeName = getActiveThemeName(cfg);
+    updateActiveThemeStyles(themeName, cfg);
+  } catch (e) { }
+  return Promise.resolve();
 }
 
 export function applyCustomThemeToDoc(customColors: any) {

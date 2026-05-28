@@ -4,7 +4,7 @@
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { JP_DOMAINS_DEFAULT, JP_RE } from '@/lib/constants';
+import { JP_DOMAINS_DEFAULT, JP_RE, DEFAULT_TITLE_REGEXES } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
 import { readingQueueStorage } from '@/lib/storage/queues';
@@ -22,7 +22,8 @@ import {
 import {
   getActiveThemeName,
   getReaderConfig,
-  updateActiveThemeStyles
+  updateActiveThemeStyles,
+  applyActiveTheme
 } from '@/lib/ui/text-tracker-theme-manager';
 import { setupTTUChronometerUI } from '@/lib/ui/ttu-chrono';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
@@ -227,8 +228,8 @@ function checkSilentGraceStabilization() {
 }
 
 function setSilentGraceActiveState(active: boolean) {
-  isSilentGraceActive = active;
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  isSilentGraceActive = active;
   if (wrapper) {
     // Triggers a custom event in the UI controller to toggle the plain sync notice (Issue 2 Fix)
     wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
@@ -403,7 +404,7 @@ function getTTUTitle() {
 }
 
 function parseTitleWithConfig(docTitle: string) {
-  return parseTitle(docTitle, currentConfig.titleRegexes);
+  return parseTitle(docTitle, currentConfig.titleRegexes || DEFAULT_TITLE_REGEXES);
 }
 
 // Global cached layout mode tracker to sanitize continuous <-> paginated switches
@@ -1146,7 +1147,7 @@ function startTimeTracker() {
   (window as any).__nt_tracker_session_active_ms__ = {
     getTotal,
     setMs: (ms: number) => { accrue(); activeMs = ms; lastStamp = Date.now(); },
-    pause: (p: boolean) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
+    pause: (p) => { if (p) { accrue(); isPaused = true; } else { lastStamp = Date.now(); isPaused = false; } },
     isPaused: () => isPaused
   };
 }

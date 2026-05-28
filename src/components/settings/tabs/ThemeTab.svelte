@@ -3,8 +3,10 @@
     import { onMount } from "svelte";
     import { configStorage } from "@/lib/storage/config";
     import CustomSelect from "@/components/settings/CustomSelect.svelte";
-    import ThemeEditor from "./theme/ThemeEditor.svelte";
-    import ThemePreview from "./theme/ThemePreview.svelte";
+    import ThemeEditor from "./ThemeEditor.svelte";
+    import ThemePreview from "./ThemePreview.svelte";
+    import ThemePreferences from "./ThemePreferences.svelte";
+    import ReaderOverrides from "./ReaderOverrides.svelte";
     import {
         getTheme,
         applyThemeToDocument,
@@ -72,12 +74,6 @@
     let ttuThemeOverride = $state("global");
     let yatsuThemeOverride = $state("global");
     let yomiyasuThemeOverride = $state("global");
-
-    // Preview & Dropdown Visibility States
-    let templateDropdownOpen = $state(false);
-    let ttuTemplateDropdownOpen = $state(false);
-    let yatsuTemplateDropdownOpen = $state(false);
-    let yomiyasuTemplateDropdownOpen = $state(false);
 
     // Navigation lock state
     let isProceeding = false;
@@ -149,14 +145,6 @@
                   : "",
     );
 
-    let activeTheme = $derived(
-        getTheme(
-            isCustomThemeId(selectedTheme)
-                ? lastActivePresetTheme
-                : selectedTheme,
-        ) || { borderRadius: 6, borderRadiusSmall: 4 },
-    );
-
     function lightenHexColor(hex: string, percent: number): string {
         if (!hex || !hex.startsWith("#")) return hex;
         try {
@@ -181,7 +169,6 @@
         }
     }
 
-    // Resolves the colors of any theme ID (Custom or Preset)
     function getThemeColors(themeId: string): Record<string, string> {
         if (isCustomThemeId(themeId)) {
             const custom = customThemes.find((t) => t.id === themeId);
@@ -206,14 +193,12 @@
         return { ...DEFAULT_CUSTOM_COLORS };
     }
 
-    // Derived modification checker with explicit nested property subscriptions
     function isThemeModified(themeId: string): boolean {
         const theme = customThemes.find((t) => t.id === themeId);
         const draftColors = themeDraftColors[themeId];
         const draftName = themeDraftNames[themeId];
         if (!draftColors || draftName === undefined) return false;
 
-        // Force fine-grained Svelte 5 dependency tracking to capture inner color modifications
         const _trackName = draftName;
         const _trackBackground = draftColors.background;
         const _trackSurface = draftColors.surface;
@@ -227,7 +212,6 @@
         const _trackSuccess = draftColors.success;
 
         if (!theme) {
-            // New unsaved draft - modified if name is typed or colors differ from the fallback preset starting point
             const fallbackPresetId =
                 selectedTheme === themeId
                     ? lastActivePresetTheme
@@ -247,13 +231,6 @@
         );
     }
 
-    // Direct binding focus action helper
-    function autofocus(node: HTMLInputElement) {
-        node.focus();
-        node.select();
-    }
-
-    // Modal confirmation helper styled identical to parent component
     function askConfirmation(title: string, msg: string): Promise<boolean> {
         modalOpen = true;
         modalTitle = title;
@@ -266,83 +243,12 @@
         });
     }
 
-    // Dynamically style and decorate custom options inside dropdown with extreme right deletion cross
-    function decorateDropdownOptions() {
-        const options = document.querySelectorAll(
-            ".select-option, .option, [class*='option']",
-        );
-        options.forEach((opt) => {
-            const text = (opt.textContent || "").replace("✕", "").trim();
-            if (!text) return;
-
-            const isPreset = [
-                "Dark Amber (Default)",
-                "Charcoal Amber",
-                "Deep Ocean Dark",
-                "Nordic Light",
-                "Amethyst Purple",
-                "Use Global Theme",
-                "Match Reader Theme",
-                "Select Color Theme",
-                "Select Font Family",
-                "+ Add custom theme",
-            ].some((preset) => text.startsWith(preset));
-
-            if (
-                !isPreset &&
-                customThemes.some((t) => t.name && text === t.name)
-            ) {
-                if (!opt.querySelector(".dropdown-delete-cross")) {
-                    const textSpan = document.createElement("span");
-                    textSpan.className = "dropdown-option-text";
-                    textSpan.textContent = text;
-                    textSpan.style.overflow = "hidden";
-                    textSpan.style.textOverflow = "ellipsis";
-                    textSpan.style.whiteSpace = "nowrap";
-                    textSpan.style.flex = "1";
-                    textSpan.style.textAlign = "left";
-
-                    opt.innerHTML = "";
-                    opt.appendChild(textSpan);
-
-                    (opt as HTMLElement).style.display = "flex";
-                    (opt as HTMLElement).style.justifyContent = "space-between";
-                    (opt as HTMLElement).style.alignItems = "center";
-                    (opt as HTMLElement).style.width = "100%";
-                    (opt as HTMLElement).style.position = "relative";
-                    (opt as HTMLElement).style.gap = "8px";
-
-                    const cross = document.createElement("span");
-                    cross.className = "dropdown-delete-cross";
-                    cross.textContent = "✕";
-                    cross.style.color = "var(--color-text-muted)";
-                    cross.style.fontSize = "10px";
-                    cross.style.fontWeight = "bold";
-                    cross.style.cursor = "pointer";
-                    cross.style.padding = "2px 4px";
-                    cross.style.marginLeft = "auto";
-                    cross.style.marginRight = "-2px";
-                    cross.style.transition = "color 0.15s";
-
-                    cross.onmouseenter = () =>
-                        (cross.style.color = "var(--color-error, #ff4444)");
-                    cross.onmouseleave = () =>
-                        (cross.style.color = "var(--color-text-muted)");
-
-                    opt.appendChild(cross);
-                }
-            }
-        });
-    }
-
-    // Discard any unsaved theme drafts and revert bindings back to stable selection targets
     function cleanUpUnsavedDrafts() {
         if (
             isCustomThemeId(selectedTheme) &&
             !customThemes.some((t) => t.id === selectedTheme)
         ) {
             selectedTheme = lastActivePresetTheme;
-            clearCustomTheme();
             applyThemeToDocument(
                 lastActivePresetTheme,
                 selectedFont,
@@ -370,19 +276,9 @@
         }
     }
 
-    // Intercept navigation via sidebar clicks and inline custom dropdown deletes
     function handleGlobalClick(e: MouseEvent) {
         const target = e.target as HTMLElement;
 
-        // Close templates dropdown picker on outside clicks
-        if (!target.closest(".custom-select-trigger")) {
-            templateDropdownOpen = false;
-            ttuTemplateDropdownOpen = false;
-            yatsuTemplateDropdownOpen = false;
-            yomiyasuTemplateDropdownOpen = false;
-        }
-
-        // 1. Intercept Sidebar tab switching if there are unsaved changes
         const navItem = target.closest(".nav-item");
         if (navItem && hasUnsavedChanges && !isProceeding) {
             e.preventDefault();
@@ -407,43 +303,8 @@
             });
             return;
         }
-
-        // 2. Intercept click on the '✕' symbol in dropdown options list to trigger Delete
-        if (target.classList.contains("dropdown-delete-cross")) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const optionEl = target.closest(
-                ".select-option, .option, [class*='option']",
-            );
-            if (optionEl) {
-                const text = (optionEl.textContent || "")
-                    .replace("✕", "")
-                    .trim();
-                const matchedTheme = customThemes.find((t) => t.name === text);
-                if (matchedTheme) {
-                    // Force close the dropdown select container before displaying modal
-                    if (document.activeElement instanceof HTMLElement) {
-                        document.activeElement.blur();
-                    }
-                    const dropdownMenu = target.closest(
-                        ".select-dropdown, .dropdown-menu, [class*='dropdown'], [class*='popover']",
-                    );
-                    if (dropdownMenu instanceof HTMLElement) {
-                        dropdownMenu.style.display = "none";
-                    }
-                    document.body.click(); // Close any other custom dropdown overlays gracefully
-                    confirmDeleteTheme(matchedTheme.id);
-                }
-            }
-            return;
-        }
-
-        // Schedule decoration whenever a dropdown may have been rendered
-        setTimeout(decorateDropdownOptions, 30);
     }
 
-    // Keep draft registries in sync reactively
     $effect(() => {
         customThemes.forEach((theme) => {
             if (!themeDraftColors[theme.id]) {
@@ -479,56 +340,14 @@
         }
     }
 
-    function applyCustomTheme(colors: Record<string, string>) {
-        const root = document.documentElement;
-        root.style.setProperty("--color-background", colors.background);
-        root.style.setProperty("--color-surface", colors.surface);
-        root.style.setProperty(
-            "--color-surface-alt",
-            colors.surfaceAlt || colors.surface,
-        );
-        root.style.setProperty("--color-border", colors.border);
-        root.style.setProperty(
-            "--color-border-hover",
-            colors.borderHover || colors.border,
-        );
-        root.style.setProperty("--color-text", colors.text);
-        root.style.setProperty("--color-text-muted", colors.textMuted);
-        root.style.setProperty("--color-text-dimmed", colors.textMuted);
-        root.style.setProperty("--color-accent", colors.accent);
-        root.style.setProperty(
-            "--color-accent-hover",
-            colors.accentHover || colors.accent,
-        );
-        root.style.setProperty("--color-success", colors.success || "#3ddc84");
-    }
-
-    function clearCustomTheme() {
-        const root = document.documentElement;
-        root.style.removeProperty("--color-background");
-        root.style.removeProperty("--color-surface");
-        root.style.removeProperty("--color-surface-alt");
-        root.style.removeProperty("--color-border");
-        root.style.removeProperty("--color-border-hover");
-        root.style.removeProperty("--color-text");
-        root.style.removeProperty("--color-text-muted");
-        root.style.removeProperty("--color-text-dimmed");
-        root.style.removeProperty("--color-accent");
-        root.style.removeProperty("--color-accent-hover");
-        root.style.removeProperty("--color-success");
-    }
-
     function createNewCustomTheme(): string {
-        const newId = "custom_" + Date.now(); // Unified underscore prefix matching parent theme selector config
-
-        // Start custom drafts with the currently selected theme's colors as a template base
+        const newId = "custom_" + Date.now();
         const defaultColors = getThemeColors(selectedTheme);
 
-        // Keep local drafts directly in state only - DO NOT commit to customThemes or storage until clicking save
         themeDraftColors[newId] = defaultColors;
         themeDraftNames[newId] = "";
         triedSavingEmptyName[newId] = false;
-        isCollapsed["global"] = false; // Expanded initially for configuration
+        isCollapsed["global"] = false;
 
         return newId;
     }
@@ -569,7 +388,6 @@
         const cfg = (await configStorage.getValue()) as any;
         cfg.customThemes = $state.snapshot(customThemes);
 
-        // Keep classic storage elements synchronized to maintain complete backward-compatibility
         if (selectedTheme === themeId) {
             cfg.theme = themeId;
             cfg.selectedThemeId = themeId;
@@ -594,7 +412,6 @@
 
         await configStorage.setValue(cfg);
 
-        // Track last active fallback parameters upon successful save
         if (selectedTheme === themeId) {
             lastActivePresetTheme = themeId;
         }
@@ -603,16 +420,13 @@
         if (yomiyasuThemeOverride === themeId)
             lastActiveYomiyasuOverride = themeId;
 
-        // ALWAYS apply base stylesheet attributes BEFORE custom theme variables to prevent browser wiping values
         if (selectedTheme === themeId) {
             applyThemeToDocument("dark-amber", selectedFont, draftColors, {
                 useStaticInPageLogo,
             });
         }
 
-        // Collapse to minuscule header after saving
         isCollapsed["global"] = true;
-
         onStatus(`✓ Theme "${draftName}" Saved`);
     }
 
@@ -633,10 +447,8 @@
             themeDraftNames[themeId] = theme.name;
             triedSavingEmptyName[themeId] = false;
         } else {
-            // New unsaved draft - revert cleans up and restores selection to fallback presets
             if (selectedTheme === themeId) {
                 selectedTheme = lastActivePresetTheme;
-                clearCustomTheme();
                 applyThemeToDocument(
                     lastActivePresetTheme,
                     selectedFont,
@@ -686,7 +498,6 @@
             cfg.theme = "dark-amber";
             cfg.selectedThemeId = undefined;
             cfg.customColors = undefined;
-            clearCustomTheme();
             applyThemeToDocument("dark-amber", selectedFont, undefined, {
                 useStaticInPageLogo,
             });
@@ -716,7 +527,6 @@
         cfg.customThemes = $state.snapshot(customThemes);
         await configStorage.setValue(cfg);
 
-        // Delete from registries
         delete themeDraftColors[themeId];
         delete themeDraftNames[themeId];
         delete triedSavingEmptyName[themeId];
@@ -733,7 +543,6 @@
         }
         customThemes = loadedThemes;
 
-        // Restore active override mappings if present
         ttuThemeOverride =
             cfg.ttuThemeOverrideId ?? cfg.ttuThemeOverride ?? "global";
         yatsuThemeOverride =
@@ -745,14 +554,11 @@
         selectedTheme = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
         selectedFont = cfg.font ?? "sans";
 
-        // Read brand options
         useStaticToolbarIcon = cfg.useStaticToolbarIcon === true;
         useStaticInPageLogo = cfg.useStaticInPageLogo === true;
 
-        // Read popup theme syncing option from storage configuration (defaulting to true)
         syncPopupWithReaderTheme = cfg.syncPopupWithReaderTheme !== false;
 
-        // Cache last active presets and override fallback points
         if (!isCustomThemeId(selectedTheme)) {
             lastActivePresetTheme = selectedTheme;
         } else if (
@@ -793,7 +599,6 @@
             lastActiveYomiyasuOverride = yomiyasuThemeOverride;
         }
 
-        // RECOVER UNCOMMITTED TRANSIENT DRAFTS IF PREVIOUSLY CREATED BUT NEVER SAVED TO STORAGE
         if (
             isCustomThemeId(selectedTheme) &&
             !customThemes.some((t) => t.id === selectedTheme)
@@ -802,49 +607,7 @@
                 themeDraftColors[selectedTheme] = cfg.customColors
                     ? { ...cfg.customColors }
                     : getThemeColors(lastActivePresetTheme);
-            }
-            if (themeDraftNames[selectedTheme] === undefined) {
                 themeDraftNames[selectedTheme] = "";
-            }
-        }
-        if (
-            isCustomThemeId(ttuThemeOverride) &&
-            !customThemes.some((t) => t.id === ttuThemeOverride)
-        ) {
-            if (!themeDraftColors[ttuThemeOverride]) {
-                themeDraftColors[ttuThemeOverride] = cfg.ttuCustomColors
-                    ? { ...cfg.ttuCustomColors }
-                    : getThemeColors(lastActiveTtuOverride);
-            }
-            if (themeDraftNames[ttuThemeOverride] === undefined) {
-                themeDraftNames[ttuThemeOverride] = "";
-            }
-        }
-        if (
-            isCustomThemeId(yatsuThemeOverride) &&
-            !customThemes.some((t) => t.id === yatsuThemeOverride)
-        ) {
-            if (!themeDraftColors[yatsuThemeOverride]) {
-                themeDraftColors[yatsuThemeOverride] = cfg.yatsuCustomColors
-                    ? { ...cfg.yatsuCustomColors }
-                    : getThemeColors(lastActiveYatsuOverride);
-            }
-            if (themeDraftNames[yatsuThemeOverride] === undefined) {
-                themeDraftNames[yatsuThemeOverride] = "";
-            }
-        }
-        if (
-            isCustomThemeId(yomiyasuThemeOverride) &&
-            !customThemes.some((t) => t.id === yomiyasuThemeOverride)
-        ) {
-            if (!themeDraftColors[yomiyasuThemeOverride]) {
-                themeDraftColors[yomiyasuThemeOverride] =
-                    cfg.yomiyasuCustomColors
-                        ? { ...cfg.yomiyasuCustomColors }
-                        : getThemeColors(lastActiveYomiyasuOverride);
-            }
-            if (themeDraftNames[yomiyasuThemeOverride] === undefined) {
-                themeDraftNames[yomiyasuThemeOverride] = "";
             }
         }
 
@@ -873,7 +636,6 @@
                 );
             }
         } else {
-            clearCustomTheme();
             applyThemeToDocument(selectedTheme, selectedFont, undefined, {
                 useStaticInPageLogo,
             });
@@ -885,7 +647,6 @@
             return;
         }
 
-        // Intercept selection transitions and warn users if there are unsaved theme builder changes
         if (
             isCustomThemeId(selectedTheme) &&
             isThemeModified(selectedTheme) &&
@@ -896,7 +657,6 @@
                 "You have unsaved custom theme modifications. Selecting another theme will discard your current edits. Do you want to proceed?",
             );
             if (!confirmed) {
-                // Force select dropdown state back to currently active theme
                 selectedTheme = selectedTheme;
                 return;
             }
@@ -912,7 +672,6 @@
         if (isCustomThemeId(themeName)) {
             const currentTheme = customThemes.find((t) => t.id === themeName);
             if (currentTheme) {
-                // Only commit saved custom themes to config storage
                 const cfg = (await configStorage.getValue()) as any;
                 cfg.theme = themeName;
                 cfg.selectedThemeId = themeName;
@@ -926,7 +685,6 @@
                     { useStaticInPageLogo },
                 );
             } else {
-                // Keep draft strictly local in Svelte state to prevent global applicator from reverting layout
                 applyThemeToDocument(
                     lastActivePresetTheme,
                     selectedFont,
@@ -943,7 +701,6 @@
             cfg.customThemes = $state.snapshot(customThemes);
             await configStorage.setValue(cfg);
             lastActivePresetTheme = themeName;
-            clearCustomTheme();
             applyThemeToDocument(themeName, selectedFont, undefined, {
                 useStaticInPageLogo,
             });
@@ -995,7 +752,6 @@
                   ? yatsuThemeOverride
                   : yomiyasuThemeOverride;
 
-        // Intercept reader dropdown transitions and warn if there are unsaved override draft edits
         if (
             isCustomThemeId(currentOverride) &&
             isThemeModified(currentOverride) &&
@@ -1020,7 +776,6 @@
         if (reader === "yatsu") yatsuThemeOverride = themeName;
         if (reader === "yomiyasu") yomiyasuThemeOverride = themeName;
 
-        // Track fallback override points for dropdown label display
         if (!isCustomThemeId(themeName)) {
             if (reader === "ttu") lastActiveTtuOverride = themeName;
             if (reader === "yatsu") lastActiveYatsuOverride = themeName;
@@ -1035,7 +790,6 @@
             }
         }
 
-        // Commit modifications to storage only if this selection is a preset or a fully saved custom theme
         const currentTheme = customThemes.find((t) => t.id === themeName);
         if (!isCustomThemeId(themeName) || currentTheme) {
             const cfg = (await configStorage.getValue()) as any;
@@ -1101,24 +855,10 @@
             useStaticToolbarIcon: undefined,
             useStaticInPageLogo: undefined,
         });
-        clearCustomTheme();
         applyThemeToDocument("dark-amber", "sans", undefined, {
             useStaticInPageLogo: false,
         });
         onStatus("✓ Appearance Defaults Restored");
-    }
-
-    function handleColorChange(themeId: string, key: string) {
-        // Automatically calculate and update accentHover as a starting template draft helper only when modifying the accent color
-        if (key === "accent") {
-            const draftColors = themeDraftColors[themeId];
-            if (draftColors && draftColors.accent) {
-                draftColors.accentHover = lightenHexColor(
-                    draftColors.accent,
-                    12,
-                );
-            }
-        }
     }
 
     function handleCollapse(context: string) {
@@ -1149,12 +889,7 @@
         isCollapsed[context] = true;
     }
 
-    function handleCollapseForced(context: string) {
-        isCollapsed[context] = true;
-    }
-
     function handleUncollapse(context: string) {
-        // Exclusive collapse: close all other editors when expanding a new one
         Object.keys(isCollapsed).forEach((k) => {
             isCollapsed[k] = true;
         });
@@ -1167,8 +902,8 @@
         await configStorage.setValue(cfg);
         onStatus(
             syncPopupWithReaderTheme
-                ? "✓ Theme Sync with Popup enabled"
-                : "✓ Theme Sync with Popup disabled",
+                ? "✓ Popup theme sync with reader enabled"
+                : "✓ Popup theme sync with reader disabled",
         );
     }
 
@@ -1190,7 +925,6 @@
         cfg.useStaticInPageLogo = val;
         await configStorage.setValue(cfg);
 
-        // Reapply theme to immediately update the visual look of current logos
         const currentColors = getThemeColors(selectedTheme);
         applyThemeToDocument(
             isCustomThemeId(selectedTheme) ? "dark-amber" : selectedTheme,
@@ -1211,7 +945,6 @@
         window.addEventListener("beforeunload", onBeforeUnload);
         window.addEventListener("click", handleGlobalClick, true);
 
-        // Reactively synchronize interface options when changed elsewhere (e.g. from Popup)
         const storageListener = (changes: any, area: string) => {
             if (area === "local" && changes["config"]) {
                 const val = changes["config"].newValue as any;
@@ -1302,7 +1035,6 @@
                         lastActiveYomiyasuOverride = yomiyasuThemeOverride;
                     }
 
-                    // Keep local draft configurations loaded reactively if storage change triggered updates
                     if (
                         isCustomThemeId(nextTheme) &&
                         !customThemes.some((t) => t.id === nextTheme)
@@ -1341,7 +1073,6 @@
                             );
                         }
                     } else {
-                        clearCustomTheme();
                         applyThemeToDocument(
                             nextTheme,
                             selectedFont,
@@ -1357,7 +1088,6 @@
         };
         browser.storage.onChanged.addListener(storageListener);
 
-        // Dynamically widen the settings page container so split panels sit separated
         const mainContainer = document.querySelector(".main") as HTMLElement;
         if (mainContainer) {
             mainContainer.style.setProperty("max-width", "1100px", "important");
@@ -1366,7 +1096,7 @@
         return () => {
             window.removeEventListener("beforeunload", onBeforeUnload);
             window.removeEventListener("click", handleGlobalClick, true);
-            browser.storage.onChanged.addListener(storageListener);
+            browser.storage.onChanged.removeListener(storageListener);
             if (mainContainer) {
                 mainContainer.style.removeProperty("max-width");
             }
@@ -1374,9 +1104,7 @@
     });
 </script>
 
-<!-- Outer Flexbox Container establishing a true split column layout -->
 <div style="display: flex; gap: 32px; align-items: flex-start; width: 100%;">
-    <!-- Left form column (containing configurations locked to 600px maximum width) -->
     <div
         style="width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 24px; min-width: 0; padding-bottom: 24px;"
     >
@@ -1389,116 +1117,13 @@
             Settings page, and video tracking overlays.
         </p>
 
-        <!-- Compact Branding Style Preferences -->
-        <div
-            style="display: flex; flex-direction: column; gap: 8px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: 6px; padding: 12px; margin-bottom: 0px;"
-        >
-            <div
-                style="display: flex; justify-content: space-between; align-items: center;"
-            >
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    <span
-                        style="font-weight: bold; font-size: 11.5px; color: var(--color-text); text-transform: uppercase; letter-spacing: 0.05em;"
-                        >Branding Style</span
-                    >
-                    <div
-                        class="tooltip-wrap"
-                        style="cursor: help; display: inline-flex;"
-                    >
-                        <span
-                            style="display: inline-flex; align-items: center; justify-content: center; background: var(--color-surface); color: var(--color-accent); border: 1px solid var(--color-border); border-radius: 50%; width: 16px; height: 16px; font-size: 10px; font-weight: bold; font-family: var(--font-mono);"
-                            >i</span
-                        >
-                        <span
-                            class="tooltip"
-                            style="width: 280px; white-space: normal; line-height: 1.4; background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border); border-radius: 6px; padding: 10px; font-weight: normal; font-size: 11px; text-transform: none; letter-spacing: normal;"
-                        >
-                            <strong
-                                style="color: var(--color-accent); display: block; margin-bottom: 4px;"
-                                >Adaptive vs Classic Style</strong
-                            >
-                            Choose <strong>Adaptive</strong> to dynamically
-                            align the extension logo and toolbar icons with your
-                            active color palette, or <strong>Classic</strong> to
-                            preserve the original static brand style.
-                        </span>
-                    </div>
-                </div>
-                <span style="font-size: 10px; color: var(--color-text-muted);"
-                    >Configure logo & icon appearance</span
-                >
-            </div>
-            <div
-                style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; border-top: 1px solid var(--color-border); padding-top: 8px;"
-            >
-                <!-- Toolbar Browser Icon -->
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; gap: 8px;"
-                >
-                    <span
-                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold;"
-                        >Browser Icon</span
-                    >
-                    <div
-                        style="display: flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px; width: 120px; height: 24px; align-items: center;"
-                    >
-                        <button
-                            type="button"
-                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {!useStaticToolbarIcon
-                                ? 'var(--color-accent)'
-                                : 'transparent'}; color: {!useStaticToolbarIcon
-                                ? 'var(--color-accent-text)'
-                                : 'var(--color-text-muted)'}; padding: 0;"
-                            onclick={() => handleToolbarIconPref(false)}
-                            >Adaptive</button
-                        >
-                        <button
-                            type="button"
-                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {useStaticToolbarIcon
-                                ? 'var(--color-accent)'
-                                : 'transparent'}; color: {useStaticToolbarIcon
-                                ? 'var(--color-accent-text)'
-                                : 'var(--color-text-muted)'}; padding: 0;"
-                            onclick={() => handleToolbarIconPref(true)}
-                            >Classic</button
-                        >
-                    </div>
-                </div>
-                <!-- In-Page Logo Branding -->
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; gap: 8px;"
-                >
-                    <span
-                        style="font-size: 11px; color: var(--color-text-muted); font-weight: bold;"
-                        >App Logos</span
-                    >
-                    <div
-                        style="display: flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px; width: 120px; height: 24px; align-items: center;"
-                    >
-                        <button
-                            type="button"
-                            style="flex: 1; border: none; border-radius: 3px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {!useStaticInPageLogo
-                                ? 'var(--color-accent)'
-                                : 'transparent'}; color: {!useStaticInPageLogo
-                                ? 'var(--color-accent-text)'
-                                : 'var(--color-text-muted)'}; padding: 0;"
-                            onclick={() => handleInPageLogoPref(false)}
-                            >Adaptive</button
-                        >
-                        <button
-                            type="button"
-                            style="flex: 1; border: none; border-radius: 4px; height: 100%; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.1s; background: {useStaticInPageLogo
-                                ? 'var(--color-accent)'
-                                : 'transparent'}; color: {useStaticInPageLogo
-                                ? 'var(--color-accent-text)'
-                                : 'var(--color-text-muted)'}; padding: 0;"
-                            onclick={() => handleInPageLogoPref(true)}
-                            >Classic</button
-                        >
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- Dynamic Preferences Card Sub-component -->
+        <ThemePreferences
+            bind:useStaticToolbarIcon
+            bind:useStaticInPageLogo
+            onToolbarIconChange={handleToolbarIconPref}
+            onInPageLogoChange={handleInPageLogoPref}
+        />
 
         <div style="display: flex; flex-direction: column; gap: 6px;">
             <CustomSelect
@@ -1512,18 +1137,7 @@
         {#if isCustomThemeId(selectedTheme)}
             {@const themeId = selectedTheme}
 
-            <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
-            {@const activeAccentColor =
-                themeDraftColors[themeId]?.accent || "var(--color-accent)"}
-            {@const activeAccentHoverColor =
-                themeDraftColors[themeId]?.accentHover ||
-                themeDraftColors[themeId]?.accent ||
-                "var(--color-accent-hover)"}
-            {@const activeBackgroundColor =
-                themeDraftColors[themeId]?.background || "#09090f"}
-
             {#if isCollapsed["global"]}
-                <!-- Minuscule header option when custom builder is collapsed -->
                 <button
                     class="btn btn-ghost"
                     style="width: 100%; padding: 8px 12px; font-size: 11.5px; display: flex; align-items: center; justify-content: space-between; background: var(--color-surface-alt); border: 1px dashed var(--color-border); border-radius: 6px;"
@@ -1592,7 +1206,7 @@
             exclusively to this reader site.
         </p>
 
-        <!-- Reader Theme Synchronization Toggle -->
+        <!-- Reader Theme Synchronization Toggle placed exactly where it originally was -->
         <div class="field" style="margin-top: -4px; margin-bottom: 16px;">
             <label class="toggle">
                 <input
@@ -1605,287 +1219,34 @@
                 <span class="toggle-track"
                     ><span class="toggle-thumb"></span></span
                 >
-                Sync reader's theme to popup when browsing a reader
+                Sync popup's theme to reader's when browsing a reader
             </label>
         </div>
 
-        <div
-            style="display: flex; flex-direction: column; gap: 12px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: 6px; padding: 14px;"
-        >
-            <!-- TTU Reader Override -->
-            <div
-                style="display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border);"
-            >
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; gap: 16px;"
-                >
-                    <div style="display: flex; flex-direction: column;">
-                        <span
-                            style="font-weight: 600; font-size: 12.5px; color: var(--color-text);"
-                            >TTU Reader</span
-                        >
-                        <span class="hint" style="margin: 0; font-size: 11px;"
-                            >reader.ttsu.app</span
-                        >
-                    </div>
-                    <div style="width: 200px;">
-                        <CustomSelect
-                            options={readerThemeOptionsDerived}
-                            value={ttuThemeOverrideToShow}
-                            onChange={(v) => saveReaderOverride("ttu", v)}
-                            label="Override Theme"
-                            compact={false}
-                        />
-                    </div>
-                </div>
-                {#if isCustomThemeId(ttuThemeOverride)}
-                    {@const themeId = ttuThemeOverride}
-
-                    <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
-                    {@const activeAccentColor =
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent)"}
-                    {@const activeAccentHoverColor =
-                        themeDraftColors[themeId]?.accentHover ||
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent-hover)"}
-                    {@const activeBackgroundColor =
-                        themeDraftColors[themeId]?.background || "#09090f"}
-
-                    {#if isCollapsed["ttu"]}
-                        <button
-                            class="btn btn-ghost"
-                            style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse("ttu")}
-                        >
-                            <span
-                                style="display: flex; align-items: center; gap: 2px;"
-                            >
-                                <svg
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--color-accent)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    style="display: inline-block; margin-right: 6px;"
-                                >
-                                    <path
-                                        d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
-                                    />
-                                </svg>
-                                <span
-                                    style="font-weight: 600; color: var(--color-text);"
-                                    >Edit Custom Theme</span
-                                >
-                            </span>
-                            <span style="color: var(--color-accent);"
-                                >Expand Editor ▾</span
-                            >
-                        </button>
-                    {:else}
-                        <ThemeEditor
-                            {themeId}
-                            bind:themeColors={themeDraftColors[themeId]}
-                            bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={
-                                triedSavingEmptyName[themeId]
-                            }
-                            {customThemes}
-                            compact={true}
-                            onSave={saveCustomThemeChanges}
-                            onRevert={confirmRevertThemeDraft}
-                            onDelete={confirmDeleteTheme}
-                            onCollapse={() => handleCollapse("ttu")}
-                        />
-                    {/if}
-                {/if}
-            </div>
-
-            <!-- Yatsu Reader Override -->
-            <div
-                style="display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border);"
-            >
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; gap: 16px;"
-                >
-                    <div style="display: flex; flex-direction: column;">
-                        <span
-                            style="font-weight: 600; font-size: 12.5px; color: var(--color-text);"
-                            >Yatsu Reader</span
-                        >
-                        <span class="hint" style="margin: 0; font-size: 11px;"
-                            >app.yatsu.moe</span
-                        >
-                    </div>
-                    <div style="width: 200px;" class="dropup-select">
-                        <CustomSelect
-                            options={readerThemeOptionsDerived}
-                            value={yatsuThemeOverrideToShow}
-                            onChange={(v) => saveReaderOverride("yatsu", v)}
-                            label="Override Theme"
-                            compact={false}
-                        />
-                    </div>
-                </div>
-                {#if isCustomThemeId(yatsuThemeOverride)}
-                    {@const themeId = yatsuThemeOverride}
-
-                    <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
-                    {@const activeAccentColor =
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent)"}
-                    {@const activeAccentHoverColor =
-                        themeDraftColors[themeId]?.accentHover ||
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent-hover)"}
-                    {@const activeBackgroundColor =
-                        themeDraftColors[themeId]?.background || "#09090f"}
-
-                    {#if isCollapsed["yatsu"]}
-                        <button
-                            class="btn btn-ghost"
-                            style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse("yatsu")}
-                        >
-                            <span
-                                style="display: flex; align-items: center; gap: 2px;"
-                            >
-                                <svg
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--color-accent)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    style="display: inline-block; margin-right: 6px;"
-                                >
-                                    <path
-                                        d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
-                                    />
-                                </svg>
-                                <span
-                                    style="font-weight: 600; color: var(--color-text);"
-                                    >Edit Custom Theme</span
-                                >
-                            </span>
-                            <span style="color: var(--color-accent);"
-                                >Expand Editor ▾</span
-                            >
-                        </button>
-                    {:else}
-                        <ThemeEditor
-                            {themeId}
-                            bind:themeColors={themeDraftColors[themeId]}
-                            bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={
-                                triedSavingEmptyName[themeId]
-                            }
-                            {customThemes}
-                            compact={true}
-                            onSave={saveCustomThemeChanges}
-                            onRevert={confirmRevertThemeDraft}
-                            onDelete={confirmDeleteTheme}
-                            onCollapse={() => handleCollapse("yatsu")}
-                        />
-                    {/if}
-                {/if}
-            </div>
-
-            <!-- YomiYasu Reader Override -->
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; gap: 16px;"
-                >
-                    <div style="display: flex; flex-direction: column;">
-                        <span
-                            style="font-weight: 600; font-size: 12.5px; color: var(--color-text);"
-                            >YomiYasu Reader</span
-                        >
-                    </div>
-                    <div style="width: 200px;" class="dropup-select">
-                        <CustomSelect
-                            options={readerThemeOptionsDerived}
-                            value={yomiyasuThemeOverrideToShow}
-                            onChange={(v) => saveReaderOverride("yomiyasu", v)}
-                            label="Override Theme"
-                            compact={false}
-                        />
-                    </div>
-                </div>
-                {#if isCustomThemeId(yomiyasuThemeOverride)}
-                    {@const themeId = yomiyasuThemeOverride}
-
-                    <!-- Read reactive changes directly into Svelte localized variables to trigger visual signal compiles instantly -->
-                    {@const activeAccentColor =
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent)"}
-                    {@const activeAccentHoverColor =
-                        themeDraftColors[themeId]?.accentHover ||
-                        themeDraftColors[themeId]?.accent ||
-                        "var(--color-accent-hover)"}
-                    {@const activeBackgroundColor =
-                        themeDraftColors[themeId]?.background || "#09090f"}
-
-                    {#if isCollapsed["yomiyasu"]}
-                        <button
-                            class="btn btn-ghost"
-                            style="width: 100%; padding: 4px 10px; font-size: 10.5px; display: flex; align-items: center; justify-content: space-between; margin-top: 4px; background: rgba(0,0,0,0.1); border: 1px dashed var(--color-border);"
-                            onclick={() => handleUncollapse("yomiyasu")}
-                        >
-                            <span
-                                style="display: flex; align-items: center; gap: 2px;"
-                            >
-                                <svg
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--color-accent)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    style="display: inline-block; margin-right: 6px;"
-                                >
-                                    <path
-                                        d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
-                                    />
-                                </svg>
-                                <span
-                                    style="font-weight: 600; color: var(--color-text);"
-                                    >Edit Custom Theme</span
-                                >
-                            </span>
-                            <span style="color: var(--color-accent);"
-                                >Expand Editor ▾</span
-                            >
-                        </button>
-                    {:else}
-                        <ThemeEditor
-                            {themeId}
-                            bind:themeColors={themeDraftColors[themeId]}
-                            bind:themeName={themeDraftNames[themeId]}
-                            bind:triedSavingEmptyName={
-                                triedSavingEmptyName[themeId]
-                            }
-                            {customThemes}
-                            compact={true}
-                            onSave={saveCustomThemeChanges}
-                            onRevert={confirmRevertThemeDraft}
-                            onDelete={confirmDeleteTheme}
-                            onCollapse={() => handleCollapse("yomiyasu")}
-                        />
-                    {/if}
-                {/if}
-            </div>
-        </div>
+        <!-- Reader Overrides Sub-component -->
+        <ReaderOverrides
+            {readerThemeOptionsDerived}
+            bind:ttuThemeOverride
+            bind:yatsuThemeOverride
+            bind:yomiyasuThemeOverride
+            {ttuThemeOverrideToShow}
+            {yatsuThemeOverrideToShow}
+            {yomiyasuThemeOverrideToShow}
+            bind:isCollapsed
+            bind:themeDraftColors
+            bind:themeDraftNames
+            bind:triedSavingEmptyName
+            {customThemes}
+            onSaveOverride={saveReaderOverride}
+            onSaveCustomThemeChanges={saveCustomThemeChanges}
+            {confirmRevertThemeDraft}
+            {confirmDeleteTheme}
+            {handleCollapse}
+            {handleUncollapse}
+        />
     </div>
 
-    <!-- Right column (True separate Preview Column positioned completely to the side of all parameters - centered) -->
+    <!-- Live Centered Preview column -->
     {#if activeEditingThemeId !== ""}
         {@const currentDraft =
             themeDraftColors[activeEditingThemeId] || DEFAULT_CUSTOM_COLORS}
@@ -1907,7 +1268,6 @@
     >
 </div>
 
-<!-- Inline warning overlays matching original settings theme styles -->
 {#if modalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1931,7 +1291,6 @@
 {/if}
 
 <style>
-    /* CSS rules styling dropdown option layouts globally */
     :global(.select-option, .option, [class*="option"]) {
         display: flex !important;
         align-items: center !important;
@@ -1940,7 +1299,6 @@
         position: relative;
     }
 
-    /* Redirect select containers marked with .dropup-select to expand upwards */
     :global(.dropup-select .select-dropdown),
     :global(.dropup-select .dropdown-menu),
     :global(.dropup-select [class*="select-dropdown"]),
@@ -1951,7 +1309,6 @@
         bottom: calc(100% + 4px) !important;
     }
 
-    /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */
     :global(
             .select-dropdown,
             .dropdown-menu,
@@ -1964,7 +1321,6 @@
         overflow-y: auto !important;
     }
 
-    /* Modern sleek minimalist scrollbar styles across settings dropdown menu options list */
     :global(
             .select-dropdown::-webkit-scrollbar,
             .dropdown-menu::-webkit-scrollbar,
@@ -2007,7 +1363,6 @@
         ) {
         background: rgba(255, 255, 255, 0.25) !important;
     }
-    /* Firefox Scrollbar support specifically for custom dropdown containers */
     :global(
             .select-dropdown,
             .dropdown-menu,

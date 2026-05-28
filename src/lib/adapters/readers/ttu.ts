@@ -9,6 +9,10 @@ export const ttuAdapter: ReaderAdapter = {
     return config.ttuEnabled !== false;
   },
 
+  getThemeOverride(config: TrackerConfig): string | undefined {
+    return config.ttuThemeOverride;
+  },
+
   findInsertPoint(): { el: Element; pos: InsertPosition } | null {
     const footer = document.querySelector('.book-footer, .writing-container + div, #writing-container + div');
     if (footer) return { el: footer, pos: 'beforebegin' };

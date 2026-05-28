@@ -59,6 +59,12 @@ export interface TrackerConfig {
   yomiyasuThemeOverride?: string;
   yomiyasuThemeOverrideId?: string;
   yomiyasuCustomColors?: Record<string, string>;
+
+  // Adaptive branding preferences
+  useStaticToolbarIcon?: boolean;
+  useStaticInPageLogo?: boolean;
+  syncPopupWithReaderTheme?: boolean;
+  logMusicVideos?: boolean;
 }
 
 /* ── Custom Theme Schemas ── */
@@ -231,6 +237,8 @@ export interface ReaderAdapter {
   findInsertPoint(): { el: Element; pos: InsertPosition } | null;
   extractCharCount(): number | null;
   getTitle(): string;
+  onUpdateStyles?(wrapper: HTMLElement): void;
+  getThemeOverride?(config: TrackerConfig): string | undefined;
 }
 
 export interface VideoSiteAdapter {
@@ -241,4 +249,5 @@ export interface VideoSiteAdapter {
   getChannelName(): Promise<string>;
   isLikelyJapanese(): boolean;
   isMusic(): boolean;
+  getTimestampContainer?(vid: HTMLVideoElement): HTMLElement | null;
 }

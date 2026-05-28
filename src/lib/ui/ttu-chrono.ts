@@ -66,48 +66,191 @@ export function setupTTUChronometerUI(
     if (!styleEl) {
         styleEl = document.createElement('style');
         styleEl.id = 'nt-ttu-custom-styles';
-        styleEl.textContent = `
-            @keyframes nt-spin {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(360deg); }
-            }
-            @keyframes nt-fade-pulse {
-                0% { opacity: 0.4; }
-                50% { opacity: 1.0; }
-                100% { opacity: 0.4; }
-            }
-            #nt-ttu-chrono-wrapper {
-                will-change: transform;
-                transform: translateZ(0);
-            }
-            .nt-ttu-sync-status {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 10px;
-                color: var(--nt-text-secondary, #aaa); /* Inherits theme color (Issue 2 Fix) */
-                text-align: center;
-                margin-top: 8px;
-                opacity: 0.9;
-                /* GPU-driven composite opacity pulse (Issue 4 Fix) */
-                animation: nt-fade-pulse 1.8s ease-in-out infinite; 
-            }
-            .nt-ttu-spinner {
-                will-change: transform, opacity;
-                transform: translateZ(0);
-                width: 12px;
-                height: 12px;
-                margin-right: 6px;
-                fill: none;
-                stroke: currentColor;
-                stroke-width: 2.5;
-                stroke-linecap: round;
-                /* GPU-driven composite rotate transition (Issue 4 Fix) */
-                animation: nt-spin 0.8s linear infinite; 
-            }
-        `;
         document.head.appendChild(styleEl);
     }
+
+    styleEl.textContent = `
+        @keyframes nt-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes nt-fade-pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1.0; }
+            100% { opacity: 0.4; }
+        }
+        #nt-ttu-chrono-wrapper {
+            will-change: transform;
+            transform: translateZ(0);
+        }
+        .nt-ttu-sync-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: var(--nt-text-secondary, #aaa); /* Inherits theme color (Issue 2 Fix) */
+            text-align: center;
+            margin-top: 8px;
+            opacity: 0.9;
+            /* GPU-driven composite opacity pulse (Issue 4 Fix) */
+            animation: nt-fade-pulse 1.8s ease-in-out infinite; 
+        }
+        .nt-ttu-spinner {
+            will-change: transform, opacity;
+            transform: translateZ(0);
+            width: 12px;
+            height: 12px;
+            margin-right: 6px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            /* GPU-driven composite rotate transition (Issue 4 Fix) */
+            animation: nt-spin 0.8s linear infinite; 
+        }
+
+        #nt-ttu-chrono-btn {
+            color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+            background: transparent !important;
+            border: none !important;
+            padding: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+        #nt-ttu-chrono-btn svg, #nt-ttu-btn-toggle svg {
+            color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+            fill: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+        }
+        #nt-ttu-chrono-btn svg path, #nt-ttu-btn-toggle svg path, #nt-ttu-main-icon-path, #nt-ttu-play-path {
+            fill: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+        }
+        #nt-ttu-chrono-btn:hover {
+            color: var(--color-accent-hover, var(--nt-accent-hover, #ffd060)) !important;
+        }
+        #nt-ttu-chrono-btn:hover svg, #nt-ttu-btn-toggle:hover svg {
+            color: var(--color-accent-hover, var(--nt-accent-hover, #ffd060)) !important;
+            fill: var(--color-accent-hover, var(--nt-accent-hover, #ffd060)) !important;
+        }
+        #nt-ttu-chrono-btn:hover svg path, #nt-ttu-btn-toggle:hover svg path, #nt-ttu-chrono-btn:hover #nt-ttu-main-icon-path, #nt-ttu-btn-toggle:hover #nt-ttu-play-path {
+            fill: var(--color-accent-hover, var(--nt-accent-hover, #ffd060)) !important;
+        }
+        #nt-ttu-btn-toggle {
+            color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
+        }
+        #nt-ttu-btn-toggle:hover {
+            color: var(--color-accent-hover, var(--nt-accent-hover, #ffd060)) !important;
+        }
+        #nt-ttu-dropdown {
+            background: var(--color-surface) !important;
+            border-color: var(--color-border) !important;
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-dd-title {
+            color: var(--color-text-muted) !important;
+        }
+        .nt-ttu-stat-label {
+            color: var(--color-text-muted) !important;
+        }
+        .nt-ttu-stat-val {
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-stat-val:hover {
+            background: var(--color-surface-alt) !important;
+            border-color: var(--color-border-hover) !important;
+        }
+        .nt-ttu-btn-icon {
+            color: var(--color-text-muted) !important;
+        }
+        .nt-ttu-btn-icon:hover:not(:disabled) {
+            background: var(--color-surface-alt) !important;
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-btn-icon.primary {
+            color: var(--color-accent) !important;
+        }
+        .nt-ttu-btn-icon.primary:hover:not(:disabled) {
+            background: color-mix(in srgb, var(--color-accent) 15%, transparent) !important;
+            color: var(--color-accent-hover) !important;
+        }
+        .nt-ttu-link-wrap {
+            background: var(--color-surface-alt) !important;
+            border: 1px solid var(--color-border) !important;
+        }
+        .nt-ttu-link-wrap:focus-within {
+            border-color: var(--color-accent) !important;
+        }
+        .nt-ttu-link-wrap svg {
+            stroke: var(--color-text-muted) !important;
+        }
+        .nt-ttu-link-input {
+            color: var(--color-text) !important;
+            background: transparent !important;
+        }
+        .nt-ttu-link-input::placeholder {
+            color: var(--color-text-muted) !important;
+            opacity: 0.6;
+        }
+        .nt-ttu-vol-input {
+            background: transparent !important;
+            color: var(--color-accent) !important;
+            border: none !important;
+            border-bottom: 1px solid var(--color-accent) !important;
+        }
+        .nt-ttu-vol-pill {
+            color: var(--color-accent) !important;
+        }
+        .nt-ttu-link-compact {
+            background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface)) !important;
+            border: 1px solid color-mix(in srgb, var(--color-success) 22%, transparent) !important;
+            color: var(--color-success) !important;
+        }
+        .nt-ttu-link-compact-inner {
+            color: var(--color-success) !important;
+        }
+        .nt-ttu-link-compact-inner svg {
+            stroke: var(--color-success) !important;
+        }
+        .nt-ttu-unlink-btn {
+            color: var(--color-error, #f0706a) !important;
+        }
+        .nt-ttu-link-results {
+            background: var(--color-surface) !important;
+            border: 1px solid var(--color-border) !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25) !important;
+        }
+        .nt-ttu-link-item {
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-link-item:hover {
+            background: var(--color-surface-alt) !important;
+        }
+        .nt-ttu-link-t {
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-link-item:hover .nt-ttu-link-t {
+            color: var(--color-accent) !important;
+        }
+        .nt-ttu-history summary {
+            color: var(--color-text-muted) !important;
+        }
+        .nt-ttu-history summary:hover {
+            background: var(--color-surface-alt) !important;
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-history-item {
+            background: var(--color-surface-alt) !important;
+            color: var(--color-text) !important;
+        }
+        .nt-ttu-history-del {
+            color: var(--color-error, #f0706a) !important;
+        }
+        .nt-ttu-inline-input {
+            background: var(--color-surface) !important;
+            color: var(--color-text) !important;
+            border: 1px solid var(--color-border) !important;
+        }
+    `;
 
     setSafeHTML(wrapper, `
   <button id="nt-ttu-chrono-btn" title="Click to open Tracker Menu or Double Click to toggle Tracker">
@@ -124,9 +267,9 @@ export function setupTTUChronometerUI(
       <div class="nt-ttu-controls">
         <button class="nt-ttu-btn-icon" id="nt-ttu-btn-toggle" title="Play/Pause"><svg viewBox="0 0 24 24"><path id="nt-ttu-play-path" d="M8 5v14l11-7z"/></svg></button>
         <button class="nt-ttu-btn-icon" id="nt-ttu-btn-reset" title="Reset Session"><svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
-        <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-log" title="Save & Queue"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg></button>
-        <button class="nt-ttu-btn-icon primary" id="nt-ttu-btn-direct" title="Match media to send directly" disabled style="opacity: 0.3; cursor: not-allowed;"><svg style="width: 16px; height: 16px;" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
-        <button class="nt-ttu-btn-icon" id="nt-ttu-btn-settings" title="Open Tracker Settings"><svg viewBox="0 0 24 24" fill="currentColor" style="width: 15px; height: 15px;"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg></button>
+        <button class="nt-ttu-btn-icon" id="nt-ttu-btn-log" title="Save & Queue"><svg viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg></button>
+        <button class="nt-ttu-btn-icon" id="nt-ttu-btn-direct" title="Match media to send directly" disabled style="opacity: 0.3; cursor: not-allowed;"><svg style="width: 16px; height: 16px;" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+        <button class="nt-ttu-btn-icon" id="nt-ttu-btn-settings" title="Open Tracker Settings"><svg viewBox="0 0 24 24" fill="currentColor" style="width: 15px; height: 15px;"><path d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73-1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"/></svg></button>
       </div>
       <div id="nt-ttu-sync-status" class="nt-ttu-sync-status" style="display:none;">
         <svg class="nt-ttu-spinner" viewBox="0 0 24 24">

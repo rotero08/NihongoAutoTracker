@@ -6,16 +6,8 @@ import type { UITheme } from '@/lib/types';
 import { DEFAULT_THEME } from '@/lib/types';
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
 import { getTheme } from './themes';
-
-// Safe HTML Helper to securely bypass AMO innerHTML warnings
-function setSafeHTML(el: HTMLElement, html: string) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  el.textContent = '';
-  while (doc.body.firstChild) {
-    el.appendChild(doc.body.firstChild);
-  }
-}
+import { localTodayISODate, dateInputToISO } from '@/lib/utils/time';
+import { setSafeHTML } from '@/lib/utils/dom';
 
 export function showNTEditModal(
   badgeEl: HTMLElement,
@@ -277,18 +269,4 @@ export function injectModalStyles(theme: UITheme = DEFAULT_THEME): void {
   `;
 
   lastInjectedThemeSignature = activeThemeSignature;
-}
-
-export function localTodayISODate(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
-
-export function dateInputToISO(dateStr: string): string {
-  const m = /^\s*(\d{4})-(\d{2})-(\d{2})\s*$/.exec(dateStr || '');
-  if (!m) return new Date().toISOString();
-  const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]);
-  const now = new Date();
-  return new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds()).toISOString();
 }

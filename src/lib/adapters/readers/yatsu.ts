@@ -9,6 +9,26 @@ export const yatsuAdapter: ReaderAdapter = {
     return config.yatsuEnabled !== false;
   },
 
+  getThemeOverride(config: TrackerConfig): string | undefined {
+    return config.yatsuThemeOverride;
+  },
+
+  onUpdateStyles(wrapper: HTMLElement): void {
+    const isWhispersyncActive = !!(
+      document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
+      Array.from(document.querySelectorAll('button, div, span')).some(el =>
+        el.textContent?.toLowerCase().includes('whispersync')
+      )
+    );
+    if (isWhispersyncActive) {
+      wrapper.style.setProperty('margin-left', '12px', 'important');
+      wrapper.style.setProperty('gap', '12px', 'important');
+    } else {
+      wrapper.style.removeProperty('margin-left');
+      wrapper.style.removeProperty('gap');
+    }
+  },
+
   findInsertPoint() {
     const container = document.querySelector('#reader-container, .reader-wrapper, main');
     if (container) return { el: container, pos: 'beforeend' };

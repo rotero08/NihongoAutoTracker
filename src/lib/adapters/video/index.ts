@@ -9,8 +9,12 @@ export function getActiveVideoAdapter(): VideoSiteAdapter | null {
     const currentHostname = window.location.hostname;
     return VIDEO_ADAPTERS.find(adapter =>
         adapter.matchPatterns.some(pattern => {
-            const cleanPattern = pattern.replace(/\*/g, '');
-            return currentHostname.includes(cleanPattern) || window.location.href.includes(cleanPattern);
+            // Remove protocol, wildcards, and trailing path to extract domain
+            const clean = pattern
+                .replace(/\*/g, '')
+                .replace('://', '')
+                .split('/')[0]; // e.g., ".youtube.com" or ".crunchyroll.com"
+            return currentHostname.includes(clean) || clean.includes(currentHostname);
         })
     ) || null;
 }

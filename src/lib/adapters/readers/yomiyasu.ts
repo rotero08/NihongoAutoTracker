@@ -9,6 +9,10 @@ export const yomiyasuAdapter: ReaderAdapter = {
     return config.yomiyasuEnabled !== false;
   },
 
+  getThemeOverride(config: TrackerConfig): string | undefined {
+    return config.yomiyasuThemeOverride;
+  },
+
   findInsertPoint() {
     const container = document.querySelector('.reader-container, main, #app');
     if (container) return { el: container, pos: 'beforeend' };

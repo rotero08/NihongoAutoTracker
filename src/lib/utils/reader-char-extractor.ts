@@ -99,23 +99,28 @@ function getSectionIndex(container: Element): number | null {
         }
     }
 
-    // Extract the raw sequential digit from the ID (highly stable for spine indexing)
     if (id) {
-        const match = id.match(/\d+/);
-        if (match) {
-            return parseInt(match[0], 10);
+        // Look specifically for paragraph index first to prevent matching the first digit of parent chapter id
+        const paragraphMatch = id.match(/paragraph-(\d+)/i) || id.match(/p-(\d+)/i);
+        if (paragraphMatch) {
+            return parseInt(paragraphMatch[1], 10);
         }
 
-        // Fallback to sequential hashing if no digits exist
-        if (!seenSectionIds.has(id)) {
-            // Prevent unbounded memory growth over extended SPA reader sessions
-            if (seenSectionIds.size > 500) {
-                seenSectionIds.clear();
-            }
-            const nextVal = seenSectionIds.size;
-            seenSectionIds.set(id, nextVal);
+        // Standard sequence tracking prefixes
+        const ttuIdMatch = id.match(/ttu-id-(?:chapter-)?(\d+)/i);
+        if (ttuIdMatch) {
+            return parseInt(ttuIdMatch[1], 10);
         }
-        return seenSectionIds.get(id) ?? null;
+
+        const trailingMatch = id.match(/(\d+)$/);
+        if (trailingMatch) {
+            return parseInt(trailingMatch[1], 10);
+        }
+
+        const fallbackMatch = id.match(/\d+/);
+        if (fallbackMatch) {
+            return parseInt(fallbackMatch[0], 10);
+        }
     }
 
     return null;
