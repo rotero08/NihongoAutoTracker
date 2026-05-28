@@ -376,12 +376,13 @@ export default defineContentScript({
     const state = { hasTriggered: false, isManualLogging: false };
     let trackedVideo: HTMLVideoElement | null = null;
     let currentUrl = '', channelId: string | null = null, cachedChannelName = '';
+    let lastTickTime = 0;
 
     const resetSession = () => {
       flushPlayClock();
       watchedSecs = 0; completedSessionSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0;
       currentSessionId = crypto.randomUUID(); state.hasTriggered = false; state.isManualLogging = false;
-      playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && trackedVideo.readyState > 2 && !isAdPlaying()) ? performance.now() : -1;
+      playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying()) ? performance.now() : -1;
       const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
       if (badgeLabel) badgeLabel.textContent = "0:00";
     };
@@ -409,6 +410,11 @@ export default defineContentScript({
       currentSessionId = crypto.randomUUID(); metadataResolved = false; _lastCounterPaint = 0;
       document.getElementById('nt-status-badge')?.remove();
 
+      // Immediately set the play clock if the video is already actively playing to capture early watch progress
+      if (!vid.paused && !vid.ended && !isAdPlaying()) {
+        playClockStart = performance.now();
+      }
+
       const tryChannel = async () => {
         const foundId = await getYouTubeChannelId();
         const foundName = await getChannelNameFallback();
@@ -435,18 +441,21 @@ export default defineContentScript({
         const queue = await videoQueueStorage.getValue();
         const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
         if (existing) completedSessionSecs = (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0);
+
+        // Instantly generate and inject the counter badge once queue data resolves to prevent UI latency
+        ensureCounter(getLiveWatched(), getTotal(), document.title, currentUrl, channelId, state, vid, cachedConfig, cachedChannelName, resetSession);
       })();
 
       // Prevent duplicate event handlers on recycled <video> nodes
       if (boundVideos.has(vid)) {
-        if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) {
+        if (!vid.paused && !vid.ended && !isAdPlaying()) {
           playClockStart = performance.now();
         }
         return;
       }
       boundVideos.add(vid);
 
-      if (!vid.paused && !vid.ended && vid.readyState > 2 && !isAdPlaying()) {
+      if (!vid.paused && !vid.ended && !isAdPlaying()) {
         playClockStart = performance.now();
       }
 
@@ -474,13 +483,18 @@ export default defineContentScript({
       });
 
       vid.addEventListener('timeupdate', async () => {
+        // Throttle the evaluation tick to at most once per second (1000ms) to reduce CPU cycles
+        const now = performance.now();
+        if (now - lastTickTime < 1000) return;
+        lastTickTime = now;
+
         if (isAdPlaying()) {
           flushPlayClock(true);
           document.getElementById('nt-status-badge')?.remove();
           return;
         }
 
-        if (playClockStart < 0 && !vid.paused && !vid.ended && vid.readyState > 2) {
+        if (playClockStart < 0 && !vid.paused && !vid.ended) {
           playClockStart = performance.now();
         }
 
@@ -594,7 +608,7 @@ export default defineContentScript({
         const clean = cleanUrl(window.location.href);
         if (!queue.some((q: any) => q.contentTitleEnglish === clean)) {
           completedSessionSecs = 0; watchedSecs = 0; lastSyncSecs = 0; lastAutoCheckSecs = 0; state.hasTriggered = false;
-          playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && trackedVideo.readyState > 2 && !isAdPlaying()) ? performance.now() : -1;
+          playClockStart = (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying()) ? performance.now() : -1;
           const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
           if (badgeLabel) badgeLabel.textContent = "0:00";
         }
@@ -605,9 +619,37 @@ export default defineContentScript({
     let pageObserverTimeout: number | null = null;
 
     /**
+     * Context check to block playlist logger badges from mounting inside generic channel page headers.
+     */
+    function isPlaylistOrPodcastPage(): boolean {
+      const pathname = window.location.pathname;
+      const href = window.location.href;
+
+      // Detect standard YouTube channel routes strictly (starts with /@, /channel/, /c/, /user/)
+      const isChannelRoute = pathname.startsWith('/@') ||
+        pathname.startsWith('/channel/') ||
+        pathname.startsWith('/c/') ||
+        pathname.startsWith('/user/');
+
+      // If viewing a channel route, only allow badge injection if there is an active playlist ID in the URL params
+      if (isChannelRoute && !href.includes('list=')) {
+        return false;
+      }
+
+      // Fallback: permit if the URL indicates playlist structures or a playlist UI is actively present
+      return href.includes('list=') ||
+        pathname.startsWith('/playlist') ||
+        !!document.querySelector('ytd-playlist-header-renderer, ytd-playlist-panel-renderer');
+    }
+
+    /**
      * Resolves the target playlist header or action button containers strictly within the active visible contexts.
      */
     function getActivePlaylistContainers(): HTMLElement[] {
+      if (!isPlaylistOrPodcastPage()) {
+        return [];
+      }
+
       const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
       const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
       const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
@@ -738,19 +780,20 @@ export default defineContentScript({
         }
 
         let isRelevant = false;
-        for (let i = 0; i < mutations.length; i++) {
+        const len = mutations.length;
+        for (let i = 0; i < len; i++) {
           const added = mutations[i].addedNodes;
-          for (let j = 0; j < added.length; j++) {
+          const addedLen = added.length;
+          for (let j = 0; j < addedLen; j++) {
             const node = added[j];
             if (node instanceof HTMLElement) {
-              const tag = node.tagName.toLowerCase();
+              const nodeName = node.nodeName;
+              // Check nodeName pattern (contains '-') to quickly identify custom tags (ytd-, yt-) and IDs
+              // of container panels without invoking slower .toLowerCase() or deeper searches on standard nodes.
               if (
-                tag.includes('renderer') ||
-                tag.includes('action') ||
-                tag.includes('header') ||
+                nodeName.includes('-') ||
                 node.id === 'playlist-action-menu' ||
-                node.id === 'top-level-buttons-computed' ||
-                node.querySelector('ytd-menu-renderer, .metadata-buttons-wrapper')
+                node.id === 'top-level-buttons-computed'
               ) {
                 isRelevant = true;
                 break;
@@ -798,6 +841,9 @@ export default defineContentScript({
       clearExtractionCaches();
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
+      // Nullify reference on route changes to clear memory and support garbage collection
+      flushPlayClock();
+      trackedVideo = null;
     });
   },
 });

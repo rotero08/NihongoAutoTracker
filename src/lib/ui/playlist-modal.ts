@@ -27,6 +27,54 @@ const inlineLogo = DYNAMIC_LOGO_SVG;
 // Single global observer instantiated once to monitor text overflow changes efficiently
 let globalTitleResizeObserver: ResizeObserver | null = null;
 
+// Batch ResizeObserver operations to eliminate layout thrashing
+let pendingMaskUpdates = new Set<HTMLElement>();
+let maskRafId: number | null = null;
+
+function scheduleMaskUpdate(el: HTMLElement) {
+  pendingMaskUpdates.add(el);
+  if (maskRafId === null) {
+    maskRafId = requestAnimationFrame(() => {
+      maskRafId = null;
+
+      // 1. Read Phase: Complete all layout queries together to prevent reflows
+      const measurements = Array.from(pendingMaskUpdates).map((target) => ({
+        target,
+        scrollWidth: target.scrollWidth,
+        clientWidth: target.clientWidth,
+        scrollLeft: target.scrollLeft,
+      }));
+      pendingMaskUpdates.clear();
+
+      // 2. Write Phase: Update styling safely inside a unified layout boundary
+      measurements.forEach(({ target, scrollWidth, clientWidth, scrollLeft }) => {
+        const isOverflowing = scrollWidth > clientWidth;
+        if (!isOverflowing) {
+          target.style.webkitMaskImage = 'none';
+          target.style.maskImage = 'none';
+          return;
+        }
+
+        const maxScrollLeft = scrollWidth - clientWidth;
+        const atStart = scrollLeft <= 2;
+        const atEnd = scrollLeft >= maxScrollLeft - 2;
+
+        let maskVal = '';
+        if (atStart) {
+          maskVal = 'linear-gradient(to right, black 85%, transparent 100%)';
+        } else if (atEnd) {
+          maskVal = 'linear-gradient(to right, transparent 0%, black 15%)';
+        } else {
+          maskVal = 'linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%)';
+        }
+
+        target.style.webkitMaskImage = maskVal;
+        target.style.maskImage = maskVal;
+      });
+    });
+  }
+}
+
 export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean, themeName: string) {
   const activeTheme = getTheme(themeName);
   injectModalStyles(activeTheme);
@@ -57,9 +105,16 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
     let domTime = 1;
     const timeText = lengthEl?.textContent?.trim() || "";
-    const parts = timeText.split(':').map(Number);
-    if (parts.length === 2 && !isNaN(parts[0])) domTime = Math.max(1, Math.round((parts[0] * 60 + parts[1]) / 60));
-    else if (parts.length === 3 && !isNaN(parts[0])) domTime = Math.max(1, Math.round((parts[0] * 3600 + parts[1] * 60 + parts[2]) / 60));
+
+    // Extract exactly the standard duration formatting block, ignoring any neighboring index or metadata digits
+    const match = timeText.match(/\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/);
+    if (match) {
+      const hrs = match[1] ? parseInt(match[1], 10) : 0;
+      const mins = parseInt(match[2], 10);
+      const secs = parseInt(match[3], 10);
+      const totalSeconds = hrs * 3600 + mins * 60 + secs;
+      domTime = Math.max(1, Math.round(totalSeconds / 60));
+    }
 
     const url = urlEl?.getAttribute('href') || '';
     const idMatch = url.match(/[?&]v=([^&]+)/);
@@ -129,7 +184,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     <div class="pl-scroll-title" id="pl-title-${i}" style="flex:1; overflow-x:auto; white-space:nowrap; padding: 2px 0; font-size:11px; scrollbar-width:none; -ms-overflow-style:none;">
     ${v.title.replace(/</g, '&lt;')}
     </div>
-    <span id="pl-time-${i}" style="color:var(--color-accent); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">...</span>`);
+    <span id="pl-time-${i}" style="color:var(--color-accent); font-family:ui-monospace,SFMono-Regular,monospace; flex-shrink:0; text-align:right; font-weight:bold; font-size:10px; min-width:32px;">${v.time} min</span>`);
     fragment.appendChild(row);
   }
   listEl.appendChild(fragment);
@@ -140,48 +195,17 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   if (!globalTitleResizeObserver) {
     globalTitleResizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const updater = (entry.target as any).__ntUpdateMask;
-        if (typeof updater === 'function') {
-          updater();
-        }
+        const target = entry.target as HTMLElement;
+        scheduleMaskUpdate(target);
       }
     });
   }
 
   const titleEls = modal.querySelectorAll('.pl-scroll-title');
   titleEls.forEach((el) => {
-    const updateMask = () => {
-      const isOverflowing = el.scrollWidth > el.clientWidth;
-      if (!isOverflowing) {
-        (el as HTMLElement).style.webkitMaskImage = 'none';
-        (el as HTMLElement).style.maskImage = 'none';
-        return;
-      }
-
-      const maxScrollLeft = el.scrollWidth - el.clientWidth;
-      const scrollLeft = el.scrollLeft;
-
-      const atStart = scrollLeft <= 2;
-      const atEnd = scrollLeft >= maxScrollLeft - 2;
-
-      if (atStart) {
-        (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, black 85%, transparent 100%)';
-        (el as HTMLElement).style.maskImage = 'linear-gradient(to right, black 85%, transparent 100%)';
-      } else if (atEnd) {
-        (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, transparent 0%, black 15%)';
-        (el as HTMLElement).style.maskImage = 'linear-gradient(to right, transparent 0%, black 15%)';
-      } else {
-        (el as HTMLElement).style.webkitMaskImage = 'linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%)';
-        (el as HTMLElement).style.maskImage = 'linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%)';
-      }
-    };
-
-    // Store update method directly on element for execution within unified observer
-    (el as any).__ntUpdateMask = updateMask;
     globalTitleResizeObserver?.observe(el);
-
-    el.addEventListener('scroll', updateMask, { passive: true });
-    updateMask();
+    el.addEventListener('scroll', () => scheduleMaskUpdate(el as HTMLElement), { passive: true });
+    scheduleMaskUpdate(el as HTMLElement);
   });
 
   requestAnimationFrame(() => {
@@ -251,31 +275,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   };
   setTimeout(() => document.addEventListener('click', clickOutsideHandler), 10);
 
-  // Fetch detailed metadata in sequential execution chunks of 3 rather than overloading concurrently
-  (async () => {
-    const chunkSize = 3;
-    for (let idx = 0; idx < videos.length; idx += chunkSize) {
-      if (!modal.isConnected) break;
-      const chunk = videos.slice(idx, idx + chunkSize);
-      await Promise.all(chunk.map(async (v, chunkIdx) => {
-        const itemIdx = idx + chunkIdx;
-        try {
-          const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
-          if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
-          if (data?.channel?.contentId) {
-            v.channelId = data.channel.contentId;
-            v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
-            v.channelImage = data.channel.contentImage;
-            v.channelDesc = data.channel.description?.[0]?.description;
-          }
-        } catch (e) { }
-        if (!modal.isConnected) return;
-        const timeEl = modal.querySelector(`#pl-time-${itemIdx}`);
-        if (timeEl) timeEl.textContent = `${v.time} min`;
-      }));
-    }
-  })();
-
   modal.querySelector('#pl-toggle-jp')!.addEventListener('click', (e) => {
     hideNonJp = !hideNonJp;
     (e.target as HTMLElement).textContent = hideNonJp ? 'Show Non-JP' : 'Hide Non-JP';
@@ -340,25 +339,42 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     const fallbackChanName = await getChannelNameFallback();
     const fallbackChanId = await getYouTubeChannelId();
 
-    for (const v of checked) {
-      const finalChanId = v.channelId || fallbackChanId || "web-video";
-      const finalChanTitle = v.channelTitle || fallbackChanName || "Unknown Channel";
+    // Fetch details strictly on-demand in parallel chunks of 3 only for selected logging records
+    const uploadChunkSize = 3;
+    for (let idx = 0; idx < checked.length; idx += uploadChunkSize) {
+      const chunk = checked.slice(idx, idx + uploadChunkSize);
+      await Promise.all(chunk.map(async (v) => {
+        try {
+          const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
+          if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
+          if (data?.channel?.contentId) {
+            v.channelId = data.channel.contentId;
+            v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
+            v.channelImage = data.channel.contentImage;
+            v.channelDesc = data.channel.description?.[0]?.description;
+          }
+        } catch (e) { }
 
-      const specificMediaData = {
-        channelId: finalChanId,
-        channelTitle: finalChanTitle,
-        ...(v.channelImage ? { channelImage: v.channelImage } : {}),
-        ...(v.channelDesc ? { channelDescription: v.channelDesc } : {})
-      };
+        const finalChanId = v.channelId || fallbackChanId || "web-video";
+        const finalChanTitle = v.channelTitle || fallbackChanName || "Unknown Channel";
 
-      const ok = await submitLog({
-        type: 'video', mediaId: finalChanId,
-        description: stripVideoTitle(v.title), mediaData: specificMediaData,
-        time: v.time, date: new Date().toISOString(),
-        private: false, episodes: 0, pages: 0, unknownDate: false
-      });
-      if (ok?.success) successCount++;
+        const specificMediaData = {
+          channelId: finalChanId,
+          channelTitle: finalChanTitle,
+          ...(v.channelImage ? { channelImage: v.channelImage } : {}),
+          ...(v.channelDesc ? { channelDescription: v.channelDesc } : {})
+        };
+
+        const ok = await submitLog({
+          type: 'video', mediaId: finalChanId,
+          description: stripVideoTitle(v.title), mediaData: specificMediaData,
+          time: v.time, date: new Date().toISOString(),
+          private: false, episodes: 0, pages: 0, unknownDate: false
+        });
+        if (ok?.success) successCount++;
+      }));
     }
+
     showToast('Success', `Logged ${successCount}/${checked.length} videos`);
     modal.remove();
   });

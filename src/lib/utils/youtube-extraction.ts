@@ -15,8 +15,20 @@ let _extractedAuthor: string | null = null;
 // Tracking variables for scanning state
 let _lastUrl = '';
 let _lastScriptCount = 0;
+let _lastScannedIndex = 0;
 let _cidScannedAndFound = false;
 let _authorScannedAndFound = false;
+
+/** Utility to keep cache sizes bound and prevent memory leaks in SPA contexts */
+function pruneCache(cache: Record<string, any>, maxSize = 100) {
+    const keys = Object.keys(cache);
+    if (keys.length > maxSize) {
+        const toRemove = Math.ceil(maxSize * 0.2); // Evict oldest 20%
+        for (let i = 0; i < toRemove; i++) {
+            delete cache[keys[i]];
+        }
+    }
+}
 
 function extractFromScripts() {
     const pageUrl = window.location.href;
@@ -29,6 +41,7 @@ function extractFromScripts() {
         _extractedCid = null;
         _extractedAuthor = null;
         _lastScriptCount = 0;
+        _lastScannedIndex = 0;
         _cidScannedAndFound = false;
         _authorScannedAndFound = false;
     }
@@ -40,7 +53,8 @@ function extractFromScripts() {
     if ((needsCid || needsAuthor) && scriptCount !== _lastScriptCount) {
         _lastScriptCount = scriptCount;
 
-        for (let i = 0; i < scriptCount; i++) {
+        // Start scanning exactly where we left off to avoid redundant allocations and heavy string parses
+        for (let i = _lastScannedIndex; i < scriptCount; i++) {
             if (_cidScannedAndFound && _authorScannedAndFound) {
                 break; // Exit early if both pieces of data are resolved
             }
@@ -63,6 +77,7 @@ function extractFromScripts() {
                 }
             }
         }
+        _lastScannedIndex = scriptCount;
     }
 }
 
@@ -73,6 +88,7 @@ export function clearExtractionCaches() {
     _extractedCid = null;
     _extractedAuthor = null;
     _lastScriptCount = 0;
+    _lastScannedIndex = 0;
     _cidScannedAndFound = false;
     _authorScannedAndFound = false;
     _lastUrl = '';
@@ -99,6 +115,7 @@ export async function fetchYouTubeVideoData(url: string) {
             });
             if (res.ok) {
                 const data = await res.json();
+                pruneCache(ytApiCache, 100);
                 ytApiCache[clean] = data;
                 return data;
             }
@@ -122,6 +139,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     // 1. Try local extraction via canonical script details
     extractFromScripts();
     if (_extractedCid) {
+        pruneCache(_cachedChannelIdByUrl, 50);
         _cachedChannelIdByUrl[pageUrl] = _extractedCid;
         return _extractedCid;
     }
@@ -131,6 +149,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     if (channelLink) {
         const cid = channelLink.getAttribute('content');
         if (cid) {
+            pruneCache(_cachedChannelIdByUrl, 50);
             _cachedChannelIdByUrl[pageUrl] = cid;
             return cid;
         }
@@ -141,6 +160,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     if (ownerLink) {
         const m = ownerLink.getAttribute('href')?.match(/(UC[a-zA-Z0-9_-]{22})/);
         if (m) {
+            pruneCache(_cachedChannelIdByUrl, 50);
             _cachedChannelIdByUrl[pageUrl] = m[1];
             return m[1];
         }
@@ -150,6 +170,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
         const data = await fetchYouTubeVideoData(window.location.href);
         if (data?.channel?.contentId) {
+            pruneCache(_cachedChannelIdByUrl, 50);
             _cachedChannelIdByUrl[pageUrl] = data.channel.contentId;
             return data.channel.contentId;
         }
@@ -166,12 +187,14 @@ export async function getChannelNameFallback(): Promise<string> {
 
     const ownerName = document.querySelector('#owner ytd-video-owner-renderer yt-formatted-string.ytd-channel-name');
     if (ownerName?.textContent?.trim()) {
+        pruneCache(_cachedChannelNameByUrl, 50);
         _cachedChannelNameByUrl[pageUrl] = ownerName.textContent.trim();
         return _cachedChannelNameByUrl[pageUrl];
     }
 
     extractFromScripts();
     if (_extractedAuthor) {
+        pruneCache(_cachedChannelNameByUrl, 50);
         _cachedChannelNameByUrl[pageUrl] = _extractedAuthor;
         return _extractedAuthor;
     }
@@ -180,7 +203,10 @@ export async function getChannelNameFallback(): Promise<string> {
         const data = await fetchYouTubeVideoData(window.location.href);
         if (data?.channel?.title) {
             const name = data.channel.title.contentTitleNative || data.channel.title.contentTitleEnglish || '';
-            if (name) _cachedChannelNameByUrl[pageUrl] = name;
+            if (name) {
+                pruneCache(_cachedChannelNameByUrl, 50);
+                _cachedChannelNameByUrl[pageUrl] = name;
+            }
             return name;
         }
     }
@@ -209,6 +235,7 @@ export async function getChannelMediaData(chanId: string | null, fallbackTitle =
         ...(media.channelImage ? { channelImage: media.channelImage } : {}),
         ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
     };
+    pruneCache(channelMediaCache, 100);
     channelMediaCache[key] = normalized;
     return normalized;
 }
