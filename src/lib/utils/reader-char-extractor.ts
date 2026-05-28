@@ -50,17 +50,7 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Robust regular expression that captures:
- * - \p{L} and \p{N} (Letters and numbers across all scripts)
- * - \u3007 (〇 - Ideographic Number Zero)
- * - \u25CB (○ - White Circle placeholder)
- * - \u25EF (◯ - Large Circle placeholder)
- * - \u25CF (● - Black Circle placeholder)
- * - \u25A0 (■ - Black Square placeholder)
- * - \u25A1 (□ - White Square placeholder)
- * 
- * Note: Multiplication and cross-style censor markers (such as \u00D7 (×), \u2715 (✕), or \uFF0A (＊)) 
- * are intentionally excluded to keep them from inflating reading statistics.
+ * Robust regular expression that captures letters/numbers and placeholder symbols.
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
 
@@ -118,6 +108,10 @@ function getSectionIndex(container: Element): number | null {
 
         // Fallback to sequential hashing if no digits exist
         if (!seenSectionIds.has(id)) {
+            // Prevent unbounded memory growth over extended SPA reader sessions
+            if (seenSectionIds.size > 500) {
+                seenSectionIds.clear();
+            }
             const nextVal = seenSectionIds.size;
             seenSectionIds.set(id, nextVal);
         }
@@ -146,7 +140,7 @@ function watchContainerMutations(container: Element) {
             if (cl.contains('jiten-word') || cl.contains('yomichan') || cl.contains('yomitan')) return true;
             for (let i = 0; i < cl.length; i++) {
                 const c = cl[i].toLowerCase();
-                if (c.includes('jiten') || c.includes('yomi')) return true;
+                if (c.indexOf('jiten') !== -1 || c.indexOf('yomi') !== -1) return true;
             }
         }
         if (el.getAttribute('ajb') === 'true') return true;
@@ -155,7 +149,8 @@ function watchContainerMutations(container: Element) {
 
     containerObserver = new MutationObserver((mutations) => {
         let realMutation = false;
-        for (const m of mutations) {
+        for (let i = 0; i < mutations.length; i++) {
+            const m = mutations[i];
             const target = m.target as HTMLElement;
             if (!target) continue;
 
@@ -178,15 +173,21 @@ function watchContainerMutations(container: Element) {
                         return true;
                     }
 
-                    for (let i = 0; i < el.children.length; i++) {
-                        if (checkNode(el.children[i])) return true;
+                    for (let j = 0; j < el.children.length; j++) {
+                        if (checkNode(el.children[j])) return true;
                     }
                     return false;
                 };
 
                 let hasBlockChange = false;
-                m.addedNodes.forEach(node => { if (checkNode(node)) hasBlockChange = true; });
-                m.removedNodes.forEach(node => { if (checkNode(node)) hasBlockChange = true; });
+                for (let j = 0; j < m.addedNodes.length; j++) {
+                    if (checkNode(m.addedNodes[j])) { hasBlockChange = true; break; }
+                }
+                if (!hasBlockChange) {
+                    for (let j = 0; j < m.removedNodes.length; j++) {
+                        if (checkNode(m.removedNodes[j])) { hasBlockChange = true; break; }
+                    }
+                }
 
                 if (hasBlockChange) {
                     realMutation = true;
@@ -228,6 +229,9 @@ export function extractAdvancedCharCount(
             lastContainer = readerContainer;
             lastContainerId = currentContainerId;
             isCacheValid = false;
+            // Solve Detached DOM Memory Leak: Clean cached elements to prevent holding old chapters in memory
+            ttuCachedNodes = [];
+            ttuCachedAccumulated = [];
             watchContainerMutations(readerContainer);
         }
 
@@ -276,8 +280,7 @@ export function extractAdvancedCharCount(
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
-        // Layout Stability Guard: If Svelte is rendering but has not applied dimensions,
-        // we defer transition processing to prevent premature character jumps.
+        // Layout Stability Guard: If layout is not loaded, defer transition processing
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
@@ -331,7 +334,7 @@ export function extractAdvancedCharCount(
 
             let explored = false;
             if (r.width === 0 || r.height === 0) {
-                explored = true; // Treats unrendered nodes as explored to bypass frozen baselines
+                explored = true; // Treats unrendered nodes as explored
             } else if (cachedIsVertical) {
                 if (cachedIsPaginated) {
                     explored = r.bottom <= 1;
@@ -366,10 +369,10 @@ export function extractAdvancedCharCount(
             const activeEl = ttuCachedNodes[currentIdx];
             const r = activeEl.getBoundingClientRect();
 
-            // Continuous Scroll Boundary Check: Skip checking if paragraph hasn't crossed boundary
+            // Continuous Scroll Boundary Check
             let needsSubParagraphTracking = false;
             if (cachedIsPaginated) {
-                // Goal 1: Bypass text-node measurements in columns unless split across layout borders or highlight is active
+                // Goal 1: Bypass text-node measurements in columns unless split or highlighted
                 const isSplit = cachedIsVertical
                     ? (r.bottom > cachedVh || r.top < 0)
                     : (r.right > cachedVw || r.left < 0);
@@ -424,7 +427,6 @@ export function extractAdvancedCharCount(
                     let n;
                     let checkedNodesCount = 0;
 
-                    // Lazy-load DOM Range to prevent memory churn
                     if (!reusableRange && typeof document !== 'undefined') {
                         reusableRange = document.createRange();
                     }
@@ -435,7 +437,6 @@ export function extractAdvancedCharCount(
                             continue;
                         }
 
-                        // Check if node actually contains Japanese characters before querying layout
                         const text = n.nodeValue || '';
                         if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
                             continue;
@@ -444,7 +445,7 @@ export function extractAdvancedCharCount(
                         checkedNodesCount++;
 
                         let sExp = false;
-                        // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation when wrapped in Jiten spans
+                        // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation
                         if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
                             const nr = parent.getBoundingClientRect();
                             if (nr.width > 0 && nr.height > 0) {

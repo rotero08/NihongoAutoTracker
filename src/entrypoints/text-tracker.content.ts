@@ -56,7 +56,7 @@ const READING_VIEW_CACHE_TTL = 500; // ms
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
 let _overlayCache: HTMLElement | null = null;
 
-let _mutationMicrotaskScheduled = false;
+let _mutationRafScheduled = false;
 let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
@@ -353,7 +353,6 @@ const stateRefs: StateRefs = {
 
 /**
  * Reactive proxy container for the tracking state.
- * Intercepts resets to synchronize the tick baseline, eliminating fractional carryover.
  */
 const ttuState = new Proxy({
   id: crypto.randomUUID(),
@@ -609,8 +608,7 @@ function recalculateChars() {
       stateRefs.globalSessionStartChar = current;
     }
 
-    // Scroll Alignment Grace Window: Set baseline to moving positions during layout
-    // recalculation to prevent premature character additions
+    // Scroll Alignment Grace Window
     if (Date.now() < _transitionGraceUntil) {
       stateRefs.globalSessionStartChar = current;
       return;
@@ -703,9 +701,9 @@ async function setupTTUChronometer() {
       clearInterval((window as any).ntChronoInterval);
     }
 
-    // High temporal resolution interval (200ms) for an instantaneous, snappy timing experience
+    // High temporal resolution interval (200ms) for an instantaneous experience
     (window as any).ntChronoInterval = setInterval(() => {
-      // Suspend calculations if tab is in the background to lower idle thread activity
+      // Suspend calculations if tab is in the background
       if (document.hidden) {
         if (ttuState.running) {
           stateRefs.globalLastTick = Date.now();
@@ -728,13 +726,13 @@ async function setupTTUChronometer() {
 
         ttuState.timeMs += elapsed;
 
-        // Point 3 Optimization: Skip coordinate calculation completely when the dropdown menu is closed
+        // Point 3 Optimization: Skip coordinate calculation when the dropdown menu is closed
         const dropdown = document.getElementById('nt-ttu-dropdown');
         const isDropdownOpen = !!(dropdown && dropdown.classList.contains('open'));
 
         // Silent Background Protection during active running mutations (Point 2A)
         if (isSilentGraceActive) {
-          // Suspends progress checking during the Jiten parse storm to prevent baseline corruption
+          // Suspends progress checking during parsing
         } else if (isDropdownOpen || (now - lastBackgroundCharCheck) >= 5000) {
           lastBackgroundCharCheck = now;
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
@@ -815,7 +813,7 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
 }
 
 function isChapterLoading(): boolean {
-  // Center screen loader check specifically targeted to prevent matching standard sidebar/gear icons
+  // Center screen loader check
   const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
   if (loader && loader.querySelector('svg')) {
     return true;
@@ -825,6 +823,35 @@ function isChapterLoading(): boolean {
     return true;
   }
   return false;
+}
+
+function isDictNode(node: Node): boolean {
+  if (node.nodeType === Node.TEXT_NODE) return true;
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const el = node as HTMLElement;
+    const tag = el.tagName;
+    if (tag === 'RT' || tag === 'RP' || tag === 'RUBY') return true;
+    const nodeCl = el.classList;
+    if (nodeCl) {
+      if (nodeCl.contains('jiten-word') || nodeCl.contains('yomichan') || nodeCl.contains('yomitan')) return true;
+      for (let i = 0; i < nodeCl.length; i++) {
+        const c = nodeCl[i].toLowerCase();
+        if (c.indexOf('jiten') !== -1 || c.indexOf('yomi') !== -1) return true;
+      }
+    }
+    if (el.getAttribute('ajb') === 'true') return true;
+  }
+  return false;
+}
+
+// Highly optimized rendering batcher aligning with paint frames (replaces queueMicrotask)
+function scheduleMutations() {
+  if (_mutationRafScheduled) return;
+  _mutationRafScheduled = true;
+  requestAnimationFrame(() => {
+    _mutationRafScheduled = false;
+    handleMutations();
+  });
 }
 
 if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -850,32 +877,39 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 
       // Ignore Jiten / Yomichan / Yomitan childList modifications
       if (m.type === 'childList') {
-        const isDictionaryMutation = Array.from(m.addedNodes).concat(Array.from(m.removedNodes)).every(node => {
-          if (node.nodeType === Node.TEXT_NODE) return true;
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            const el = node as HTMLElement;
-            const tag = el.tagName;
-            if (tag === 'RT' || tag === 'RP' || tag === 'RUBY') return true;
-            const nodeCl = el.classList;
-            if (nodeCl) {
-              if (nodeCl.contains('jiten-word') || nodeCl.contains('yomichan') || nodeCl.contains('yomitan')) return true;
-              for (let i = 0; i < nodeCl.length; i++) {
-                const c = nodeCl[i].toLowerCase();
-                if (c.includes('jiten') || c.includes('yomi')) return true;
-              }
-            }
-            if (el.getAttribute('ajb') === 'true') return true;
+        let isDictionaryMutation = true;
+
+        // Perform fast, zero-allocation imperative iterations
+        for (let i = 0; i < m.addedNodes.length; i++) {
+          if (!isDictNode(m.addedNodes[i])) {
+            isDictionaryMutation = false;
+            break;
           }
-          return false;
-        });
+        }
+
+        if (isDictionaryMutation) {
+          for (let i = 0; i < m.removedNodes.length; i++) {
+            if (!isDictNode(m.removedNodes[i])) {
+              isDictionaryMutation = false;
+              break;
+            }
+          }
+        }
 
         // Dynamic Jiten parser detection & routing (Goal 2 & Point 2A)
         if (!isGracePeriodActive && !isSilentGraceActive) {
-          const hasJitenAdded = Array.from(m.addedNodes).some(node => {
-            if (node.nodeType !== Node.ELEMENT_NODE) return false;
-            const el = node as HTMLElement;
-            return el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || el.className?.toLowerCase().includes('jiten');
-          });
+          let hasJitenAdded = false;
+          for (let i = 0; i < m.addedNodes.length; i++) {
+            const node = m.addedNodes[i];
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const el = node as HTMLElement;
+              const cl = el.className;
+              if (el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || (cl && cl.toLowerCase().indexOf('jiten') !== -1)) {
+                hasJitenAdded = true;
+                break;
+              }
+            }
+          }
           if (hasJitenAdded) {
             if (ttuState.running) {
               runSilentGracePeriodIfJiten();
@@ -898,8 +932,7 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
         }
       }
 
-      _mutationMicrotaskScheduled = true;
-      queueMicrotask(handleMutations);
+      scheduleMutations();
       break;
     }
   });
@@ -908,7 +941,6 @@ if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
 }
 
 function handleMutations() {
-  _mutationMicrotaskScheduled = false;
   invalidateReadingViewCache();
 
   const isLoaderActive = isChapterLoading();
@@ -943,7 +975,7 @@ function handleMutations() {
     if (wrapper) wrapper.remove();
   }
 
-  // Yatsu whispersync layout adjustment: Adjust gap when whispersync is detected on app.yatsu.moe
+  // Yatsu whispersync layout adjustment
   if (wrapper) {
     const isYatsu = window.location.hostname.includes('app.yatsu.moe');
     const isWhispersyncActive = isYatsu && !!(
@@ -965,7 +997,7 @@ function handleMutations() {
     setupProgressObserver();
   }
 
-  // 2. Section transition detector (throttled to max once per 50ms for instantaneous updates)
+  // 2. Section transition detector (throttled to max once per 50ms)
   const now = Date.now();
   if ((now - _lastSectionCheckTime) >= 50) {
     _lastSectionCheckTime = now;
@@ -974,7 +1006,7 @@ function handleMutations() {
       const { total, sectionIndex, isPaginated } = charData;
       const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-      // View-Mode Switch Safeguard: Cleanly purge old metrics if we transitioned reading types
+      // View-Mode Switch Safeguard
       if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
         stateRefs.globalSessionStartChar = -1;
         stateRefs.globalManualCharOffset = 0;
@@ -1004,7 +1036,7 @@ function handleMutations() {
         // Reset dynamic stabilization trigger flag on chapter transitions
         hasInitialJitenParseOccurred = false;
 
-        // Handle temporary non-text pages (e.g. image-only chapters/illustrations) without wiping state
+        // Handle temporary non-text pages without wiping state
         if (activeSection === -1) {
           if (!isReadingViewActive()) {
             stateRefs.lastSectionIndex = -1;
@@ -1030,7 +1062,7 @@ function handleMutations() {
             }
           }
 
-          // Sync baseline progress boundary so going backward stays clamped at 0 session progress
+          // Sync baseline progress boundary
           if (isPaginated) {
             if (activeSection < stateRefs.sessionInitialSectionIndex) {
               stateRefs.globalSessionStartChar = total;
@@ -1213,7 +1245,6 @@ browser.storage.onChanged.addListener((changes, area) => {
     const rawTitle = getTTUTitle();
     const parsedRaw = parseTitleWithConfig(rawTitle).query;
 
-    // Robust Core Title matching to avoid resetting the session on slight chapter/page title drifts
     const existing = queue.find((q: any) => {
       const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '').query;
       return qParsed === parsedRaw;

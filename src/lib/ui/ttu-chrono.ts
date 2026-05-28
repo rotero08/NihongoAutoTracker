@@ -76,6 +76,10 @@ export function setupTTUChronometerUI(
                 50% { opacity: 1.0; }
                 100% { opacity: 0.4; }
             }
+            #nt-ttu-chrono-wrapper {
+                will-change: transform;
+                transform: translateZ(0);
+            }
             .nt-ttu-sync-status {
                 display: flex;
                 align-items: center;
@@ -89,6 +93,8 @@ export function setupTTUChronometerUI(
                 animation: nt-fade-pulse 1.8s ease-in-out infinite; 
             }
             .nt-ttu-spinner {
+                will-change: transform, opacity;
+                transform: translateZ(0);
                 width: 12px;
                 height: 12px;
                 margin-right: 6px;
@@ -500,7 +506,7 @@ export function setupTTUChronometerUI(
                     }
 
                     await updateHistoryData();
-                    updateUI();
+                    triggerUIUpdate();
                 });
             });
         }
@@ -555,6 +561,17 @@ export function setupTTUChronometerUI(
         }
     };
 
+    // Double-buffered visual updates aligning perfectly with layout paint schedules
+    let uiUpdatePending = false;
+    const triggerUIUpdate = () => {
+        if (uiUpdatePending) return;
+        uiUpdatePending = true;
+        requestAnimationFrame(() => {
+            uiUpdatePending = false;
+            updateUI();
+        });
+    };
+
     const makeEditable = (el: Element, isTime: boolean) => {
         el.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -596,7 +613,7 @@ export function setupTTUChronometerUI(
                     }
                 }
                 input.replaceWith(el);
-                updateUI();
+                triggerUIUpdate();
             };
             input.addEventListener('blur', commit);
             input.addEventListener('keydown', ev => {
@@ -621,7 +638,7 @@ export function setupTTUChronometerUI(
 
         const willOpen = !dropdown.classList.contains('open');
 
-        // Synchronous Pre-rendering logic (Point 3): Update character progress nodes BEFORE toggle to prevent visual jumps
+        // Batched progress syncing
         if (willOpen) {
             const charData = helpers.extractTTUCharCount();
             if (charData && typeof charData === 'object') {
@@ -634,7 +651,6 @@ export function setupTTUChronometerUI(
                 ttuState.chars = diff + stateRefs.globalManualCharOffset;
             }
 
-            // Sync stats values immediately in the same paint tick
             if (timeVal.tagName !== 'INPUT') timeVal.textContent = fmt(ttuState.timeMs);
             if (charsVal.tagName !== 'INPUT') charsVal.textContent = ttuState.chars.toString();
 
@@ -656,7 +672,7 @@ export function setupTTUChronometerUI(
         }
 
         dropdown.classList.toggle('open');
-        updateUI();
+        triggerUIUpdate();
     });
 
     btn.addEventListener('dblclick', (e) => {
@@ -678,15 +694,19 @@ export function setupTTUChronometerUI(
             }
             stateRefs.globalLastTick = Date.now();
         } else if (wasRunning) {
-            // High-precision mouse-hardware double-click back-deduction (Math correction)
+            // High-precision hardware timestamp deduction normalizing epoch origin drift
             const eventTime = e.timeStamp;
             const now = performance.now();
-            const latency = now - eventTime;
+            let latency = now - eventTime;
+            if (eventTime > 1000000000000) {
+                const absoluteNow = Date.now();
+                latency = absoluteNow - eventTime;
+            }
             if (latency > 50 && latency < 10000) {
                 ttuState.timeMs = Math.max(0, ttuState.timeMs - latency);
             }
         }
-        updateUI();
+        triggerUIUpdate();
     });
 
     // Custom instant tooltip events aligned left and sliding upward (Issue 1 & Requirement 1 Fix)
@@ -723,7 +743,7 @@ export function setupTTUChronometerUI(
             }
             stateRefs.globalLastTick = Date.now();
         }
-        updateUI();
+        triggerUIUpdate();
     });
 
     wrapper.querySelector('#nt-ttu-btn-reset')!.addEventListener('click', (e) => {
@@ -738,7 +758,7 @@ export function setupTTUChronometerUI(
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
 
-        updateUI();
+        triggerUIUpdate();
     });
 
     // Handle background status event when running (Issue 2 & 3 Fix)
@@ -748,19 +768,18 @@ export function setupTTUChronometerUI(
         if (statusEl) {
             statusEl.style.display = isParsing ? 'flex' : 'none';
         }
-        // Button glow and scale filters completely removed during status changes (Issue 3 Fix)
     });
 
     wrapper.addEventListener('nt-linker-refresh', () => {
         refreshLinkerUI();
-        updateUI();
+        triggerUIUpdate();
     });
 
     wrapper.addEventListener('nt-history-refresh', () => {
-        updateHistoryData().then(() => updateUI());
+        updateHistoryData().then(() => triggerUIUpdate());
     });
 
     pt.el.insertAdjacentElement(pt.pos, wrapper);
-    updateHistoryData().then(() => updateUI());
+    updateHistoryData().then(() => triggerUIUpdate());
     refreshLinkerUI();
 }
