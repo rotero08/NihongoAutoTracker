@@ -135,31 +135,20 @@ function findDOMAccentColor(isDark: boolean): string | null {
   const rootStyle = window.getComputedStyle(document.documentElement);
   const bodyStyle = window.getComputedStyle(document.body);
 
-  // 1. Prioritize native CSS variables representing the exact theme accent/primary colors (Goal 1 Fix)
-  const cssVars = [
-    '--color-accent', '--accent-color', '--accent', '--theme-color', '--main-color',
-    '--theme-accent', '--primary', '--color-primary', '--md-sys-color-primary',
-    '--yatsu-accent', '--yatsu-primary', '--ttu-color-accent', '--ttu-accent', '--color-main'
-  ];
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+  let cssVars: string[] = [];
 
-  // Standardize accent extraction across the three core readers by skipping noisy generic DOM scans (Issue Accent Match Fix)
-  const isReaderPage = window.location.hostname.includes('reader.ttsu.app') ||
-    window.location.hostname.includes('app.yatsu.moe') ||
-    window.location.hostname.includes('manga.manabe.es') ||
-    window.location.hostname.includes('yomiyasu') ||
-    !!getActiveReaderAdapter();
-
-  if (isReaderPage) {
-    for (const cssVar of cssVars) {
-      const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
-      if (val) {
-        const rgb = parseColorToRgb(val);
-        if (isValidAccent(rgb, isDark)) {
-          return val;
-        }
-      }
-    }
-    return isDark ? '#f5a623' : '#92400e';
+  // Site-specific variable prioritization to match the correct theme accents (peach/lavender/mint) uniformly (Issue Accent Fix)
+  if (host.includes('yatsu.moe')) {
+    cssVars = ['--yatsu-accent', '--yatsu-primary', '--color-primary', '--color-accent', '--accent-color'];
+  } else if (host.includes('ttsu.app') || host.includes('manabe.es') || host.includes('yomiyasu')) {
+    cssVars = ['--color-accent', '--ttu-color-accent', '--ttu-accent', '--accent-color', '--accent', '--color-primary'];
+  } else {
+    cssVars = [
+      '--color-accent', '--accent-color', '--accent', '--theme-color', '--main-color',
+      '--theme-accent', '--primary', '--color-primary', '--md-sys-color-primary',
+      '--yatsu-accent', '--ttu-color-accent', '--color-main'
+    ];
   }
 
   for (const cssVar of cssVars) {
@@ -170,6 +159,17 @@ function findDOMAccentColor(isDark: boolean): string | null {
         return val;
       }
     }
+  }
+
+  // Fallback to DOM elements only if we are not on the main reader pages
+  const isReaderPage = host.includes('reader.ttsu.app') ||
+    host.includes('app.yatsu.moe') ||
+    host.includes('manga.manabe.es') ||
+    host.includes('yomiyasu') ||
+    !!getActiveReaderAdapter();
+
+  if (isReaderPage) {
+    return isDark ? '#f5a623' : '#92400e';
   }
 
   // 2. Active, highlighted, or selected elements
@@ -307,36 +307,25 @@ export function detectReaderThemeColors(): any {
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
     let accent = isDark ? '#f5a623' : '#92400e';
-    const isReaderPage = window.location.hostname.includes('reader.ttsu.app') ||
-      window.location.hostname.includes('app.yatsu.moe') ||
-      window.location.hostname.includes('manga.manabe.es') ||
-      window.location.hostname.includes('yomiyasu') ||
-      !!getActiveReaderAdapter();
-
-    if (isReaderPage) {
-      // Force identical high-contrast theme accents on the core readers (Contrast Fix)
-      accent = isDark ? '#f5a623' : '#92400e';
-    } else {
-      const extractedAccent = findDOMAccentColor(isDark);
-      if (extractedAccent) {
-        accent = extractedAccent;
-      }
-
-      // Mathematically enforce high contrast and vibrant saturation for custom sites (Contrast Fix)
-      const rgbAccent = parseColorToRgb(accent);
-      const hslAccent = rgbToHsl(rgbAccent.r, rgbAccent.g, rgbAccent.b);
-
-      if (isDark) {
-        hslAccent.l = Math.max(52, hslAccent.l);
-        hslAccent.s = Math.max(55, hslAccent.s);
-      } else {
-        hslAccent.l = Math.min(40, hslAccent.l);
-        hslAccent.s = Math.max(60, hslAccent.s);
-      }
-
-      const contrastAccentRgb = hslToRgb(hslAccent.h, hslAccent.s, hslAccent.l);
-      accent = `rgb(${contrastAccentRgb.r}, ${contrastAccentRgb.g}, ${contrastAccentRgb.b})`;
+    const extractedAccent = findDOMAccentColor(isDark);
+    if (extractedAccent) {
+      accent = extractedAccent;
     }
+
+    // Mathematically adjust the matched active color to ensure ideal legibility and saturation (Contrast Fix)
+    const rgbAccent = parseColorToRgb(accent);
+    const hslAccent = rgbToHsl(rgbAccent.r, rgbAccent.g, rgbAccent.b);
+
+    if (isDark) {
+      hslAccent.l = Math.max(52, Math.min(68, hslAccent.l));
+      hslAccent.s = Math.max(60, hslAccent.s);
+    } else {
+      hslAccent.l = Math.max(25, Math.min(38, hslAccent.l));
+      hslAccent.s = Math.max(65, hslAccent.s);
+    }
+
+    const contrastAccentRgb = hslToRgb(hslAccent.h, hslAccent.s, hslAccent.l);
+    accent = `rgb(${contrastAccentRgb.r}, ${contrastAccentRgb.g}, ${contrastAccentRgb.b})`;
 
     const parsedAccent = parseColorToRgb(accent);
     let accentHover = isDark ? adjustLightness(parsedAccent, 15) : adjustLightness(parsedAccent, -15);

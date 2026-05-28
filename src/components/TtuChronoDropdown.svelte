@@ -352,23 +352,15 @@
         }
     }
 
-    function openSettings(e: MouseEvent) {
+    const handleOpenSettings = (e: MouseEvent) => {
         e.stopPropagation();
-        browser.runtime
-            .sendMessage({
+        try {
+            browser.runtime.sendMessage({
                 action: "OPEN_SETTINGS",
                 tab: "readers",
-                hash: "#readers",
-            })
-            .catch(() => {
-                window.open(
-                    browser.runtime.getURL(
-                        "/settings.html?tab=readers#readers",
-                    ),
-                    "_blank",
-                );
             });
-    }
+        } catch {}
+    };
 
     // AniList linkage helpers with Svelte 5 two-way state sync bindings (Issue 5 Fix)
     function handleAnilistInput(query: string, instant = false) {
@@ -886,8 +878,8 @@
             <button
                 class="nt-ttu-btn-icon"
                 id="nt-ttu-btn-settings"
-                onclick={openSettings}
                 title="Open Tracker Settings"
+                onclick={handleOpenSettings}
             >
                 <svg
                     viewBox="0 0 24 24"
