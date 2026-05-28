@@ -11,7 +11,7 @@
 
 import { configStorage } from '../storage/config';
 import { addDebugLog } from '../storage/debug';
-import { notify } from './youtube';
+import { notify } from '../utils/toast';
 
 /** Base URL for the NihongoTracker API */
 const API_BASE = 'https://nihongotracker.app/api';

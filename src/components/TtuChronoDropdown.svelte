@@ -18,8 +18,6 @@
         getCurrentReaderConfig,
         liveSyncQueue,
         saveSessionAndQueue,
-        isGracePeriodActive,
-        isSilentGraceActive,
     } = $props();
 
     // Reactive Svelte States (Synchronized with global plain proxies)

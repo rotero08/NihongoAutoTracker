@@ -81,6 +81,19 @@ export interface QueueSession {
   chars?: number;
 }
 
+export interface TTUHistorySession {
+  id: string;
+  date: string;
+  timeMs: number;
+  chars: number;
+}
+
+export interface TTULinkedBook {
+  mediaId: string | number;
+  volume?: number;
+  mediaData: ReadingMediaData;
+}
+
 export interface QueuedVideoLog {
   id: string;
   contentTitleNative: string;

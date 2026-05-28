@@ -56,6 +56,10 @@ export class PlayerTrackerEngine {
         this.hasTriggered = val;
     }
 
+    public getLastSyncSecs(): number {
+        return this.lastSyncSecs;
+    }
+
     public flushPlayClock(discard = false): void {
         if (this.playClockStart < 0) return;
         const elapsed = (performance.now() - this.playClockStart) / 1000;
@@ -99,9 +103,10 @@ export class PlayerTrackerEngine {
         const finalTitle = stripVideoTitle(videoTitle);
         const secs = this.getLiveWatched();
 
+        const mediaData = await getChannelMediaData(channelId, channelName);
+
         await updateVideoQueueAtomic(async (queue) => {
             const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
-            const mediaData = await getChannelMediaData(channelId, channelName);
 
             if (idx !== -1) {
                 const item = queue[idx] as any;
@@ -184,6 +189,12 @@ export class PlayerTrackerEngine {
         const tType = cfg.queueThresholdType ?? 'time';
         const tValue = cfg.queueThresholdValue ?? 1;
         const liveSecs = this.getLiveWatched();
+        if (vid.duration === Infinity) {
+            // For live video streams, percentage-based thresholds are mathematically meaningless.
+            // If the threshold type is percent, we fall back to a sensible time-based default (1 minute).
+            const thresholdMins = tType === 'percent' ? 1 : tValue;
+            return (liveSecs / 60) >= thresholdMins;
+        }
         if (tType === 'percent') {
             if (!vid.duration || vid.duration <= 0) return false;
             return (vid.currentTime / vid.duration) * 100 >= tValue;
@@ -227,9 +238,12 @@ export class PlayerTrackerEngine {
             if (isJapanese && !skipMusic) {
                 const threshType = cfg.thresholdType ?? 'percent';
                 const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-                const triggered = threshType === 'percent'
-                    ? (vid.currentTime / vid.duration) * 100 >= threshValue
-                    : (liveSecs / 60) >= threshValue;
+                const isLive = vid.duration === Infinity;
+                const triggered = isLive
+                    ? (liveSecs / 60) >= (threshType === 'percent' ? 5 : threshValue)
+                    : (threshType === 'percent'
+                        ? (vid.currentTime / vid.duration) * 100 >= threshValue
+                        : (liveSecs / 60) >= threshValue);
 
                 if (triggered) {
                     this.hasTriggered = true;

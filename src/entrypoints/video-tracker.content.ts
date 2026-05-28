@@ -174,7 +174,7 @@ async function handleBadgeClick() {
     videoTitle: finalTitle,
     url: currentUrl,
     totalSecs: engine.getTotal(),
-    videoDurationSecs: trackedVideo.duration && !isNaN(trackedVideo.duration) && trackedVideo.duration > 0
+    videoDurationSecs: trackedVideo.duration && !isNaN(trackedVideo.duration) && trackedVideo.duration > 0 && Number.isFinite(trackedVideo.duration)
       ? trackedVideo.duration
       : engine.getTotal(),
     showTotal: liveShowTotal,
@@ -613,7 +613,7 @@ export default defineContentScript({
     // Active state-checking healing thread to recover play clocks suspended by backgrounding or transient buffer drops
     setInterval(() => {
       const currentHref = cleanUrl(window.location.href);
-      if (!isYouTubeShorts() && currentHref.includes('watch')) {
+      if (!isYouTubeShorts() && (currentHref.includes('watch') || !window.location.hostname.includes('youtube.com'))) {
         const vid = document.querySelector<HTMLVideoElement>('video');
         if (vid) {
           if (trackedVideo !== vid || currentUrl !== currentHref) {
@@ -759,7 +759,9 @@ export default defineContentScript({
       if (isYouTubeShorts()) return;
       const clean = cleanUrl(window.location.href);
       if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
-        resetSession();
+        if (engine.getLastSyncSecs() > 0) {
+          resetSession();
+        }
       }
     });
   },

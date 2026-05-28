@@ -7,7 +7,7 @@ import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
-import { readingQueueStorage } from '@/lib/storage/queues';
+import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
 import { ttuLinkStorage, ttuHistoryStorage } from '@/lib/storage/ttu';
 import { TimerEngine } from '@/lib/utils/timer'; // Class unified
 import {
@@ -408,65 +408,67 @@ async function liveSyncQueue() {
     const linkedMedia = linkMap[rawTitle];
     const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
 
-    const queue = await readingQueueStorage.getValue();
-    let existing = queue.find(q => {
-      if (q.originalTitle === rawTitle) return true;
-      const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
-      return qParsed.query === parsedTitle && (qParsed.volume || 1) === targetVolume;
+    await updateReadingQueueAtomic(async (queue) => {
+      let existing = queue.find(q => {
+        if (q.originalTitle === rawTitle) return true;
+        const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
+        return qParsed.query === parsedTitle && (qParsed.volume || 1) === targetVolume;
+      });
+
+      await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
+
+      if (!existing) {
+        existing = {
+          id: crypto.randomUUID(), type: 'reading',
+          contentTitleNative: parsedTitle,
+          contentTitleEnglish: '',
+          originalTitle: rawTitle,
+          description: parsedTitle,
+          chars: ttuState.chars, time: secs,
+          volume: targetVolume,
+          date: dateStr, private: false, tags: [],
+          sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
+          readerName: getReaderName()
+        };
+        queue.push(existing);
+      } else {
+        existing.originalTitle = existing.originalTitle || rawTitle;
+        existing.readerName = getReaderName();
+
+        if (!existing.mediaId || existing.mediaId === 'web-reading') {
+          existing.contentTitleNative = existing.contentTitleNative || parsedTitle;
+          if (targetVolume !== undefined && !existing.volume) {
+            existing.volume = targetVolume;
+          }
+        }
+
+        existing.sessions = existing.sessions || [];
+        const sIdx = existing.sessions.findIndex((s: any) => s.id === ttuState.id);
+
+        if (sIdx >= 0) {
+          existing.sessions[sIdx].secs = secs;
+          existing.sessions[sIdx].chars = ttuState.chars;
+          existing.sessions[sIdx].date = dateStr;
+        } else {
+          existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
+        }
+
+        existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
+        existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
+      }
+
+      if (linkedMedia && linkedMedia.mediaId !== 'web-reading') {
+        existing.mediaId = String(linkedMedia.mediaId);
+        existing.mediaData = linkedMedia.mediaData;
+        existing.volume = linkedMedia.volume;
+        existing.contentTitleNative = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
+        existing.contentTitleEnglish = linkedMedia.mediaData.contentTitleEnglish || existing.contentTitleEnglish;
+        existing.description = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
+      }
+
+      return queue;
     });
 
-    await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
-
-    if (!existing) {
-      existing = {
-        id: crypto.randomUUID(), type: 'reading',
-        contentTitleNative: parsedTitle,
-        contentTitleEnglish: '',
-        originalTitle: rawTitle,
-        description: parsedTitle,
-        chars: ttuState.chars, time: secs,
-        volume: targetVolume,
-        date: dateStr, private: false, tags: [],
-        sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
-        readerName: getReaderName()
-      };
-      queue.push(existing);
-    } else {
-      existing.originalTitle = existing.originalTitle || rawTitle;
-      existing.readerName = getReaderName();
-
-      if (!existing.mediaId || existing.mediaId === 'web-reading') {
-        existing.contentTitleNative = existing.contentTitleNative || parsedTitle;
-        if (targetVolume !== undefined && !existing.volume) {
-          existing.volume = targetVolume;
-        }
-      }
-
-      existing.sessions = existing.sessions || [];
-      const sIdx = existing.sessions.findIndex((s: any) => s.id === ttuState.id);
-
-      if (sIdx >= 0) {
-        existing.sessions[sIdx].secs = secs;
-        existing.sessions[sIdx].chars = ttuState.chars;
-        existing.sessions[sIdx].date = dateStr;
-      } else {
-        existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
-      }
-
-      existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
-      existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
-    }
-
-    if (linkedMedia && linkedMedia.mediaId !== 'web-reading') {
-      existing.mediaId = String(linkedMedia.mediaId);
-      existing.mediaData = linkedMedia.mediaData;
-      existing.volume = linkedMedia.volume;
-      existing.contentTitleNative = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
-      existing.contentTitleEnglish = linkedMedia.mediaData.contentTitleEnglish || existing.contentTitleEnglish;
-      existing.description = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
-    }
-
-    await readingQueueStorage.setValue(queue);
     hasSyncedThisSession = true;
   } finally {
     isSyncing = false;
@@ -667,8 +669,6 @@ async function setupTTUChronometer() {
         },
         liveSyncQueue,
         saveSessionAndQueue,
-        get isGracePeriodActive() { return stabilizer.getGracePeriodActive(); },
-        get isSilentGraceActive() { return stabilizer.getSilentGraceActive(); }
       }
     });
 
@@ -1172,7 +1172,7 @@ function handleMutations() {
   }
 
   if (!adapter) {
-    if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
+    if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
       const overlay = overlayController.getOverlayElement();
       if (!overlay) {
         overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
@@ -1223,7 +1223,13 @@ if (isRelevantFrame) {
 }
 
 function startTimeTracker() {
+  if ((window as any).__nt_timer_instance__) {
+    try {
+      (window as any).__nt_timer_instance__.destroy();
+    } catch (e) {}
+  }
   const timer = new TimerEngine();
+  (window as any).__nt_timer_instance__ = timer;
   (window as any).__nt_tracker_session_active_ms__ = {
     getTotal: () => timer.getTotal(),
     setMs: (ms: number) => timer.setMs(ms),
@@ -1335,9 +1341,9 @@ export default defineContentScript({
     });
 
     if (adapter) {
+      startTimeTracker();
       const readerCfg = getReaderConfig(cfg);
       if (!readerCfg.enabled) return;
-      startTimeTracker();
       setupTTUChronometer();
 
       ttuHistoryStorage.watch(() => {
