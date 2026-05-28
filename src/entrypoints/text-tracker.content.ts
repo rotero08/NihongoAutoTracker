@@ -19,7 +19,7 @@ import {
   isWebsiteOverlaySkipped,
   injectThemeStyles
 } from '@/lib/ui/reader-overlay';
-import { getActiveThemeName, getReaderConfig, applyActiveTheme, applyCustomThemeToDoc, clearCustomThemeFromDoc } from '@/lib/ui/text-tracker-theme-manager';
+import { getActiveThemeName, getReaderConfig, applyActiveTheme, applyCustomThemeToDoc, clearCustomThemeFromDoc, clearThemeDetectionCache } from '@/lib/ui/text-tracker-theme-manager';
 import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
@@ -358,6 +358,7 @@ function isReadingViewActive(): boolean {
 
 function invalidateReadingViewCache() {
   _readingViewCache = null;
+  _insertPointCache = null; // Ensure stale insert points are fully cleared on route transitions!
 }
 
 function safelySetAdapterName(adapter: any, name: string | null) {
@@ -791,24 +792,24 @@ if (isRelevantFrame) {
 
   // SPA History and Push-state Navigation Interceptors
   window.addEventListener('popstate', () => {
-    _readingViewCache = null;
+    invalidateReadingViewCache();
     handleMutations();
   });
   window.addEventListener('hashchange', () => {
-    _readingViewCache = null;
+    invalidateReadingViewCache();
     handleMutations();
   });
 
   const origPushState = window.history.pushState;
   window.history.pushState = function (...args) {
     origPushState.apply(this, args);
-    _readingViewCache = null;
+    invalidateReadingViewCache();
     handleMutations();
   };
   const origReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
     origReplaceState.apply(this, args);
-    _readingViewCache = null;
+    invalidateReadingViewCache();
     handleMutations();
   };
 }
@@ -1000,6 +1001,15 @@ function setupOptimizedMutationObserver() {
     handleMutations();
   };
 
+  // Extremely performant lightweight observer for top-level theme changes on html/body.
+  // This bypasses full DOM queries/subtree processing, ensuring Yatsu sidebar switches are instantaneous.
+  const rootObserver = new MutationObserver(() => {
+    clearThemeDetectionCache();
+    scheduleInstantThemeSync();
+  });
+  rootObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
+  rootObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] });
+
   startObserver();
 
   const checkInterval = setInterval(() => {
@@ -1012,6 +1022,7 @@ function setupOptimizedMutationObserver() {
   window.addEventListener('unload', () => {
     clearInterval(checkInterval);
     if (activeMutationObserver) activeMutationObserver.disconnect();
+    rootObserver.disconnect();
   });
 }
 
@@ -1167,6 +1178,17 @@ function handleMutations() {
         overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
       }
     }
+  }
+
+  // Polling guard: Retry mounting Chrono dropdown if the reader route is active but wrapper isn't attached yet.
+  // This acts as a fallback for transitions out of /settings where components mount asynchronously.
+  if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+    setTimeout(() => {
+      if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+        invalidateReadingViewCache();
+        handleMutations();
+      }
+    }, 250);
   }
 }
 

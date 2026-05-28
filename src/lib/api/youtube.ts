@@ -78,7 +78,9 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
  * @returns Channel ID string (e.g., "UCxxxxxx") or null if not found
  */
 export async function getYouTubeChannelId(): Promise<string | null> {
-  /* Try the channel link in the owner info section */
+  const isWatchPage = window.location.pathname.startsWith('/watch') || window.location.href.includes('watch?v=');
+
+  /* Try the dynamic channel link in the active player owner info section first */
   const channelLink = document.querySelector<HTMLAnchorElement>(
     'ytd-video-owner-renderer a, #upload-info a, #owner a[href*="/channel/"], #owner a[href*="/@"]',
   );
@@ -130,7 +132,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     }
   }
 
-  /* Fallback: check ytInitialPlayerResponse */
+  /* Fallback 1: check dynamic ytInitialPlayerResponse state (updates on SPA routing) */
   try {
     const playerResponse = (window as any).ytInitialPlayerResponse;
     if (playerResponse?.videoDetails?.channelId) {
@@ -138,6 +140,12 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     }
   } catch {
     /* Not available */
+  }
+
+  /* Fallback 2: check HTML meta tags only if we are not on a watch page (where they are stale) */
+  if (!isWatchPage) {
+    const metaId = document.querySelector('meta[itemprop="channelId"]')?.getAttribute('content');
+    if (metaId && metaId !== "web-video") return metaId;
   }
 
   return null;
@@ -151,7 +159,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
  */
 export async function getChannelNameFallback(): Promise<string> {
   /* Primary: channel name link in video owner section */
-  const channelNameEl = document.querySelector<HTMLElement>(
+  const channelNameEl = document.querySelector<HTMLAnchorElement>(
     '#owner ytd-channel-name yt-formatted-string a, ytd-channel-name a, #upload-info #channel-name a',
   );
   if (channelNameEl?.textContent?.trim()) return channelNameEl.textContent.trim();

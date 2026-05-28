@@ -14,6 +14,12 @@ const ACCENT_CACHE_TTL = 100; // ms (Responsive refresh)
 
 export { applyCustomThemeToDoc, clearCustomThemeFromDoc };
 
+export function clearThemeDetectionCache() {
+  _cachedThemeColors = null;
+  _cachedAccentColor = null;
+  _isAccentCached = false;
+}
+
 export function getActiveThemeName(cfg: any): string {
   const adapter = getActiveReaderAdapter();
   if (adapter) {
@@ -52,8 +58,8 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
 function isValidAccent(rgb: { r: number, g: number, b: number }, isDark: boolean): boolean {
   const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
 
-  if (hsl.s < 10) return false;
-  if (hsl.l < 12 || hsl.l > 92) return false;
+  if (hsl.s < 35) return false;
+  if (hsl.l < 15 || hsl.l > 85) return false;
 
   return true;
 }
@@ -95,96 +101,9 @@ function findDOMAccentColor(isDark: boolean): string | null {
     }
   }
 
-  const isReaderPage = host.includes('reader.ttsu.app') ||
-    host.includes('app.yatsu.moe') ||
-    host.includes('manga.manabe.es') ||
-    host.includes('yomiyasu') ||
-    !!getActiveReaderAdapter();
-
-  if (isReaderPage) {
-    const fallbackVal = isDark ? '#f5a623' : '#92400e';
-    _cachedAccentColor = fallbackVal;
-    return fallbackVal;
-  }
-
-  const specificSelectors = [
-    '[class*="accent"]', '[class*="highlight"]', '[class*="active"]', '[class*="selected"]',
-    '.active', '.selected', '.is-active', '.is-selected', '.tab-active', '[aria-selected="true"]',
-    'button[class*="primary"]', 'a[class*="primary"]', '.btn-primary', '.bg-primary', '.text-primary'
-  ];
-
-  for (const selector of specificSelectors) {
-    try {
-      const elements = document.querySelectorAll(selector);
-      const scanLimit = Math.min(elements.length, 15);
-      for (let i = 0; i < scanLimit; i++) {
-        const el = elements[i] as HTMLElement;
-        if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
-          continue;
-        }
-        const style = window.getComputedStyle(el);
-
-        const bg = style.backgroundColor;
-        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-          const rgb = parseColorToRgb(bg);
-          if (isValidAccent(rgb, isDark)) {
-            _cachedAccentColor = bg;
-            return bg;
-          }
-        }
-
-        const col = style.color;
-        if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
-          const rgb = parseColorToRgb(col);
-          if (isValidAccent(rgb, isDark)) {
-            _cachedAccentColor = col;
-            return col;
-          }
-        }
-
-        const borderCol = style.borderColor || style.borderTopColor;
-        if (borderCol && borderCol !== 'rgba(0, 0, 0, 0)' && borderCol !== 'transparent') {
-          const rgb = parseColorToRgb(borderCol);
-          if (isValidAccent(rgb, isDark)) {
-            _cachedAccentColor = borderCol;
-            return borderCol;
-          }
-        }
-      }
-    } catch (e) { }
-  }
-
-  const genericSelectors = ['a', 'button'];
-  for (const selector of genericSelectors) {
-    try {
-      const elements = document.querySelectorAll(selector);
-      const scanLimit = Math.min(elements.length, 10);
-      for (let i = 0; i < scanLimit; i++) {
-        const el = elements[i] as HTMLElement;
-        if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
-          continue;
-        }
-        const style = window.getComputedStyle(el);
-        const col = style.color;
-        if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
-          const rgb = parseColorToRgb(col);
-          if (isValidAccent(rgb, isDark)) {
-            _cachedAccentColor = col;
-            return col;
-          }
-        }
-        const bg = style.backgroundColor;
-        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-          const rgb = parseColorToRgb(bg);
-          if (isValidAccent(rgb, isDark)) {
-            _cachedAccentColor = bg;
-            return bg;
-          }
-        }
-      }
-    } catch (e) { }
-  }
-
+  // To protect the extension from picking up random highlighted words, Yomichan popups,
+  // or default blue link elements, we explicitly do not scan generic DOM elements.
+  // We fall back entirely to custom configurations or the universal default amber system.
   _cachedAccentColor = null;
   return null;
 }
@@ -249,7 +168,9 @@ export function detectReaderThemeColors(): any {
     let borderHover = isDark ? adjustLightness(parsedBg, 32) : adjustLightness(parsedBg, -32);
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
-    let accent = isDark ? '#f5a623' : '#92400e';
+    // Universal fallback: default amber accent color for all hosting environments
+    let accent = isDark ? '#f0b429' : '#d97706';
+
     const extractedAccent = findDOMAccentColor(isDark);
     if (extractedAccent) {
       accent = extractedAccent;
@@ -371,8 +292,8 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
           }
 
           if (themeName === 'match-reader') {
-            const stored = await browser.storage.local.get(`local:readerColors:${host}`);
-            customColors = stored[`local:readerColors:${host}`];
+            const stored = await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]);
+            customColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
           }
         }
       }
@@ -388,12 +309,16 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
     const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
     if (themeName === 'match-reader' && !isExtensionPage) {
       const host = window.location.hostname;
-      const stored = (await browser.storage.local.get(`local:readerColors:${host}`).catch(() => ({}))) as Record<string, any>;
-      const cachedColors = stored[`local:readerColors:${host}`];
+      const stored = (await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
+      const cachedColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
 
       const detectedColors = detectReaderThemeColors();
       if (detectedColors) {
-        const defaultAccent = detectedColors.background === '#07070e' ? '#f5a623' : '#92400e';
+        const parsedBg = parseColorToRgb(detectedColors.background);
+        const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
+        const isDarkBg = hslBg.l < 50;
+        const defaultAccent = isDarkBg ? '#f0b429' : '#d97706';
+
         if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
           detectedColors.accent = cachedColors.accent;
           detectedColors.accentHover = cachedColors.accentHover || detectedColors.accentHover;

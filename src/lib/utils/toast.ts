@@ -242,26 +242,43 @@ export function notify(title: string, message: string): void {
   try {
     const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
     const hasDocument = typeof document !== 'undefined';
+    const isExtensionPage = typeof window !== 'undefined' &&
+      (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
 
-    if (hasDocument) {
-      showToast(title, message, isError);
-    }
+    if (isExtensionPage && typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then((tabs) => {
+          const tab = tabs[0];
+          const url = tab?.url || "";
+          const isRestricted =
+            !url ||
+            url.startsWith('chrome://') ||
+            url.startsWith('about:') ||
+            url.startsWith('chrome-extension://') ||
+            url.startsWith('moz-extension://') ||
+            url.startsWith('https://chromewebstore.google.com/') ||
+            url.startsWith('https://addons.mozilla.org/');
 
-    if (typeof browser !== 'undefined') {
-      if (browser.notifications && typeof browser.notifications.create === 'function') {
-        const iconUrl = browser.runtime?.getURL('/assets/icon-128.png' as any) || browser.runtime?.getURL('/icon/128.png' as any) || '';
-        browser.notifications.create({
-          type: 'basic',
-          iconUrl,
-          title,
-          message
-        }).catch(() => {
-          relayToastToActiveTab(title, message, isError);
+          if (isRestricted) {
+            if (hasDocument) {
+              showToast(title, message, isError);
+            }
+          } else {
+            relayToastToActiveTab(title, message, isError);
+          }
+        })
+        .catch(() => {
+          if (hasDocument) {
+            showToast(title, message, isError);
+          }
         });
-        return;
+    } else {
+      if (hasDocument) {
+        showToast(title, message, isError);
       }
-
-      relayToastToActiveTab(title, message, isError);
+      if (typeof browser !== 'undefined') {
+        relayToastToActiveTab(title, message, isError);
+      }
     }
   } catch (_err) {
     /* Safe guard */
@@ -285,6 +302,8 @@ function relayToastToActiveTab(title: string, message: string, isError: boolean)
       const isRestricted =
         url.startsWith('chrome://') ||
         url.startsWith('about:') ||
+        url.startsWith('chrome-extension://') ||
+        url.startsWith('moz-extension://') ||
         url.startsWith('https://chromewebstore.google.com/') ||
         url.startsWith('https://addons.mozilla.org/');
 

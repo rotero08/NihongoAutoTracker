@@ -76,6 +76,18 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
  * Extract YouTube channel ID from current page DOM.
  */
 export async function getYouTubeChannelId(): Promise<string | null> {
+    const isWatchPage = window.location.pathname.startsWith('/watch') || window.location.href.includes('watch?v=');
+
+    if (isWatchPage) {
+        try {
+            const data = await fetchYouTubeVideoData(window.location.href);
+            if (data?.channel?.contentId) {
+                return data.channel.contentId;
+            }
+        } catch (e) { }
+    }
+
+    /* Try the dynamic channel link in the active player owner info section first */
     const channelLink = document.querySelector<HTMLAnchorElement>(
         'ytd-video-owner-renderer a, #upload-info a, #owner a[href*="/channel/"], #owner a[href*="/@"]',
     );
@@ -125,6 +137,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         }
     }
 
+    /* Fallback 1: check dynamic ytInitialPlayerResponse state (updates on SPA routing) */
     try {
         const playerResponse = (window as any).ytInitialPlayerResponse;
         if (playerResponse?.videoDetails?.channelId) {
@@ -134,6 +147,12 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         /* Not available */
     }
 
+    /* Fallback 2: check HTML meta tags only if we are not on a watch page (where they are stale) */
+    if (!isWatchPage) {
+        const metaId = document.querySelector('meta[itemprop="channelId"]')?.getAttribute('content');
+        if (metaId && metaId !== "web-video") return metaId;
+    }
+
     return null;
 }
 
@@ -141,6 +160,17 @@ export async function getYouTubeChannelId(): Promise<string | null> {
  * Get YouTube channel name from page DOM.
  */
 export async function getChannelNameFallback(): Promise<string> {
+    const isWatchPage = window.location.pathname.startsWith('/watch') || window.location.href.includes('watch?v=');
+
+    if (isWatchPage) {
+        try {
+            const data = await fetchYouTubeVideoData(window.location.href);
+            if (data?.channel?.title?.contentTitleNative) {
+                return data.channel.title.contentTitleNative;
+            }
+        } catch (e) { }
+    }
+
     const channelNameEl = document.querySelector<HTMLElement>(
         '#owner ytd-channel-name yt-formatted-string a, ytd-channel-name a, #upload-info #channel-name a',
     );
@@ -175,18 +205,18 @@ export function clearExtractionCaches() {
 export async function getChannelMediaData(channelId: string | null, channelTitle: string) {
     try {
         const media = await resolveVideoChannelMedia({
-            channelId: channelId ?? undefined,
+            channelId: channelId && channelId !== "web-video" ? channelId : undefined,
             channelTitle: channelTitle ?? undefined
         });
         return {
-            channelId: media.channelId || channelId || "web-video",
+            channelId: (media.channelId && media.channelId !== "web-video") ? media.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
             channelTitle: media.channelTitle || channelTitle,
             channelImage: media.channelImage || "",
             channelDescription: media.channelDescription || ""
         };
     } catch {
         return {
-            channelId: channelId || "web-video",
+            channelId: channelId && channelId !== "web-video" ? channelId : "web-video",
             channelTitle: channelTitle,
             channelImage: "",
             channelDescription: ""

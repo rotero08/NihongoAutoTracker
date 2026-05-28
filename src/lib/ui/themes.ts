@@ -170,12 +170,32 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
         }
     }
 
-    const rgbMatch = val.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+    // Support modern space-separated or comma-separated rgb/rgba values: rgb(240 180 41) or rgba(240, 180, 41, 0.5)
+    const rgbMatch = val.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
     if (rgbMatch) {
         return {
             r: parseInt(rgbMatch[1], 10),
             g: parseInt(rgbMatch[2], 10),
             b: parseInt(rgbMatch[3], 10)
+        };
+    }
+
+    // Support hsl/hsla color strings: hsl(42 87% 55%) or hsla(42, 87%, 55%, 0.5)
+    const hslMatch = val.match(/hsla?\(\s*(\d+)(?:deg)?[\s,]+(\d+)%[\s,]+(\d+)%/);
+    if (hslMatch) {
+        const h = parseInt(hslMatch[1], 10);
+        const s = parseInt(hslMatch[2], 10);
+        const l = parseInt(hslMatch[3], 10);
+        return hslToRgb(h, s, l);
+    }
+
+    // Support raw space-separated or comma-separated numbers: "240 180 41" or "240, 180, 41"
+    const spaceMatch = val.match(/^\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*$/);
+    if (spaceMatch) {
+        return {
+            r: parseInt(spaceMatch[1], 10),
+            g: parseInt(spaceMatch[2], 10),
+            b: parseInt(spaceMatch[3], 10)
         };
     }
 

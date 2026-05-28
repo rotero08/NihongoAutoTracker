@@ -30,6 +30,7 @@ let isJapaneseVideoCached = false;
 let metadataResolved = false;
 let lastAnalyzedUrl = '';
 let lastAnalyzedTitle = '';
+let channelPollInterval: any = null;
 
 function isYouTubeShorts(): boolean {
   return typeof window !== 'undefined' && window.location.pathname.startsWith('/shorts/');
@@ -41,7 +42,8 @@ function resolvePageLanguageAndType() {
   const adapter = getActiveVideoAdapter();
   if (!adapter) return;
 
-  if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved) {
+  // We keep re-evaluating layout elements if we haven't matched Japanese yet to ensure we support slow-loading live streams
+  if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved && isJapaneseVideoCached) {
     return;
   }
 
@@ -187,7 +189,7 @@ async function handleBadgeClick() {
       const mediaData = await getChannelMediaData(channelId, final.title);
       const ok = await submitLog({
         type: "video",
-        mediaId: mediaData.channelId || channelId || "web-video",
+        mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
         description: final.desc,
         mediaData,
         episodes: 0,
@@ -355,22 +357,47 @@ const attach = (vid: HTMLVideoElement) => {
     const foundId = await adapter.getChannelId();
     const foundName = await adapter.getChannelName();
 
+    let updated = false;
     if (foundId && foundId !== channelId) {
       channelId = foundId;
       addDebugLog('INFO', 'VideoTracker', `Channel ID Discovered`, { channelId: foundId });
+      updated = true;
     }
 
     if (foundName && foundName !== cachedChannelName) {
       cachedChannelName = foundName;
       addDebugLog('INFO', 'VideoTracker', `Channel Name Discovered`, { channelName: foundName });
+      updated = true;
+    }
+
+    if (updated && trackedVideo) {
+      badgeRenderer.ensureCounter(
+        engine.getLiveWatched(),
+        engine.getTotal(),
+        currentUrl,
+        channelId,
+        cachedChannelName,
+        cachedConfig,
+        trackedVideo,
+        state,
+        handleBadgeClick
+      );
     }
   };
 
+  if (channelPollInterval) {
+    clearInterval(channelPollInterval);
+    channelPollInterval = null;
+  }
+
   tryChannel();
   let pollCount = 0;
-  const poll = setInterval(async () => {
+  channelPollInterval = setInterval(async () => {
     await tryChannel();
-    if ((channelId && cachedChannelName) || pollCount++ > 20) clearInterval(poll);
+    if ((channelId && cachedChannelName) || pollCount++ > 20) {
+      clearInterval(channelPollInterval);
+      channelPollInterval = null;
+    }
   }, 500);
 
   (async () => {
@@ -574,6 +601,37 @@ export default defineContentScript({
         attach(target);
       }
     }, true);
+
+    window.addEventListener('playing', (e) => {
+      if (isYouTubeShorts()) return;
+      const target = e.target as HTMLVideoElement;
+      if (target && target.tagName === 'VIDEO') {
+        attach(target);
+      }
+    }, true);
+
+    // Active state-checking healing thread to recover play clocks suspended by backgrounding or transient buffer drops
+    setInterval(() => {
+      const currentHref = cleanUrl(window.location.href);
+      if (!isYouTubeShorts() && currentHref.includes('watch')) {
+        const vid = document.querySelector<HTMLVideoElement>('video');
+        if (vid) {
+          if (trackedVideo !== vid || currentUrl !== currentHref) {
+            attach(vid);
+          }
+        }
+      }
+
+      if (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying() && !isYouTubeShorts()) {
+        if (engine.getPlayClockStart() < 0) {
+          engine.startPlayClock();
+        }
+      } else if (trackedVideo && (trackedVideo.paused || trackedVideo.ended || isAdPlaying() || isYouTubeShorts())) {
+        if (engine.getPlayClockStart() >= 0) {
+          engine.flushPlayClock();
+        }
+      }
+    }, 250);
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;

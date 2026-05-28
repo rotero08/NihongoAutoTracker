@@ -149,15 +149,15 @@
           } else {
             if (readerKey === "ttu") {
               matchedColors = {
-                background: "#121820",
-                surface: "#1a2330",
-                surfaceAlt: "#141c27",
-                border: "#243245",
-                borderHover: "#30435c",
-                text: "#e2e8f0",
-                textMuted: "#718096",
-                accent: "#ff6b6b",
-                accentHover: "#ff8787",
+                background: "#07070e",
+                surface: "#0d0d1c",
+                surfaceAlt: "#10101f",
+                border: "#1a2235",
+                borderHover: "#222d42",
+                text: "#dde4f0",
+                textMuted: "#7a8ca5",
+                accent: "#f0b429",
+                accentHover: "#ffd060",
                 success: "#3ddc84",
               };
             } else if (readerKey === "yatsu") {
@@ -169,8 +169,8 @@
                 borderHover: "#4e545b",
                 text: "#fffffe",
                 textMuted: "#94a1b2",
-                accent: "#7f5af0",
-                accentHover: "#9b7eff",
+                accent: "#f0b429",
+                accentHover: "#ffd060",
                 success: "#2cb67d",
               };
             } else if (readerKey === "yomiyasu") {
@@ -182,8 +182,8 @@
                 borderHover: "#2d2d47",
                 text: "#f5f6f8",
                 textMuted: "#8e90a6",
-                accent: "#3ddc84",
-                accentHover: "#5eeba0",
+                accent: "#f0b429",
+                accentHover: "#ffd060",
                 success: "#3ddc84",
               };
             }
@@ -258,10 +258,13 @@
       try {
         detectedColors = await storage.getItem(`local:readerColors:${host}`);
         if (!detectedColors && browser?.storage?.local) {
-          const localStore = await browser.storage.local.get(
+          const localStore = await browser.storage.local.get([
             `readerColors:${host}`,
-          );
-          detectedColors = localStore[`readerColors:${host}`];
+            `local:readerColors:${host}`,
+          ]);
+          detectedColors =
+            localStore[`local:readerColors:${host}`] ||
+            localStore[`readerColors:${host}`];
         }
       } catch (e) {}
     }
@@ -411,9 +414,11 @@
               if (!detectedColors) {
                 if (browser?.storage?.local) {
                   browser.storage.local
-                    .get(`readerColors:${host}`)
+                    .get([`readerColors:${host}`, `local:readerColors:${host}`])
                     .then((localStore: any) => {
-                      detectedColors = localStore[`readerColors:${host}`];
+                      detectedColors =
+                        localStore[`local:readerColors:${host}`] ||
+                        localStore[`readerColors:${host}`];
                       applyInitialTheme(val, activeUrl, detectedColors);
                     })
                     .catch(() => {
@@ -592,6 +597,14 @@
 
   /* ── Settings Actions ── */
   async function openSettings() {
+    if (browser?.runtime?.openOptionsPage) {
+      try {
+        await browser.runtime.openOptionsPage();
+        return;
+      } catch (e) {
+        console.error("Failed to open options page directly:", e);
+      }
+    }
     if (browser?.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
     }

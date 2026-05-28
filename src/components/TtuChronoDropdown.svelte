@@ -22,13 +22,10 @@
         isSilentGraceActive,
     } = $props();
 
-    // Trigger state to handle reactivity for non-reactive outside mutations (like setInterval)
-    let updateTick = $state(0);
-
-    // Derived reactive runner tracking raw Proxy mutations
-    let isRunning = $derived(updateTick >= 0 ? ttuState.running : false);
-    let currentTimerMs = $derived(updateTick >= 0 ? ttuState.timeMs : 0);
-    let currentCharCount = $derived(updateTick >= 0 ? ttuState.chars : 0);
+    // Reactive Svelte States (Synchronized with global plain proxies)
+    let running = $state(false);
+    let timeMs = $state(0);
+    let chars = $state(0);
 
     // Search, Linked Media, and History States
     let isDropdownOpen = $state(false);
@@ -37,9 +34,6 @@
     let anilistResults = $state<any[]>([]);
     let isSearchingAnilist = $state(false);
     let pastSessions = $state<any[]>([]);
-
-    // Operation status lock to prevent concurrent auto-saves from overwriting active user edits (Race Condition Fix)
-    let isStorageOperationPending = $state(false);
 
     // Editing Overlays
     let isEditingTime = $state(false);
@@ -62,23 +56,13 @@
     let cachedHistoryChars = $derived(
         pastSessions.reduce((acc, s) => acc + s.chars, 0),
     );
-    let totalMins = $derived(
-        updateTick >= 0
-            ? cachedHistoryMins + Math.floor(currentTimerMs / 60000)
-            : 0,
-    );
-    let totalChars = $derived(
-        updateTick >= 0 ? cachedHistoryChars + currentCharCount : 0,
-    );
+    let totalMins = $derived(cachedHistoryMins + Math.floor(timeMs / 60000));
+    let totalChars = $derived(cachedHistoryChars + chars);
     let sessSpeed = $derived(
-        updateTick >= 0 && currentTimerMs > 0
-            ? Math.round((currentCharCount / (currentTimerMs / 60000)) * 60)
-            : 0,
+        timeMs > 0 ? Math.round((chars / (timeMs / 60000)) * 60) : 0,
     );
     let totSpeed = $derived(
-        updateTick >= 0 && totalMins > 0
-            ? Math.round((totalChars / totalMins) * 60)
-            : 0,
+        totalMins > 0 ? Math.round((totalChars / totalMins) * 60) : 0,
     );
 
     // Dynamic Svelte State to Sync Config instantly without Reloads
@@ -108,7 +92,9 @@
     onMount(() => {
         readerConfig = getCurrentReaderConfig();
         const handleLinkerRefresh = () => {
-            updateTick++;
+            running = ttuState.running;
+            timeMs = ttuState.timeMs;
+            chars = ttuState.chars;
             readerConfig = getCurrentReaderConfig(); // Sync reader config immediately on change events
             refreshLinkerUI();
         };
@@ -186,53 +172,30 @@
 
     // Visual database updates
     async function updateHistoryData() {
-        try {
-            const history = (await ttuHistoryStorage.getValue()) || {};
-            pastSessions = history[getTTUTitle()] || [];
-        } catch (e) {
-            console.error("Failed to load past sessions", e);
-        }
+        const history = (await ttuHistoryStorage.getValue()) || {};
+        pastSessions = history[getTTUTitle()] || [];
     }
 
     async function refreshLinkerUI(force = false) {
-        if (isStorageOperationPending && !force) return; // Block reads if standard storage operations are currently saving/modifying state, unless forced
-
         const title = getTTUTitle();
         const links = (await ttuLinkStorage.getValue()) || {};
         const match = links[title];
 
-        // Guard active typing states inside text and volume editing inputs from periodic timer resets (Issue 4 Fix)
+        // Avoid overwriting search query parameter state if user is typing
         const activeEl = document.activeElement;
-        const isInputFocused =
-            activeEl &&
-            (activeEl.id === "nt-ttu-link-input" ||
-                activeEl.classList.contains("nt-ttu-vol-input"));
+        const isInputFocused = activeEl && activeEl.id === "nt-ttu-link-input";
         if (!force && isInputFocused) {
             return;
         }
 
-        if (match && match.mediaId && match.mediaId !== "web-reading") {
+        if (match && match.mediaId) {
             linkedMedia = match;
             volInputVal = Math.max(1, Number(match.volume || 1));
         } else {
             linkedMedia = null;
             const parsed = parseTitleWithConfig(title);
             anilistSearchQuery = parsed.query; // Pre-fills with parsed document title
-
-            // Check the reading queue for a customized volume fallback if the book is unlinked (Issue 4 Fix)
-            const queue = (await readingQueueStorage.getValue()) || [];
-            const existing = queue.find((q) => {
-                if (q.originalTitle === title) return true;
-                const qParsed = parseTitleWithConfig(
-                    q.originalTitle || q.contentTitleNative || "",
-                );
-                return qParsed.query === parsed.query;
-            });
-
-            const currentVol =
-                match?.volume ||
-                (existing ? existing.volume : parsed.volume || 1);
-            volInputVal = Math.max(1, Number(currentVol));
+            volInputVal = Math.max(1, Number(parsed.volume || 1));
         }
     }
 
@@ -253,7 +216,6 @@
             return; // Handled by dblclick
         }
 
-        // Align click triggers with typical browser speed requirements to reduce micro-stutter triggers
         clickTimeout = setTimeout(async () => {
             clickTimeout = null;
             isDropdownOpen = !isDropdownOpen;
@@ -271,9 +233,11 @@
                 }
                 await updateHistoryData();
                 await refreshLinkerUI();
-                updateTick++;
+                running = ttuState.running;
+                timeMs = ttuState.timeMs;
+                chars = ttuState.chars;
             }
-        }, 280);
+        }, 200);
     }
 
     // Play/Pause timer toggle bindings
@@ -294,6 +258,7 @@
     function toggleTimer() {
         const wasRunning = ttuState.running;
         ttuState.running = !ttuState.running;
+        running = ttuState.running;
 
         if (ttuState.running) {
             const currentCount = extractTTUCharCount()
@@ -308,7 +273,8 @@
         } else if (wasRunning) {
             stateRefs.globalLastTick = Date.now();
         }
-        updateTick++;
+        timeMs = ttuState.timeMs;
+        chars = ttuState.chars;
     }
 
     function resetSession(e: MouseEvent) {
@@ -326,14 +292,17 @@
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
 
-        updateTick++;
+        // Sync back to local reactive state
+        timeMs = 0;
+        chars = 0;
     }
 
     async function handleSaveSession(e: MouseEvent) {
         e.stopPropagation();
         await saveSessionAndQueue();
         await updateHistoryData();
-        updateTick++;
+        timeMs = ttuState.timeMs;
+        chars = ttuState.chars;
     }
 
     async function handleDirectSend(e: MouseEvent) {
@@ -343,48 +312,63 @@
             return;
         }
         try {
-            showToast("Pending", "Sending session directly...");
-            const title = getTTUTitle();
-            const payload = {
-                type: "reading",
-                mediaId: String(linkedMedia.mediaId),
-                description: linkedMedia.mediaData?.contentTitleNative || title,
-                chars: currentCharCount,
-                time: Math.max(1, Math.round(currentTimerMs / 60000)), // Convert milliseconds directly to minutes
-                volume: Math.max(1, Number(linkedMedia.volume || 1)),
-                date: new Date().toISOString(),
-                private: false,
-                episodes: 0,
-                pages: 0,
-                unknownDate: false,
-                mediaData: linkedMedia.mediaData || {},
-            };
+            // silent = true skips submitLog's own alert triggers, keeping it snappy
+            const res = await submitLog(
+                {
+                    type: "reading",
+                    mediaId: String(linkedMedia.mediaId),
+                    description:
+                        linkedMedia.mediaData?.contentTitleNative ||
+                        getTTUTitle(),
+                    mediaData: linkedMedia.mediaData,
+                    time: Math.max(1, Math.round(ttuState.timeMs / 60000)),
+                    chars: ttuState.chars,
+                    volume: linkedMedia.volume || 1,
+                    date: new Date().toISOString(),
+                    episodes: 0,
+                    pages: 0,
+                    private: false,
+                    unknownDate: false,
+                },
+                true,
+            );
 
-            const result = await submitLog(payload);
-            if (result && result.success) {
-                showToast("Success", "Logged directly to Nihongo Tracker!");
+            if (res && res.success) {
+                showToast("Success", "Logged directly to NihongoTracker!");
                 ttuState.timeMs = 0;
                 ttuState.chars = 0;
+                timeMs = 0;
+                chars = 0;
                 await updateHistoryData();
-                updateTick++;
             } else {
-                const errText = result?.error ? `: ${result.error}` : "";
-                showToast("Error", "Direct send failed" + errText);
+                showToast("Error", res?.error || "Direct send failed", true);
             }
         } catch {
-            showToast("Error", "Failed to communicate with Nihongo Tracker");
+            showToast(
+                "Error",
+                "Failed to communicate with NihongoTracker",
+                true,
+            );
         }
     }
 
-    const handleOpenSettings = (e: MouseEvent) => {
+    function openSettings(e: MouseEvent) {
         e.stopPropagation();
-        try {
-            browser.runtime.sendMessage({
+        browser.runtime
+            .sendMessage({
                 action: "OPEN_SETTINGS",
                 tab: "readers",
+                hash: "#readers",
+            })
+            .catch(() => {
+                window.open(
+                    browser.runtime.getURL(
+                        "/settings.html?tab=readers#readers",
+                    ),
+                    "_blank",
+                );
             });
-        } catch {}
-    };
+    }
 
     // AniList linkage helpers with Svelte 5 two-way state sync bindings (Issue 5 Fix)
     function handleAnilistInput(query: string, instant = false) {
@@ -417,127 +401,86 @@
     }
 
     async function linkSelectedMedia(m: any) {
-        if (isStorageOperationPending) return;
-        isStorageOperationPending = true;
+        const title = getTTUTitle();
+        const { volume } = parseTitleWithConfig(title);
+        const targetVolume = Math.max(1, volInputVal || volume || 1);
 
-        try {
-            const title = getTTUTitle();
-            const { volume: parsedVolume, query: parsedRaw } =
-                parseTitleWithConfig(title);
-            const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
+        const nativeTitle =
+            m.title?.contentTitleNative || m.contentTitleNative || "Unknown";
+        const cover = m.coverImage || m.contentImage || "";
 
-            const nativeTitle =
-                m.title?.contentTitleNative ||
-                m.contentTitleNative ||
-                "Unknown";
-            const cover = m.coverImage || m.contentImage || "";
+        const links = (await ttuLinkStorage.getValue()) || {};
+        links[title] = {
+            mediaId: m.contentId,
+            volume: targetVolume,
+            mediaData: {
+                contentId: m.contentId,
+                contentTitleNative: nativeTitle,
+                contentTitleEnglish:
+                    m.title?.contentTitleEnglish || m.contentTitleEnglish || "",
+                contentTitleRomaji:
+                    m.title?.contentTitleRomaji || m.contentTitleRomaji,
+                contentImage: cover,
+                coverImage: cover,
+                chapters: m.textChapters || m.chapters,
+                volumes: m.volumes,
+            },
+        };
+        await ttuLinkStorage.setValue(links);
 
-            const links = (await ttuLinkStorage.getValue()) || {};
-            links[title] = {
-                mediaId: m.contentId,
-                volume: targetVolume,
-                mediaData: {
-                    contentId: m.contentId,
-                    contentTitleNative: nativeTitle,
-                    contentTitleEnglish:
-                        m.title?.contentTitleEnglish ||
-                        m.contentTitleEnglish ||
-                        "",
-                    contentTitleRomaji:
-                        m.title?.contentTitleRomaji || m.contentTitleRomaji,
-                    contentImage: cover,
-                    coverImage: cover,
-                    chapters: m.textChapters || m.chapters,
-                    volumes: m.volumes,
-                },
-            };
-            await ttuLinkStorage.setValue(links);
+        const queue = await readingQueueStorage.getValue();
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
+        );
 
-            const queue = await readingQueueStorage.getValue();
-            // Volume-specific matching to strictly resolve against the correct volume queue entry (Issue 3 Fix)
-            const existing = queue.find((q) => {
-                if (q.originalTitle === title) return true;
-                const qParsed = parseTitleWithConfig(
-                    q.originalTitle || q.contentTitleNative || "",
-                );
-                return (
-                    qParsed.query === parsedRaw &&
-                    (qParsed.volume || 1) === targetVolume
-                );
-            });
+        if (existing) {
+            existing.mediaId = m.contentId;
+            existing.volume = targetVolume;
+            existing.mediaData = links[title].mediaData;
+            existing.contentTitleNative = nativeTitle;
+            existing.contentTitleEnglish =
+                m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
+            existing.description = nativeTitle;
+            await readingQueueStorage.setValue(queue);
+        }
 
-            if (existing) {
-                existing.mediaId = m.contentId;
-                existing.volume = targetVolume;
-                existing.mediaData = links[title].mediaData;
-                existing.contentTitleNative = nativeTitle;
-                existing.contentTitleEnglish =
-                    m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
-                existing.description = nativeTitle;
-                await readingQueueStorage.setValue(queue);
-            }
+        anilistResults = [];
+        anilistSearchQuery = "";
+        await refreshLinkerUI(true);
 
-            anilistResults = [];
-            anilistSearchQuery = "";
-            await refreshLinkerUI(true);
-
-            if (ttuState.timeMs > 0 || ttuState.chars > 0) {
-                await liveSyncQueue();
-            }
-        } catch (err) {
-            showToast("Error", "Failed to link standard media");
-        } finally {
-            isStorageOperationPending = false;
+        if (ttuState.timeMs > 0 || ttuState.chars > 0) {
+            await liveSyncQueue();
         }
     }
 
     async function unlinkMedia(e: MouseEvent) {
         e.stopPropagation();
-        e.preventDefault();
-        if (isStorageOperationPending) return;
-        isStorageOperationPending = true;
+        const title = getTTUTitle();
 
-        try {
-            const title = getTTUTitle();
+        // 1. Delete from link storage
+        const links = (await ttuLinkStorage.getValue()) || {};
+        delete links[title];
+        await ttuLinkStorage.setValue(links);
 
-            // 1. Delete from link storage
-            const links = (await ttuLinkStorage.getValue()) || {};
-            delete links[title];
-            await ttuLinkStorage.setValue(links);
+        // 2. Fetch and align with exactly the same parsed query matching used by the watcher
+        const queue = await readingQueueStorage.getValue();
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
+        );
 
-            // 2. Fetch and align strictly with the current active volume to bypass cross-linking race conditions (Issue 3 Fix)
-            const queue = await readingQueueStorage.getValue();
-            const { query: parsedRaw, volume: parsedVolume } =
-                parseTitleWithConfig(title);
-            const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
-
-            const existing = queue.find((q) => {
-                if (q.originalTitle === title) return true;
-                const qParsed = parseTitleWithConfig(
-                    q.originalTitle || q.contentTitleNative || "",
-                );
-                return (
-                    qParsed.query === parsedRaw &&
-                    (qParsed.volume || 1) === targetVolume
-                );
-            });
-
-            if (existing) {
-                existing.mediaId = "web-reading";
-                existing.mediaData = undefined;
-                await readingQueueStorage.setValue(queue);
-            }
-
-            // 3. Clear Svelte local state and refresh UI
-            linkedMedia = null;
-            const parsed = parseTitleWithConfig(title);
-            anilistSearchQuery = parsed.query;
-            await refreshLinkerUI(true);
-        } catch (err) {
-            showToast("Error", "Failed to unlink standard media");
-        } finally {
-            isStorageOperationPending = false;
+        if (existing) {
+            existing.mediaId = "web-reading";
+            existing.mediaData = undefined;
+            await readingQueueStorage.setValue(queue);
         }
+
+        // 3. Clear Svelte local state and refresh UI
+        linkedMedia = null;
+        const parsed = parseTitleWithConfig(title);
+        anilistSearchQuery = parsed.query;
+        await refreshLinkerUI(true);
     }
 
     // Handles focusing on search bar to trigger search automatically with current text
@@ -574,7 +517,7 @@
         }
         if (ms >= 0) {
             ttuState.timeMs = ms;
-            updateTick++;
+            timeMs = ms;
         }
     }
 
@@ -600,7 +543,7 @@
             if (diff < 0) diff = 0;
             stateRefs.globalManualCharOffset = val - diff;
             ttuState.chars = val;
-            updateTick++;
+            chars = val;
         }
     }
 
@@ -612,95 +555,30 @@
 
     async function commitVolEdit() {
         isEditingVol = false;
-        if (isStorageOperationPending) return;
-        isStorageOperationPending = true;
+        const next = Math.max(
+            1,
+            Number(String(volInputVal || "").replace(/\D/g, "")) || 1,
+        );
+        volInputVal = next;
 
-        try {
-            const next = Math.max(
-                1,
-                Number(String(volInputVal || "").replace(/\D/g, "")) || 1,
-            );
-            volInputVal = next;
+        const title = getTTUTitle();
+        const links = (await ttuLinkStorage.getValue()) || {};
 
-            const title = getTTUTitle();
-            const links = (await ttuLinkStorage.getValue()) || {};
-
-            const oldVolume = linkedMedia
-                ? Math.max(1, Number(linkedMedia.volume || 1))
-                : Math.max(1, Number(parseTitleWithConfig(title).volume || 1));
-
-            const isMatched =
-                linkedMedia &&
-                linkedMedia.mediaId &&
-                linkedMedia.mediaId !== "web-reading";
-
-            if (isMatched) {
-                if (links[title]) {
-                    links[title].volume = next;
-                    await ttuLinkStorage.setValue(links);
-                }
-            } else {
-                // Unmatched custom volume override
-                const parsed = parseTitleWithConfig(title);
-                links[title] = {
-                    mediaId: "web-reading",
-                    volume: next,
-                    mediaData: {
-                        contentId: "web-reading",
-                        contentTitleNative: parsed.query,
-                        contentTitleEnglish: "",
-                        contentTitleRomaji: "",
-                        contentImage: "",
-                        coverImage: "",
-                        chapters: 0,
-                        volumes: 99,
-                    } as any,
-                };
-                await ttuLinkStorage.setValue(links);
-            }
-
-            const queue = await readingQueueStorage.getValue();
-            const { query: parsedRaw } = parseTitleWithConfig(title);
-
-            const existing = queue.find((q) => {
-                if (q.originalTitle === title) return true;
-                const qParsed = parseTitleWithConfig(
-                    q.originalTitle || q.contentTitleNative || "",
-                );
-                return (
-                    qParsed.query === parsedRaw &&
-                    (qParsed.volume || 1) === oldVolume
-                );
-            });
-
-            if (existing) {
-                if (isMatched || isRunning) {
-                    existing.volume = next;
-                    await readingQueueStorage.setValue(queue);
-                } else {
-                    // Timer is not running on an unmatched title: Reset session to start a fresh queue entry for the new volume (Issue 4 Sync Fix)
-                    ttuState.timeMs = 0;
-                    ttuState.chars = 0;
-                    const currentCount = extractTTUCharCount()
-                        ? extractTTUCharCount().current
-                        : null;
-                    stateRefs.globalSessionStartChar =
-                        currentCount !== null ? currentCount : -1;
-                    stateRefs.globalManualCharOffset = 0;
-
-                    stateRefs.lastSectionIndex = -1;
-                    stateRefs.lastSectionTotal = 0;
-                    stateRefs.visitedSections.clear();
-
-                    updateTick++;
-                }
-            }
-            await refreshLinkerUI(true);
-        } catch (err) {
-            showToast("Error", "Failed to commit volume layout");
-        } finally {
-            isStorageOperationPending = false;
+        if (links[title]) {
+            links[title].volume = next;
+            await ttuLinkStorage.setValue(links);
         }
+
+        const queue = await readingQueueStorage.getValue();
+        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
+        const existing = queue.find(
+            (q) => q.originalTitle === title || q.contentTitleNative === title,
+        );
+        if (existing) {
+            existing.volume = next;
+            await readingQueueStorage.setValue(queue);
+        }
+        await refreshLinkerUI();
     }
 
     function editLink(e: MouseEvent) {
@@ -714,25 +592,21 @@
 
     async function deleteSession(e: MouseEvent, sessionId: string) {
         e.stopPropagation();
-        try {
-            const title = getTTUTitle();
-            const historyNow = (await ttuHistoryStorage.getValue()) || {};
-            const curr = historyNow[title] || [];
-            historyNow[title] = curr.filter((s: any) => s.id !== sessionId);
-            await ttuHistoryStorage.setValue(historyNow);
+        const title = getTTUTitle();
+        const historyNow = (await ttuHistoryStorage.getValue()) || {};
+        const curr = historyNow[title] || [];
+        historyNow[title] = curr.filter((s: any) => s.id !== sessionId);
+        await ttuHistoryStorage.setValue(historyNow);
 
-            const q = await readingQueueStorage.getValue();
-            const filtered = q.filter(
-                (item: any) =>
-                    !(item.sessions || []).some((s: any) => s.id === sessionId),
-            );
-            if (filtered.length !== q.length) {
-                await readingQueueStorage.setValue(filtered);
-            }
-            await updateHistoryData();
-        } catch (e) {
-            showToast("Error", "Failed to delete standard session log");
+        const q = await readingQueueStorage.getValue();
+        const filtered = q.filter(
+            (item: any) =>
+                !(item.sessions || []).some((s: any) => s.id === sessionId),
+        );
+        if (filtered.length !== q.length) {
+            await readingQueueStorage.setValue(filtered);
         }
+        await updateHistoryData();
     }
 
     // Handles programmatic transitions of the DOM stabilizer's custom tooltip
@@ -787,7 +661,7 @@
     <svg viewBox="0 0 24 24" fill="currentColor">
         <path
             id="nt-ttu-main-icon-path"
-            d={isRunning ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z" : "M8 5v14l11-7z"}
+            d={running ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z" : "M8 5v14l11-7z"}
             style="fill: currentColor !important;"
         />
     </svg>
@@ -804,8 +678,7 @@
                     <input
                         type="text"
                         class="nt-ttu-inline-input"
-                        value={timeInputVal}
-                        onchange={(e) => (timeInputVal = e.currentTarget.value)}
+                        bind:value={timeInputVal}
                         onblur={commitTimeEdit}
                         onkeydown={(e) => {
                             e.stopPropagation();
@@ -821,7 +694,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-time"
                         onclick={startTimeEdit}
-                        title="Edit">{fmt(currentTimerMs)}</button
+                        title="Edit">{fmt(timeMs)}</button
                     >
                 {/if}
             </div>
@@ -831,9 +704,7 @@
                     <input
                         type="text"
                         class="nt-ttu-inline-input"
-                        value={charsInputVal}
-                        onchange={(e) =>
-                            (charsInputVal = e.currentTarget.value)}
+                        bind:value={charsInputVal}
                         onblur={commitCharsEdit}
                         onkeydown={(e) => {
                             e.stopPropagation();
@@ -849,7 +720,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-chars"
                         onclick={startCharsEdit}
-                        title="Edit">{currentCharCount}</button
+                        title="Edit">{chars}</button
                     >
                 {/if}
             </div>
@@ -865,11 +736,11 @@
                 class="nt-ttu-btn-icon"
                 id="nt-ttu-btn-toggle"
                 onclick={toggleTimer}
-                title={isRunning ? "Pause Timer" : "Start Timer"}
+                title={running ? "Pause Timer" : "Start Timer"}
             >
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path
-                        d={isRunning
+                        d={running
                             ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
                             : "M8 5v14l11-7z"}
                         style="fill: currentColor !important;"
@@ -936,15 +807,15 @@
             <button
                 class="nt-ttu-btn-icon"
                 id="nt-ttu-btn-settings"
+                onclick={openSettings}
                 title="Open Tracker Settings"
-                onclick={handleOpenSettings}
             >
                 <svg
                     viewBox="0 0 24 24"
                     fill="currentColor"
                     style="width: 15px; height: 15px;"
                     ><path
-                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24-1.13-.56-1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
+                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
                     /></svg
                 >
             </button>
@@ -1074,7 +945,6 @@
                                 onkeypress={(e) => e.stopPropagation()}
                                 spellcheck="false"
                                 autocomplete="off"
-                                use:autofocus
                             />
                         </div>
                         <div class="nt-ttu-link-vol-anchor">
@@ -1237,7 +1107,7 @@
         }
     }
 
-    /* \`:global\` style blocks cleanly prevents Svelte local selector hashing overrides */
+    /* `:global` style blocks cleanly prevents Svelte local selector hashing overrides */
     :global(#nt-ttu-chrono-wrapper) {
         position: relative;
         display: flex;
@@ -1274,7 +1144,7 @@
         border-color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
 
-    /* Outer styling overrides */
+    /* Semantic unstyled helper class to remove standard browser button templates */
     :global(.nt-ttu-btn-text) {
         background: transparent;
         border: none;
@@ -1490,6 +1360,7 @@
         height: 15px !important;
     }
 
+    /* Make the resume/pause toggler change color dynamically */
     :global(#nt-ttu-btn-toggle) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }

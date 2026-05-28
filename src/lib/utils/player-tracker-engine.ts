@@ -28,6 +28,10 @@ export class PlayerTrackerEngine {
         private getJapaneseClassification: () => { isJapanese: boolean; isMusic: boolean }
     ) { }
 
+    public getPlayClockStart(): number {
+        return this.playClockStart;
+    }
+
     public getWatchedSecs(): number {
         return this.watchedSecs;
     }
@@ -115,9 +119,12 @@ export class PlayerTrackerEngine {
                 item.time = Math.max(1, Math.round(completedSecs / 60));
                 item.description = finalTitle;
                 item.contentTitleNative = channelName;
-                if (channelId && !item.channelId) item.channelId = channelId;
+                if (channelId && channelId !== "web-video" && (!item.channelId || item.channelId === "web-video")) {
+                    item.channelId = channelId;
+                }
                 item.mediaData = { ...(item.mediaData || {}), ...mediaData };
-                item.mediaId = item.mediaData?.channelId || channelId || item.mediaId || "web-video";
+                const possibleMediaId = item.mediaData?.channelId || channelId || item.mediaId;
+                item.mediaId = (possibleMediaId && possibleMediaId !== "web-video") ? possibleMediaId : "web-video";
             } else {
                 queue.push({
                     id: crypto.randomUUID(),
@@ -129,8 +136,8 @@ export class PlayerTrackerEngine {
                     tags: [],
                     description: finalTitle,
                     sessions: [{ id: this.currentSessionId, secs, date: new Date().toISOString() }],
-                    channelId,
-                    mediaId: mediaData?.channelId || channelId || "web-video",
+                    channelId: (channelId && channelId !== "web-video") ? channelId : null,
+                    mediaId: (mediaData?.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
                     mediaData,
                 } as any);
             }
@@ -232,7 +239,7 @@ export class PlayerTrackerEngine {
 
                     const ok = await submitLog({
                         type: 'video',
-                        mediaId: mediaData.channelId || channelId || "web-video",
+                        mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
                         description: finalTitle,
                         mediaData,
                         time: sessionMins,
