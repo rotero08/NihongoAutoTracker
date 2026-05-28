@@ -181,21 +181,38 @@
         const links = (await ttuLinkStorage.getValue()) || {};
         const match = links[title];
 
-        // Avoid overwriting search query parameter state if user is typing
+        // Guard active typing states inside text and volume editing inputs from periodic timer resets (Issue 4 Fix)
         const activeEl = document.activeElement;
-        const isInputFocused = activeEl && activeEl.id === "nt-ttu-link-input";
+        const isInputFocused =
+            activeEl &&
+            (activeEl.id === "nt-ttu-link-input" ||
+                activeEl.classList.contains("nt-ttu-vol-input"));
         if (!force && isInputFocused) {
             return;
         }
 
-        if (match && match.mediaId) {
+        if (match && match.mediaId && match.mediaId !== "web-reading") {
             linkedMedia = match;
             volInputVal = Math.max(1, Number(match.volume || 1));
         } else {
             linkedMedia = null;
             const parsed = parseTitleWithConfig(title);
             anilistSearchQuery = parsed.query; // Pre-fills with parsed document title
-            volInputVal = Math.max(1, Number(parsed.volume || 1));
+
+            // Check the reading queue for a customized volume fallback if the book is unlinked (Issue 4 Fix)
+            const queue = (await readingQueueStorage.getValue()) || [];
+            const existing = queue.find((q) => {
+                if (q.originalTitle === title) return true;
+                const qParsed = parseTitleWithConfig(
+                    q.originalTitle || q.contentTitleNative || "",
+                );
+                return qParsed.query === parsed.query;
+            });
+
+            const currentVol =
+                match?.volume ||
+                (existing ? existing.volume : parsed.volume || 1);
+            volInputVal = Math.max(1, Number(currentVol));
         }
     }
 
@@ -385,8 +402,9 @@
 
     async function linkSelectedMedia(m: any) {
         const title = getTTUTitle();
-        const { volume } = parseTitleWithConfig(title);
-        const targetVolume = Math.max(1, volInputVal || volume || 1);
+        const { volume: parsedVolume, query: parsedRaw } =
+            parseTitleWithConfig(title);
+        const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
 
         const nativeTitle =
             m.title?.contentTitleNative || m.contentTitleNative || "Unknown";
@@ -412,10 +430,17 @@
         await ttuLinkStorage.setValue(links);
 
         const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
+        // Volume-specific matching to strictly resolve against the correct volume queue entry (Issue 3 Fix)
+        const existing = queue.find((q) => {
+            if (q.originalTitle === title) return true;
+            const qParsed = parseTitleWithConfig(
+                q.originalTitle || q.contentTitleNative || "",
+            );
+            return (
+                qParsed.query === parsedRaw &&
+                (qParsed.volume || 1) === targetVolume
+            );
+        });
 
         if (existing) {
             existing.mediaId = m.contentId;
@@ -439,6 +464,7 @@
 
     async function unlinkMedia(e: MouseEvent) {
         e.stopPropagation();
+        e.preventDefault();
         const title = getTTUTitle();
 
         // 1. Delete from link storage
@@ -446,12 +472,22 @@
         delete links[title];
         await ttuLinkStorage.setValue(links);
 
-        // 2. Fetch and align with exactly the same parsed query matching used by the watcher
+        // 2. Fetch and align strictly with the current active volume to bypass cross-linking race conditions (Issue 3 Fix)
         const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
+        const { query: parsedRaw, volume: parsedVolume } =
+            parseTitleWithConfig(title);
+        const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
+
+        const existing = queue.find((q) => {
+            if (q.originalTitle === title) return true;
+            const qParsed = parseTitleWithConfig(
+                q.originalTitle || q.contentTitleNative || "",
+            );
+            return (
+                qParsed.query === parsedRaw &&
+                (qParsed.volume || 1) === targetVolume
+            );
+        });
 
         if (existing) {
             existing.mediaId = "web-reading";
@@ -551,21 +587,74 @@
             ? Math.max(1, Number(linkedMedia.volume || 1))
             : Math.max(1, Number(parseTitleWithConfig(title).volume || 1));
 
-        if (links[title]) {
-            links[title].volume = next;
+        const isMatched =
+            linkedMedia &&
+            linkedMedia.mediaId &&
+            linkedMedia.mediaId !== "web-reading";
+
+        if (isMatched) {
+            if (links[title]) {
+                links[title].volume = next;
+                await ttuLinkStorage.setValue(links);
+            }
+        } else {
+            // Unmatched custom volume override
+            const parsed = parseTitleWithConfig(title);
+            links[title] = {
+                mediaId: "web-reading",
+                volume: next,
+                mediaData: {
+                    contentId: "web-reading",
+                    contentTitleNative: parsed.query,
+                    contentTitleEnglish: "",
+                    contentTitleRomaji: "",
+                    contentImage: "",
+                    coverImage: "",
+                    chapters: 0,
+                    volumes: 99,
+                } as any,
+            };
             await ttuLinkStorage.setValue(links);
         }
 
         const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
+        const { query: parsedRaw } = parseTitleWithConfig(title);
+
+        const existing = queue.find((q) => {
+            if (q.originalTitle === title) return true;
+            const qParsed = parseTitleWithConfig(
+                q.originalTitle || q.contentTitleNative || "",
+            );
+            return (
+                qParsed.query === parsedRaw &&
+                (qParsed.volume || 1) === oldVolume
+            );
+        });
+
         if (existing) {
-            existing.volume = next;
-            await readingQueueStorage.setValue(queue);
+            if (isMatched || ttuState.running) {
+                existing.volume = next;
+                await readingQueueStorage.setValue(queue);
+            } else {
+                // Timer is not running on an unmatched title: Reset session to start a fresh queue entry for the new volume (Issue 4 Sync Fix)
+                ttuState.timeMs = 0;
+                ttuState.chars = 0;
+                const currentCount = extractTTUCharCount()
+                    ? extractTTUCharCount().current
+                    : null;
+                stateRefs.globalSessionStartChar =
+                    currentCount !== null ? currentCount : -1;
+                stateRefs.globalManualCharOffset = 0;
+
+                stateRefs.lastSectionIndex = -1;
+                stateRefs.lastSectionTotal = 0;
+                stateRefs.visitedSections.clear();
+
+                timeMs = 0;
+                chars = 0;
+            }
         }
-        await refreshLinkerUI();
+        await refreshLinkerUI(true);
     }
 
     function editLink(e: MouseEvent) {
@@ -1097,7 +1186,7 @@
         }
     }
 
-    /* `:global` style blocks cleanly prevents Svelte local selector hashing overrides */
+    /* \`:global\` style blocks cleanly prevents Svelte local selector hashing overrides */
     :global(#nt-ttu-chrono-wrapper) {
         position: relative;
         display: flex;

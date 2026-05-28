@@ -34,7 +34,22 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
   const defaultVal = { r: 7, g: 7, b: 14 };
   if (!colorStr) return defaultVal;
 
-  const rgbMatch = colorStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  let val = colorStr.trim();
+
+  // Recursively resolve var(...) references if we are in a DOM environment (Goal 1 Fix)
+  if (typeof window !== 'undefined' && val.startsWith('var(')) {
+    const match = val.match(/var\((--[^,)]+)/);
+    if (match) {
+      const varName = match[1].trim();
+      const resolved = window.getComputedStyle(document.documentElement).getPropertyValue(varName).trim() ||
+        window.getComputedStyle(document.body).getPropertyValue(varName).trim();
+      if (resolved && resolved !== val) {
+        return parseColorToRgb(resolved);
+      }
+    }
+  }
+
+  const rgbMatch = val.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
   if (rgbMatch) {
     return {
       r: parseInt(rgbMatch[1], 10),
@@ -43,8 +58,8 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
     };
   }
 
-  if (colorStr.startsWith('#')) {
-    let hex = colorStr.slice(1);
+  if (val.startsWith('#')) {
+    let hex = val.slice(1);
     if (hex.length === 3) {
       hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
     }
@@ -120,12 +135,33 @@ function findDOMAccentColor(isDark: boolean): string | null {
   const rootStyle = window.getComputedStyle(document.documentElement);
   const bodyStyle = window.getComputedStyle(document.body);
 
-  // 1. Prioritize native CSS variables representing the exact theme accent/primary colors
+  // 1. Prioritize native CSS variables representing the exact theme accent/primary colors (Goal 1 Fix)
   const cssVars = [
     '--color-accent', '--accent-color', '--accent', '--theme-color', '--main-color',
     '--theme-accent', '--primary', '--color-primary', '--md-sys-color-primary',
     '--yatsu-accent', '--yatsu-primary', '--ttu-color-accent', '--ttu-accent', '--color-main'
   ];
+
+  // Standardize accent extraction across the three core readers by skipping noisy generic DOM scans (Issue Accent Match Fix)
+  const isReaderPage = window.location.hostname.includes('reader.ttsu.app') ||
+    window.location.hostname.includes('app.yatsu.moe') ||
+    window.location.hostname.includes('manga.manabe.es') ||
+    window.location.hostname.includes('yomiyasu') ||
+    !!getActiveReaderAdapter();
+
+  if (isReaderPage) {
+    for (const cssVar of cssVars) {
+      const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
+      if (val) {
+        const rgb = parseColorToRgb(val);
+        if (isValidAccent(rgb, isDark)) {
+          return val;
+        }
+      }
+    }
+    return isDark ? '#f5a623' : '#92400e';
+  }
+
   for (const cssVar of cssVars) {
     const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
     if (val) {
@@ -270,11 +306,38 @@ export function detectReaderThemeColors(): any {
     let borderHover = isDark ? adjustLightness(parsedBg, 32) : adjustLightness(parsedBg, -32);
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
-    let accent = isDark ? '#f0b429' : '#b45309';
-    const extractedAccent = findDOMAccentColor(isDark);
-    if (extractedAccent) {
-      accent = extractedAccent;
+    let accent = isDark ? '#f5a623' : '#92400e';
+    const isReaderPage = window.location.hostname.includes('reader.ttsu.app') ||
+      window.location.hostname.includes('app.yatsu.moe') ||
+      window.location.hostname.includes('manga.manabe.es') ||
+      window.location.hostname.includes('yomiyasu') ||
+      !!getActiveReaderAdapter();
+
+    if (isReaderPage) {
+      // Force identical high-contrast theme accents on the core readers (Contrast Fix)
+      accent = isDark ? '#f5a623' : '#92400e';
+    } else {
+      const extractedAccent = findDOMAccentColor(isDark);
+      if (extractedAccent) {
+        accent = extractedAccent;
+      }
+
+      // Mathematically enforce high contrast and vibrant saturation for custom sites (Contrast Fix)
+      const rgbAccent = parseColorToRgb(accent);
+      const hslAccent = rgbToHsl(rgbAccent.r, rgbAccent.g, rgbAccent.b);
+
+      if (isDark) {
+        hslAccent.l = Math.max(52, hslAccent.l);
+        hslAccent.s = Math.max(55, hslAccent.s);
+      } else {
+        hslAccent.l = Math.min(40, hslAccent.l);
+        hslAccent.s = Math.max(60, hslAccent.s);
+      }
+
+      const contrastAccentRgb = hslToRgb(hslAccent.h, hslAccent.s, hslAccent.l);
+      accent = `rgb(${contrastAccentRgb.r}, ${contrastAccentRgb.g}, ${contrastAccentRgb.b})`;
     }
+
     const parsedAccent = parseColorToRgb(accent);
     let accentHover = isDark ? adjustLightness(parsedAccent, 15) : adjustLightness(parsedAccent, -15);
 
@@ -392,9 +455,19 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
 
     const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
     if (themeName === 'match-reader' && !isExtensionPage) {
+      const host = window.location.hostname;
+      const stored = (await browser.storage.local.get(`local:readerColors:${host}`).catch(() => ({}))) as Record<string, any>;
+      const cachedColors = stored[`local:readerColors:${host}`];
+
       const detectedColors = detectReaderThemeColors();
       if (detectedColors) {
-        const host = window.location.hostname;
+        // Fallback to cached valid values to bypass transient amber resets on page loads (Accent Reload Fix)
+        const defaultAccent = detectedColors.background === '#07070e' ? '#f5a623' : '#92400e';
+        if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
+          detectedColors.accent = cachedColors.accent;
+          detectedColors.accentHover = cachedColors.accentHover || detectedColors.accentHover;
+        }
+
         await browser.storage.local.set({
           [`local:readerColors:${host}`]: detectedColors,
           [`readerColors:${host}`]: detectedColors

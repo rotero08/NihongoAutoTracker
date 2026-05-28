@@ -409,12 +409,17 @@ async function liveSyncQueue() {
     const dateStr = new Date().toISOString();
     const secs = Math.round(ttuState.timeMs / 1000);
 
-    const queue = await readingQueueStorage.getValue();
-    // Legacy matching: fall back to raw title matching when necessary
-    let existing = queue.find(q => q.originalTitle === rawTitle || q.contentTitleNative === rawTitle);
-
     const linkMap = await ttuLinkStorage.getValue() || {};
     const linkedMedia = linkMap[rawTitle];
+    const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
+
+    const queue = await readingQueueStorage.getValue();
+    // Resolve matching rules aligned strictly with the custom target overridden volume index (Issue 4 & Sync Fix)
+    let existing = queue.find(q => {
+      if (q.originalTitle === rawTitle) return true;
+      const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
+      return qParsed.query === parsedTitle && (qParsed.volume || 1) === targetVolume;
+    });
 
     await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
 
@@ -426,7 +431,7 @@ async function liveSyncQueue() {
         originalTitle: rawTitle,
         description: parsedTitle,
         chars: ttuState.chars, time: secs,
-        volume: parsedVolume || 1,
+        volume: targetVolume,
         date: dateStr, private: false, tags: [],
         sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
         readerName: getReaderName()
@@ -438,8 +443,8 @@ async function liveSyncQueue() {
 
       if (!existing.mediaId || existing.mediaId === 'web-reading') {
         existing.contentTitleNative = existing.contentTitleNative || parsedTitle;
-        if (parsedVolume !== undefined && !existing.volume) {
-          existing.volume = parsedVolume;
+        if (targetVolume !== undefined && !existing.volume) {
+          existing.volume = targetVolume;
         }
       }
 
@@ -458,7 +463,7 @@ async function liveSyncQueue() {
       existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
     }
 
-    if (linkedMedia) {
+    if (linkedMedia && linkedMedia.mediaId !== 'web-reading') {
       existing.mediaId = String(linkedMedia.mediaId);
       existing.mediaData = linkedMedia.mediaData;
       existing.volume = linkedMedia.volume;
@@ -890,13 +895,13 @@ if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver 
           }
         }
 
-        if (isDictionaryMutation) {
-          continue;
-        }
-
-        // Trigger immediate theme sync when the reader view is active and loading structural changes
+        // Run the fast theme sync check anyway to guarantee the matched theme persists (Jiten Fix)
         if (isReadingViewActive()) {
           scheduleInstantThemeSync();
+        }
+
+        if (isDictionaryMutation) {
+          continue;
         }
       }
 
@@ -1248,10 +1253,15 @@ export default defineContentScript({
         const rawTitle = getTTUTitle();
         const parsedRaw = parseTitleWithConfig(rawTitle).query;
 
-        // Legacy matching rules to ensure consistent title synchronization and queue matches
+        const linkMap = await ttuLinkStorage.getValue() || {};
+        const linkedMedia = linkMap[rawTitle];
+        const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
+
+        // Volume-specific queue matching to prevent cross-linking between different volumes (Issue 3 Fix)
         const existing = currentQueue.find((q: any) => {
-          const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '').query;
-          return qParsed === parsedRaw;
+          if (q.originalTitle === rawTitle) return true;
+          const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
+          return qParsed.query === parsedRaw && (qParsed.volume || 1) === targetVolume;
         });
 
         if (!existing && ttuState.timeMs > 0) {
@@ -1283,8 +1293,12 @@ export default defineContentScript({
               }
             } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
               if (links[rawTitle]) {
-                delete links[rawTitle];
-                updated = true;
+                const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
+                // Avoid deleting link map entry if it matches a custom unmatched volume override (Issue 4 Sync Fix)
+                if (links[rawTitle].volume === parsedVol) {
+                  delete links[rawTitle];
+                  updated = true;
+                }
               }
             }
 
