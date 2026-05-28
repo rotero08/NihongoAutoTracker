@@ -35,6 +35,9 @@
     let isSearchingAnilist = $state(false);
     let pastSessions = $state<any[]>([]);
 
+    // Operation status lock to prevent concurrent auto-saves from overwriting active user edits (Race Condition Fix)
+    let isStorageOperationPending = $state(false);
+
     // Editing Overlays
     let isEditingTime = $state(false);
     let isEditingChars = $state(false);
@@ -172,11 +175,17 @@
 
     // Visual database updates
     async function updateHistoryData() {
-        const history = (await ttuHistoryStorage.getValue()) || {};
-        pastSessions = history[getTTUTitle()] || [];
+        try {
+            const history = (await ttuHistoryStorage.getValue()) || {};
+            pastSessions = history[getTTUTitle()] || [];
+        } catch (e) {
+            console.error("Failed to load past sessions", e);
+        }
     }
 
     async function refreshLinkerUI(force = false) {
+        if (isStorageOperationPending) return; // Block reads if standard storage operations are currently saving/modifying state
+
         const title = getTTUTitle();
         const links = (await ttuLinkStorage.getValue()) || {};
         const match = links[title];
@@ -233,6 +242,7 @@
             return; // Handled by dblclick
         }
 
+        // Align click triggers with typical browser speed requirements to reduce micro-stutter triggers
         clickTimeout = setTimeout(async () => {
             clickTimeout = null;
             isDropdownOpen = !isDropdownOpen;
@@ -254,7 +264,7 @@
                 timeMs = ttuState.timeMs;
                 chars = ttuState.chars;
             }
-        }, 200);
+        }, 280);
     }
 
     // Play/Pause timer toggle bindings
@@ -393,105 +403,127 @@
     }
 
     async function linkSelectedMedia(m: any) {
-        const title = getTTUTitle();
-        const { volume: parsedVolume, query: parsedRaw } =
-            parseTitleWithConfig(title);
-        const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
+        if (isStorageOperationPending) return;
+        isStorageOperationPending = true;
 
-        const nativeTitle =
-            m.title?.contentTitleNative || m.contentTitleNative || "Unknown";
-        const cover = m.coverImage || m.contentImage || "";
+        try {
+            const title = getTTUTitle();
+            const { volume: parsedVolume, query: parsedRaw } =
+                parseTitleWithConfig(title);
+            const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
 
-        const links = (await ttuLinkStorage.getValue()) || {};
-        links[title] = {
-            mediaId: m.contentId,
-            volume: targetVolume,
-            mediaData: {
-                contentId: m.contentId,
-                contentTitleNative: nativeTitle,
-                contentTitleEnglish:
-                    m.title?.contentTitleEnglish || m.contentTitleEnglish || "",
-                contentTitleRomaji:
-                    m.title?.contentTitleRomaji || m.contentTitleRomaji,
-                contentImage: cover,
-                coverImage: cover,
-                chapters: m.textChapters || m.chapters,
-                volumes: m.volumes,
-            },
-        };
-        await ttuLinkStorage.setValue(links);
+            const nativeTitle =
+                m.title?.contentTitleNative ||
+                m.contentTitleNative ||
+                "Unknown";
+            const cover = m.coverImage || m.contentImage || "";
 
-        const queue = await readingQueueStorage.getValue();
-        // Volume-specific matching to strictly resolve against the correct volume queue entry (Issue 3 Fix)
-        const existing = queue.find((q) => {
-            if (q.originalTitle === title) return true;
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            );
-            return (
-                qParsed.query === parsedRaw &&
-                (qParsed.volume || 1) === targetVolume
-            );
-        });
+            const links = (await ttuLinkStorage.getValue()) || {};
+            links[title] = {
+                mediaId: m.contentId,
+                volume: targetVolume,
+                mediaData: {
+                    contentId: m.contentId,
+                    contentTitleNative: nativeTitle,
+                    contentTitleEnglish:
+                        m.title?.contentTitleEnglish ||
+                        m.contentTitleEnglish ||
+                        "",
+                    contentTitleRomaji:
+                        m.title?.contentTitleRomaji || m.contentTitleRomaji,
+                    contentImage: cover,
+                    coverImage: cover,
+                    chapters: m.textChapters || m.chapters,
+                    volumes: m.volumes,
+                },
+            };
+            await ttuLinkStorage.setValue(links);
 
-        if (existing) {
-            existing.mediaId = m.contentId;
-            existing.volume = targetVolume;
-            existing.mediaData = links[title].mediaData;
-            existing.contentTitleNative = nativeTitle;
-            existing.contentTitleEnglish =
-                m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
-            existing.description = nativeTitle;
-            await readingQueueStorage.setValue(queue);
-        }
+            const queue = await readingQueueStorage.getValue();
+            // Volume-specific matching to strictly resolve against the correct volume queue entry (Issue 3 Fix)
+            const existing = queue.find((q) => {
+                if (q.originalTitle === title) return true;
+                const qParsed = parseTitleWithConfig(
+                    q.originalTitle || q.contentTitleNative || "",
+                );
+                return (
+                    qParsed.query === parsedRaw &&
+                    (qParsed.volume || 1) === targetVolume
+                );
+            });
 
-        anilistResults = [];
-        anilistSearchQuery = "";
-        await refreshLinkerUI(true);
+            if (existing) {
+                existing.mediaId = m.contentId;
+                existing.volume = targetVolume;
+                existing.mediaData = links[title].mediaData;
+                existing.contentTitleNative = nativeTitle;
+                existing.contentTitleEnglish =
+                    m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
+                existing.description = nativeTitle;
+                await readingQueueStorage.setValue(queue);
+            }
 
-        if (ttuState.timeMs > 0 || ttuState.chars > 0) {
-            await liveSyncQueue();
+            anilistResults = [];
+            anilistSearchQuery = "";
+            await refreshLinkerUI(true);
+
+            if (ttuState.timeMs > 0 || ttuState.chars > 0) {
+                await liveSyncQueue();
+            }
+        } catch (err) {
+            showToast("Error", "Failed to link standard media");
+        } finally {
+            isStorageOperationPending = false;
         }
     }
 
     async function unlinkMedia(e: MouseEvent) {
         e.stopPropagation();
         e.preventDefault();
-        const title = getTTUTitle();
+        if (isStorageOperationPending) return;
+        isStorageOperationPending = true;
 
-        // 1. Delete from link storage
-        const links = (await ttuLinkStorage.getValue()) || {};
-        delete links[title];
-        await ttuLinkStorage.setValue(links);
+        try {
+            const title = getTTUTitle();
 
-        // 2. Fetch and align strictly with the current active volume to bypass cross-linking race conditions (Issue 3 Fix)
-        const queue = await readingQueueStorage.getValue();
-        const { query: parsedRaw, volume: parsedVolume } =
-            parseTitleWithConfig(title);
-        const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
+            // 1. Delete from link storage
+            const links = (await ttuLinkStorage.getValue()) || {};
+            delete links[title];
+            await ttuLinkStorage.setValue(links);
 
-        const existing = queue.find((q) => {
-            if (q.originalTitle === title) return true;
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            );
-            return (
-                qParsed.query === parsedRaw &&
-                (qParsed.volume || 1) === targetVolume
-            );
-        });
+            // 2. Fetch and align strictly with the current active volume to bypass cross-linking race conditions (Issue 3 Fix)
+            const queue = await readingQueueStorage.getValue();
+            const { query: parsedRaw, volume: parsedVolume } =
+                parseTitleWithConfig(title);
+            const targetVolume = Math.max(1, volInputVal || parsedVolume || 1);
 
-        if (existing) {
-            existing.mediaId = "web-reading";
-            existing.mediaData = undefined;
-            await readingQueueStorage.setValue(queue);
+            const existing = queue.find((q) => {
+                if (q.originalTitle === title) return true;
+                const qParsed = parseTitleWithConfig(
+                    q.originalTitle || q.contentTitleNative || "",
+                );
+                return (
+                    qParsed.query === parsedRaw &&
+                    (qParsed.volume || 1) === targetVolume
+                );
+            });
+
+            if (existing) {
+                existing.mediaId = "web-reading";
+                existing.mediaData = undefined;
+                await readingQueueStorage.setValue(queue);
+            }
+
+            // 3. Clear Svelte local state and refresh UI
+            linkedMedia = null;
+            const parsed = parseTitleWithConfig(title);
+            anilistSearchQuery = parsed.query;
+            await refreshLinkerUI(true);
+        } catch (err) {
+            showToast("Error", "Failed to unlink standard media");
+        } finally {
+            isStorageOperationPending = false;
         }
-
-        // 3. Clear Svelte local state and refresh UI
-        linkedMedia = null;
-        const parsed = parseTitleWithConfig(title);
-        anilistSearchQuery = parsed.query;
-        await refreshLinkerUI(true);
     }
 
     // Handles focusing on search bar to trigger search automatically with current text
@@ -566,87 +598,96 @@
 
     async function commitVolEdit() {
         isEditingVol = false;
-        const next = Math.max(
-            1,
-            Number(String(volInputVal || "").replace(/\D/g, "")) || 1,
-        );
-        volInputVal = next;
+        if (isStorageOperationPending) return;
+        isStorageOperationPending = true;
 
-        const title = getTTUTitle();
-        const links = (await ttuLinkStorage.getValue()) || {};
+        try {
+            const next = Math.max(
+                1,
+                Number(String(volInputVal || "").replace(/\D/g, "")) || 1,
+            );
+            volInputVal = next;
 
-        const oldVolume = linkedMedia
-            ? Math.max(1, Number(linkedMedia.volume || 1))
-            : Math.max(1, Number(parseTitleWithConfig(title).volume || 1));
+            const title = getTTUTitle();
+            const links = (await ttuLinkStorage.getValue()) || {};
 
-        const isMatched =
-            linkedMedia &&
-            linkedMedia.mediaId &&
-            linkedMedia.mediaId !== "web-reading";
+            const oldVolume = linkedMedia
+                ? Math.max(1, Number(linkedMedia.volume || 1))
+                : Math.max(1, Number(parseTitleWithConfig(title).volume || 1));
 
-        if (isMatched) {
-            if (links[title]) {
-                links[title].volume = next;
+            const isMatched =
+                linkedMedia &&
+                linkedMedia.mediaId &&
+                linkedMedia.mediaId !== "web-reading";
+
+            if (isMatched) {
+                if (links[title]) {
+                    links[title].volume = next;
+                    await ttuLinkStorage.setValue(links);
+                }
+            } else {
+                // Unmatched custom volume override
+                const parsed = parseTitleWithConfig(title);
+                links[title] = {
+                    mediaId: "web-reading",
+                    volume: next,
+                    mediaData: {
+                        contentId: "web-reading",
+                        contentTitleNative: parsed.query,
+                        contentTitleEnglish: "",
+                        contentTitleRomaji: "",
+                        contentImage: "",
+                        coverImage: "",
+                        chapters: 0,
+                        volumes: 99,
+                    } as any,
+                };
                 await ttuLinkStorage.setValue(links);
             }
-        } else {
-            // Unmatched custom volume override
-            const parsed = parseTitleWithConfig(title);
-            links[title] = {
-                mediaId: "web-reading",
-                volume: next,
-                mediaData: {
-                    contentId: "web-reading",
-                    contentTitleNative: parsed.query,
-                    contentTitleEnglish: "",
-                    contentTitleRomaji: "",
-                    contentImage: "",
-                    coverImage: "",
-                    chapters: 0,
-                    volumes: 99,
-                } as any,
-            };
-            await ttuLinkStorage.setValue(links);
-        }
 
-        const queue = await readingQueueStorage.getValue();
-        const { query: parsedRaw } = parseTitleWithConfig(title);
+            const queue = await readingQueueStorage.getValue();
+            const { query: parsedRaw } = parseTitleWithConfig(title);
 
-        const existing = queue.find((q) => {
-            if (q.originalTitle === title) return true;
-            const qParsed = parseTitleWithConfig(
-                q.originalTitle || q.contentTitleNative || "",
-            );
-            return (
-                qParsed.query === parsedRaw &&
-                (qParsed.volume || 1) === oldVolume
-            );
-        });
+            const existing = queue.find((q) => {
+                if (q.originalTitle === title) return true;
+                const qParsed = parseTitleWithConfig(
+                    q.originalTitle || q.contentTitleNative || "",
+                );
+                return (
+                    qParsed.query === parsedRaw &&
+                    (qParsed.volume || 1) === oldVolume
+                );
+            });
 
-        if (existing) {
-            if (isMatched || ttuState.running) {
-                existing.volume = next;
-                await readingQueueStorage.setValue(queue);
-            } else {
-                // Timer is not running on an unmatched title: Reset session to start a fresh queue entry for the new volume (Issue 4 Sync Fix)
-                ttuState.timeMs = 0;
-                ttuState.chars = 0;
-                const currentCount = extractTTUCharCount()
-                    ? extractTTUCharCount().current
-                    : null;
-                stateRefs.globalSessionStartChar =
-                    currentCount !== null ? currentCount : -1;
-                stateRefs.globalManualCharOffset = 0;
+            if (existing) {
+                if (isMatched || ttuState.running) {
+                    existing.volume = next;
+                    await readingQueueStorage.setValue(queue);
+                } else {
+                    // Timer is not running on an unmatched title: Reset session to start a fresh queue entry for the new volume (Issue 4 Sync Fix)
+                    ttuState.timeMs = 0;
+                    ttuState.chars = 0;
+                    const currentCount = extractTTUCharCount()
+                        ? extractTTUCharCount().current
+                        : null;
+                    stateRefs.globalSessionStartChar =
+                        currentCount !== null ? currentCount : -1;
+                    stateRefs.globalManualCharOffset = 0;
 
-                stateRefs.lastSectionIndex = -1;
-                stateRefs.lastSectionTotal = 0;
-                stateRefs.visitedSections.clear();
+                    stateRefs.lastSectionIndex = -1;
+                    stateRefs.lastSectionTotal = 0;
+                    stateRefs.visitedSections.clear();
 
-                timeMs = 0;
-                chars = 0;
+                    timeMs = 0;
+                    chars = 0;
+                }
             }
+            await refreshLinkerUI(true);
+        } catch (err) {
+            showToast("Error", "Failed to commit volume layout");
+        } finally {
+            isStorageOperationPending = false;
         }
-        await refreshLinkerUI(true);
     }
 
     function editLink(e: MouseEvent) {
@@ -660,21 +701,25 @@
 
     async function deleteSession(e: MouseEvent, sessionId: string) {
         e.stopPropagation();
-        const title = getTTUTitle();
-        const historyNow = (await ttuHistoryStorage.getValue()) || {};
-        const curr = historyNow[title] || [];
-        historyNow[title] = curr.filter((s: any) => s.id !== sessionId);
-        await ttuHistoryStorage.setValue(historyNow);
+        try {
+            const title = getTTUTitle();
+            const historyNow = (await ttuHistoryStorage.getValue()) || {};
+            const curr = historyNow[title] || [];
+            historyNow[title] = curr.filter((s: any) => s.id !== sessionId);
+            await ttuHistoryStorage.setValue(historyNow);
 
-        const q = await readingQueueStorage.getValue();
-        const filtered = q.filter(
-            (item: any) =>
-                !(item.sessions || []).some((s: any) => s.id === sessionId),
-        );
-        if (filtered.length !== q.length) {
-            await readingQueueStorage.setValue(filtered);
+            const q = await readingQueueStorage.getValue();
+            const filtered = q.filter(
+                (item: any) =>
+                    !(item.sessions || []).some((s: any) => s.id === sessionId),
+            );
+            if (filtered.length !== q.length) {
+                await readingQueueStorage.setValue(filtered);
+            }
+            await updateHistoryData();
+        } catch (e) {
+            showToast("Error", "Failed to delete standard session log");
         }
-        await updateHistoryData();
     }
 
     // Handles programmatic transitions of the DOM stabilizer's custom tooltip

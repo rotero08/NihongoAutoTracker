@@ -2,6 +2,11 @@ import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
 import { applyThemeToDocument } from '@/lib/ui/themes';
 
+// High-performance cache for computed DOM theme checks to avoid layout thrashing
+let _cachedThemeColors: any = null;
+let _lastThemeDetectionTime = 0;
+const THEME_DETECTION_CACHE_TTL = 1500; // ms
+
 export function getActiveThemeName(cfg: any): string {
   const adapter = getActiveReaderAdapter();
   if (adapter) {
@@ -182,7 +187,10 @@ function findDOMAccentColor(isDark: boolean): string | null {
   for (const selector of specificSelectors) {
     try {
       const elements = document.querySelectorAll(selector);
-      for (const el of Array.from(elements)) {
+      // Limit checked loop size to avoid freezing pages containing thousands of matching classes
+      const scanLimit = Math.min(elements.length, 15);
+      for (let i = 0; i < scanLimit; i++) {
+        const el = elements[i] as HTMLElement;
         // Exclude our own extension wrappers to avoid circular style inheritance
         if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
           continue;
@@ -224,7 +232,10 @@ function findDOMAccentColor(isDark: boolean): string | null {
   for (const selector of genericSelectors) {
     try {
       const elements = document.querySelectorAll(selector);
-      for (const el of Array.from(elements)) {
+      // Limit scanned fallback tags to prevent frame drop logs
+      const scanLimit = Math.min(elements.length, 10);
+      for (let i = 0; i < scanLimit; i++) {
+        const el = elements[i] as HTMLElement;
         // Exclude our own extension wrappers to avoid circular style inheritance
         if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
           continue;
@@ -252,6 +263,11 @@ function findDOMAccentColor(isDark: boolean): string | null {
 }
 
 export function detectReaderThemeColors(): any {
+  const now = Date.now();
+  if (_cachedThemeColors && (now - _lastThemeDetectionTime) < THEME_DETECTION_CACHE_TTL) {
+    return _cachedThemeColors;
+  }
+
   try {
     const bodyStyle = window.getComputedStyle(document.body);
     let bgColor = bodyStyle.backgroundColor;
@@ -338,7 +354,7 @@ export function detectReaderThemeColors(): any {
     const successGreen = hslToRgb(greenHsl.h, greenHsl.s, greenHsl.l);
     const success = `rgb(${successGreen.r}, ${successGreen.g}, ${successGreen.b})`;
 
-    return {
+    const detectedColors = {
       background,
       surface,
       surfaceAlt,
@@ -350,6 +366,10 @@ export function detectReaderThemeColors(): any {
       accentHover,
       success
     };
+
+    _cachedThemeColors = detectedColors;
+    _lastThemeDetectionTime = now;
+    return detectedColors;
   } catch (e) {
     return null;
   }

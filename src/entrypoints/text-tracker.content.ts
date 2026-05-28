@@ -57,10 +57,14 @@ const READING_VIEW_CACHE_TTL = 500; // ms
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
 
 let _mutationRafScheduled = false;
+let _mutationTimeout: any = null;
 let _instantThemeSyncScheduled = false;
 let _lastSectionCheckTime = 0;
 let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
+
+// Track to verify if our local session has successfully synced to standard storage queues (Sync Fix)
+let hasSyncedThisSession = false;
 
 // Central instances for extracted utilities
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
@@ -473,6 +477,7 @@ async function liveSyncQueue() {
     }
 
     await readingQueueStorage.setValue(queue);
+    hasSyncedThisSession = true; // Flag sync completed to allow deletion tracking
   } finally {
     isSyncing = false;
   }
@@ -506,6 +511,7 @@ async function saveSessionAndQueue() {
   stateRefs.visitedSections.clear();
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
+  hasSyncedThisSession = false; // Reset session sync on final save
 
   showToast('Success', 'Session queued!');
 }
@@ -833,10 +839,13 @@ function isDictNode(node: Node): boolean {
 function scheduleMutations() {
   if (_mutationRafScheduled) return;
   _mutationRafScheduled = true;
-  requestAnimationFrame(() => {
+  if (_mutationTimeout) clearTimeout(_mutationTimeout);
+
+  // Throttle mutation ticks to 120ms to completely prevent DOM layout stutters during scrolling
+  _mutationTimeout = setTimeout(() => {
     _mutationRafScheduled = false;
     handleMutations();
-  });
+  }, 120);
 }
 
 // CPU and Memory optimized MutationObservers restricted strictly to relevant frames [1]
@@ -963,6 +972,11 @@ function handleMutations() {
         mountedChronoComponent = null;
       }
       wrapper.remove();
+    }
+    // Prevent observers from remaining detached in memory (Memory Fix)
+    if (progressObserver) {
+      progressObserver.disconnect();
+      progressObserver = null;
     }
   }
 
@@ -1265,18 +1279,23 @@ export default defineContentScript({
         });
 
         if (!existing && ttuState.timeMs > 0) {
-          ttuState.timeMs = 0;
-          ttuState.chars = 0;
-          stateRefs.globalLastTick = Date.now();
+          // Safety lock: only reset session if this session was previously synced to avoid resetting early configurations (Progress Save Fix)
+          if (hasSyncedThisSession) {
+            ttuState.timeMs = 0;
+            ttuState.chars = 0;
+            stateRefs.globalLastTick = Date.now();
 
-          const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-          stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
-          stateRefs.globalManualCharOffset = 0;
+            const initCount = extractAdvancedCharCount(undefined, ttuState.running);
+            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+            stateRefs.globalManualCharOffset = 0;
 
-          const timeVal = document.querySelector('#nt-ttu-val-time');
-          const charsVal = document.querySelector('#nt-ttu-val-chars');
-          if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
-          if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+            const timeVal = document.querySelector('#nt-ttu-val-time');
+            const charsVal = document.querySelector('#nt-ttu-val-chars');
+            if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
+            if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+
+            hasSyncedThisSession = false;
+          }
         } else if (existing) {
           ttuLinkStorage.getValue().then(links => {
             links = links || {};

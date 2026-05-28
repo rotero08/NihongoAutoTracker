@@ -4,7 +4,7 @@
  * Extracted overlay DOM rendering and custom styling rules from text-tracker
  * content script to modularize the codebase and improve readability.
  */
-import { SKIP_HOSTS_DEFAULT } from '../constants';
+import { SKIP_HOSTS_DEFAULT, TTU_HOSTS } from '../constants';
 import { addDebugLog } from '../storage/debug';
 import { fmt } from '../utils/time';
 import { getTheme } from './themes';
@@ -21,6 +21,12 @@ export function setOverlayDismissed(val: boolean) {
 
 export function isWebsiteOverlaySkipped(cfg: any): boolean {
   const host = window.location.hostname;
+
+  // High-performance Reader parent page check to avoid layout overlaps (Double Overlay Fix)
+  if (TTU_HOSTS.some((h: string) => host.includes(h))) {
+    return true;
+  }
+
   const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
   if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
   if (skipSites.some((h: string) => host.includes(h))) return true;
