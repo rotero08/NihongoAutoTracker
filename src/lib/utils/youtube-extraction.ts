@@ -1,241 +1,195 @@
-import { resolveVideoChannelMedia } from '../api/nihongotracker';
-import { cleanUrl } from './url';
+/**
+ * ── YouTube Data Extraction & Unification Utilities ──────────────────────────
+ */
+import { resolveVideoChannelMedia } from '@/lib/api/nihongotracker';
 
-const ytApiCache: Record<string, any> = {};
-const ytApiInFlight: Record<string, Promise<any>> = {};
-const channelMediaCache: Record<string, any> = {};
+const activeHandleFetches = new Map<string, Promise<string | null>>();
+const fetchCache = new Map<string, any>();
 
-// URL-keyed caches for DOM-extracted channel info
-const _cachedChannelIdByUrl: Record<string, string | null> = {};
-const _cachedChannelNameByUrl: Record<string, string> = {};
-
-let _extractedCid: string | null = null;
-let _extractedAuthor: string | null = null;
-
-// Tracking variables for scanning state
-let _lastUrl = '';
-let _lastScriptCount = 0;
-let _lastScannedIndex = 0;
-let _cidScannedAndFound = false;
-let _authorScannedAndFound = false;
-
-/** Utility to keep cache sizes bound and prevent memory leaks in SPA contexts */
-function pruneCache(cache: Record<string, any>, maxSize = 100) {
-    const keys = Object.keys(cache);
-    if (keys.length > maxSize) {
-        const toRemove = Math.ceil(maxSize * 0.2); // Evict oldest 20%
-        for (let i = 0; i < toRemove; i++) {
-            delete cache[keys[i]];
-        }
-    }
-}
-
-function extractFromScripts() {
-    const pageUrl = window.location.href;
-    const scripts = document.scripts;
-    const scriptCount = scripts.length;
-
-    // Reset tracking state if the URL has changed
-    if (_lastUrl !== pageUrl) {
-        _lastUrl = pageUrl;
-        _extractedCid = null;
-        _extractedAuthor = null;
-        _lastScriptCount = 0;
-        _lastScannedIndex = 0;
-        _cidScannedAndFound = false;
-        _authorScannedAndFound = false;
+/**
+ * Fetch video metadata from a YouTube watch page.
+ * Scrapes ytInitialPlayerResponse JSON embedded in page HTML to extract details.
+ */
+export async function fetchYouTubeVideoData(url: string): Promise<{
+    video: { episodeDuration: number; title?: { contentTitleNative?: string; contentTitleEnglish?: string } };
+    channel: {
+        contentId?: string;
+        title?: { contentTitleNative?: string; contentTitleEnglish?: string };
+        contentImage?: string;
+        description?: Array<{ description?: string }>;
+    };
+} | null> {
+    if (fetchCache.has(url)) {
+        return fetchCache.get(url);
     }
 
-    const needsCid = !_cidScannedAndFound;
-    const needsAuthor = !_authorScannedAndFound;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
 
-    // Only scan if we still need data AND new scripts have been appended
-    if ((needsCid || needsAuthor) && scriptCount !== _lastScriptCount) {
-        _lastScriptCount = scriptCount;
+        const html = await res.text();
+        const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});/);
+        if (!match) return null;
 
-        // Start scanning exactly where we left off to avoid redundant allocations and heavy string parses
-        for (let i = _lastScannedIndex; i < scriptCount; i++) {
-            if (_cidScannedAndFound && _authorScannedAndFound) {
-                break; // Exit early if both pieces of data are resolved
-            }
+        const data = JSON.parse(match[1]);
 
-            const text = scripts[i].textContent;
-            if (text && text.includes('videoDetails')) {
-                if (needsCid && !_cidScannedAndFound) {
-                    const cidMatch = text.match(/"videoDetails":\{.*?"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
-                    if (cidMatch) {
-                        _extractedCid = cidMatch[1];
-                        _cidScannedAndFound = true;
-                    }
+        const videoDetails = data.videoDetails || {};
+        const durationSecs = parseInt(videoDetails.lengthSeconds, 10) || 0;
+        const channelId = videoDetails.channelId || '';
+        const channelTitle = videoDetails.author || '';
+        const videoTitle = videoDetails.title || '';
+
+        /* Extract channel thumbnail from microformat */
+        const microformat = data.microformat?.playerMicroformatRenderer || {};
+        const channelImage =
+            data.endscreen?.endscreenRenderer?.elements?.[0]?.endscreenElementRenderer?.image
+                ?.thumbnails?.[0]?.url || '';
+        const channelDesc = microformat.description?.simpleText || '';
+
+        const parsedResult = {
+            video: {
+                episodeDuration: Math.max(1, Math.round(durationSecs / 60)),
+                title: {
+                    contentTitleNative: videoTitle || undefined,
+                    contentTitleEnglish: videoTitle || undefined,
                 }
-                if (needsAuthor && !_authorScannedAndFound) {
-                    const authorMatch = text.match(/"videoDetails":\{.*?"author":"([^"]+)"/);
-                    if (authorMatch) {
-                        _extractedAuthor = authorMatch[1];
-                        _authorScannedAndFound = true;
-                    }
-                }
-            }
-        }
-        _lastScannedIndex = scriptCount;
-    }
-}
+            },
+            channel: {
+                contentId: channelId || undefined,
+                title: {
+                    contentTitleNative: channelTitle || undefined,
+                    contentTitleEnglish: channelTitle || undefined,
+                },
+                contentImage: channelImage || undefined,
+                description: channelDesc ? [{ description: channelDesc }] : undefined,
+            },
+        };
 
-/** Clear URL-keyed extraction caches and state */
-export function clearExtractionCaches() {
-    for (const key in _cachedChannelIdByUrl) delete _cachedChannelIdByUrl[key];
-    for (const key in _cachedChannelNameByUrl) delete _cachedChannelNameByUrl[key];
-    _extractedCid = null;
-    _extractedAuthor = null;
-    _lastScriptCount = 0;
-    _lastScannedIndex = 0;
-    _cidScannedAndFound = false;
-    _authorScannedAndFound = false;
-    _lastUrl = '';
-}
-
-/** Utility to automatically garbage-collect old cache entries on navigation */
-function guardUrlTransition() {
-    const pageUrl = window.location.href;
-    if (_lastUrl !== pageUrl) {
-        clearExtractionCaches();
-        _lastUrl = pageUrl;
-    }
-}
-
-export async function fetchYouTubeVideoData(url: string) {
-    const clean = cleanUrl(url);
-    if (ytApiCache[clean]) return ytApiCache[clean];
-    if (clean in ytApiInFlight) return await ytApiInFlight[clean];
-
-    ytApiInFlight[clean] = (async () => {
-        try {
-            const res = await fetch(`https://nihongotracker.app/api/media/youtube/video?url=${encodeURIComponent(clean)}`, {
-                headers: { 'accept': '*/*' }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                pruneCache(ytApiCache, 100);
-                ytApiCache[clean] = data;
-                return data;
-            }
-        } catch (e) {
-            console.error('Failed to fetch YouTube data from API:', e);
-        } finally {
-            delete ytApiInFlight[clean];
-        }
+        fetchCache.set(url, parsedResult);
+        return parsedResult;
+    } catch {
         return null;
-    })();
-
-    return ytApiInFlight[clean];
+    }
 }
 
-/** Parses channel ID from local DOM, calling remote API ONLY if local extraction fails */
+/**
+ * Extract YouTube channel ID from current page DOM.
+ */
 export async function getYouTubeChannelId(): Promise<string | null> {
-    guardUrlTransition();
-    const pageUrl = window.location.href;
-    if (pageUrl in _cachedChannelIdByUrl) return _cachedChannelIdByUrl[pageUrl];
+    const channelLink = document.querySelector<HTMLAnchorElement>(
+        'ytd-video-owner-renderer a, #upload-info a, #owner a[href*="/channel/"], #owner a[href*="/@"]',
+    );
 
-    // 1. Try local extraction via canonical script details
-    extractFromScripts();
-    if (_extractedCid) {
-        pruneCache(_cachedChannelIdByUrl, 50);
-        _cachedChannelIdByUrl[pageUrl] = _extractedCid;
-        return _extractedCid;
-    }
-
-    // 2. Try canonical link tags
-    const channelLink = document.querySelector('link[itemprop="channelId"]');
     if (channelLink) {
-        const cid = channelLink.getAttribute('content');
-        if (cid) {
-            pruneCache(_cachedChannelIdByUrl, 50);
-            _cachedChannelIdByUrl[pageUrl] = cid;
-            return cid;
+        const href = channelLink.getAttribute('href') || '';
+        const idMatch = href.match(/\/channel\/([^/?]+)/);
+        if (idMatch) return idMatch[1];
+
+        /* Handle @handle format — resolve and cache persistently */
+        const handleMatch = href.match(/\/@([^/?]+)/);
+        if (handleMatch) {
+            const handle = handleMatch[1];
+
+            const storageData = await browser.storage.local.get('handleCache');
+            const handleCacheObj = (storageData.handleCache || {}) as Record<string, string>;
+            if (handleCacheObj[handle]) {
+                return handleCacheObj[handle];
+            }
+
+            if (activeHandleFetches.has(handle)) {
+                return activeHandleFetches.get(handle) ?? null;
+            }
+
+            const fetchPromise = (async () => {
+                try {
+                    const res = await fetch(`https://www.youtube.com/${href}`, { redirect: 'follow' });
+                    const text = await res.text();
+                    const cidMatch = text.match(/"channelId":"([^"]+)"/);
+                    if (cidMatch) {
+                        const channelId = cidMatch[1];
+                        const freshCache = ((await browser.storage.local.get('handleCache')).handleCache || {}) as Record<string, string>;
+                        freshCache[handle] = channelId;
+                        await browser.storage.local.set({ handleCache: freshCache });
+                        return channelId;
+                    }
+                } catch {
+                    /* Resolution failed */
+                } finally {
+                    activeHandleFetches.delete(handle);
+                }
+                return null;
+            })();
+
+            activeHandleFetches.set(handle, fetchPromise);
+            return fetchPromise;
         }
     }
 
-    // 3. Try layout anchor tags
-    const ownerLink = document.querySelector('#owner ytd-video-owner-renderer a[href*="/channel/"]');
-    if (ownerLink) {
-        const m = ownerLink.getAttribute('href')?.match(/(UC[a-zA-Z0-9_-]{22})/);
-        if (m) {
-            pruneCache(_cachedChannelIdByUrl, 50);
-            _cachedChannelIdByUrl[pageUrl] = m[1];
-            return m[1];
+    try {
+        const playerResponse = (window as any).ytInitialPlayerResponse;
+        if (playerResponse?.videoDetails?.channelId) {
+            return playerResponse.videoDetails.channelId;
         }
-    }
-
-    // 4. Remote API resolution fallback
-    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-        const data = await fetchYouTubeVideoData(window.location.href);
-        if (data?.channel?.contentId) {
-            pruneCache(_cachedChannelIdByUrl, 50);
-            _cachedChannelIdByUrl[pageUrl] = data.channel.contentId;
-            return data.channel.contentId;
-        }
+    } catch {
+        /* Not available */
     }
 
     return null;
 }
 
-/** Parses channel title from local DOM, calling remote API ONLY if local extraction fails */
+/**
+ * Get YouTube channel name from page DOM.
+ */
 export async function getChannelNameFallback(): Promise<string> {
-    guardUrlTransition();
-    const pageUrl = window.location.href;
-    if (pageUrl in _cachedChannelNameByUrl) return _cachedChannelNameByUrl[pageUrl];
+    const channelNameEl = document.querySelector<HTMLElement>(
+        '#owner ytd-channel-name yt-formatted-string a, ytd-channel-name a, #upload-info #channel-name a',
+    );
+    if (channelNameEl?.textContent?.trim()) return channelNameEl.textContent.trim();
 
-    const ownerName = document.querySelector('#owner ytd-video-owner-renderer yt-formatted-string.ytd-channel-name');
-    if (ownerName?.textContent?.trim()) {
-        pruneCache(_cachedChannelNameByUrl, 50);
-        _cachedChannelNameByUrl[pageUrl] = ownerName.textContent.trim();
-        return _cachedChannelNameByUrl[pageUrl];
-    }
+    const artistEl = document.querySelector<HTMLElement>(
+        '.ytd-video-primary-info-renderer .ytd-metadata-row-renderer a',
+    );
+    if (artistEl?.textContent?.trim()) return artistEl.textContent.trim();
 
-    extractFromScripts();
-    if (_extractedAuthor) {
-        pruneCache(_cachedChannelNameByUrl, 50);
-        _cachedChannelNameByUrl[pageUrl] = _extractedAuthor;
-        return _extractedAuthor;
-    }
-
-    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-        const data = await fetchYouTubeVideoData(window.location.href);
-        if (data?.channel?.title) {
-            const name = data.channel.title.contentTitleNative || data.channel.title.contentTitleEnglish || '';
-            if (name) {
-                pruneCache(_cachedChannelNameByUrl, 50);
-                _cachedChannelNameByUrl[pageUrl] = name;
-            }
-            return name;
-        }
+    try {
+        const playerResponse = (window as any).ytInitialPlayerResponse;
+        if (playerResponse?.videoDetails?.author) return playerResponse.videoDetails.author;
+    } catch {
+        /* Not available */
     }
 
     return '';
 }
 
-export async function getChannelMediaData(chanId: string | null, fallbackTitle = '') {
-    const currentId = chanId || await getYouTubeChannelId();
-    const key = currentId || `title:${fallbackTitle}`;
+/**
+ * Resets memory-bound caching containers.
+ */
+export function clearExtractionCaches() {
+    activeHandleFetches.clear();
+    fetchCache.clear();
+}
 
-    if (channelMediaCache[key]) return channelMediaCache[key];
-
-    let media: any = {};
+/**
+ * Resolves full channel media records.
+ */
+export async function getChannelMediaData(channelId: string | null, channelTitle: string) {
     try {
-        if (currentId && currentId.startsWith('UC')) {
-            media = await resolveVideoChannelMedia({ channelId: currentId, channelTitle: fallbackTitle });
-        } else {
-            media = await resolveVideoChannelMedia({ channelTitle: fallbackTitle });
-        }
-    } catch (e) { }
-
-    const normalized = {
-        channelId: currentId || media.channelId || 'web-video',
-        channelTitle: fallbackTitle || media.channelTitle || 'Unknown Channel',
-        ...(media.channelImage ? { channelImage: media.channelImage } : {}),
-        ...(media.channelDescription ? { channelDescription: media.channelDescription } : {}),
-    };
-    pruneCache(channelMediaCache, 100);
-    channelMediaCache[key] = normalized;
-    return normalized;
+        const media = await resolveVideoChannelMedia({
+            channelId: channelId ?? undefined,
+            channelTitle: channelTitle ?? undefined
+        });
+        return {
+            channelId: media.channelId || channelId || "web-video",
+            channelTitle: media.channelTitle || channelTitle,
+            channelImage: media.channelImage || "",
+            channelDescription: media.channelDescription || ""
+        };
+    } catch {
+        return {
+            channelId: channelId || "web-video",
+            channelTitle: channelTitle,
+            channelImage: "",
+            channelDescription: ""
+        };
+    }
 }

@@ -1,9 +1,5 @@
 /**
  * ── Themes Registry & Dynamic Style Applicator ──────────────────────────────
- *
- * Defines default color palettes, typography, and layout rules for the extension.
- * Natively compiles and injects responsive variables including button text colors,
- * success alerts, and logo fills.
  */
 
 import type { UITheme } from '@/lib/types';
@@ -162,7 +158,6 @@ export function parseColorToRgb(colorStr: string): { r: number, g: number, b: nu
 
     let val = colorStr.trim();
 
-    // Recursively resolve var(...) references if running inside a DOM environment
     if (typeof window !== 'undefined' && val.startsWith('var(')) {
         const match = val.match(/var\((--[^,)]+)/);
         if (match) {
@@ -240,6 +235,47 @@ export function hslToRgb(h: number, s: number, l: number) {
     return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
 }
 
+/**
+ * Centrally aligns local storage variables to represent a single source of truth.
+ */
+export function syncThemeCache(theme: string, font: string, customColors?: Record<string, string> | null) {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('nta-theme-cache', theme);
+    localStorage.setItem('nta-font-cache', font);
+    if (customColors) {
+        localStorage.setItem('nta-custom-colors-cache', typeof customColors === 'string' ? customColors : JSON.stringify(customColors));
+    } else {
+        localStorage.removeItem('nta-custom-colors-cache');
+    }
+}
+
+/**
+ * Shifts hex codes smoothly to compute readable highlights.
+ */
+export function lightenHexColor(hex: string, percent: number): string {
+    if (!hex || !hex.startsWith("#")) return hex;
+    try {
+        let h = hex.trim();
+        if (h.length === 4) {
+            h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+        }
+        let num = parseInt(h.slice(1), 16),
+            amt = Math.round(2.55 * percent),
+            R = (num >> 16) + amt,
+            G = ((num >> 8) & 0x00ff) + amt,
+            B = (num & 0x0000ff) + amt;
+        R = Math.max(0, Math.min(255, R));
+        G = Math.max(0, Math.min(255, G));
+        B = Math.max(0, Math.min(255, B));
+        return (
+            "#" +
+            (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
+        );
+    } catch {
+        return hex;
+    }
+}
+
 export function applyThemeToDocument(
     themeName: string,
     fontName?: string,
@@ -265,12 +301,10 @@ export function applyThemeToDocument(
     const success = customColors?.success || theme.colors.success;
     const error = customColors?.error || theme.colors.error;
 
-    // Determine background lightness dynamically
     const parsedBackground = parseColorToRgb(background);
     const hslBackground = rgbToHsl(parsedBackground.r, parsedBackground.g, parsedBackground.b);
     const isBackgroundDark = hslBackground.l < 50;
 
-    // Determine accent relative luminance dynamically for contrast
     const parsedAccent = parseColorToRgb(accent);
     const r = parsedAccent.r / 255;
     const g = parsedAccent.g / 255;
@@ -282,7 +316,6 @@ export function applyThemeToDocument(
     const logoText = isBackgroundDark ? '#f4f4f3' : text;
     const apiGreen = isBackgroundDark ? '#3ddc84' : '#166534';
 
-    // Set conditional overrides based on static branding selection
     const useStaticLogo = configOptions?.useStaticInPageLogo === true;
     const logoAccent = useStaticLogo ? '#f0b429' : accent;
     const logoAccentHover = useStaticLogo ? '#ffd060' : accentHover;
@@ -350,7 +383,6 @@ export function applyCustomThemeToDoc(customColors: any) {
         "--color-accent-hover": customColors.accentHover || customColors.accent,
         "--color-success": customColors.success || customColors.accent,
 
-        // Also map to reader-overlay specific namespaces
         "--nt-background": customColors.background,
         "--nt-surface": customColors.surface,
         "--nt-surface-alt": customColors.surfaceAlt || customColors.surface,

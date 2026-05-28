@@ -11,7 +11,6 @@ import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } fr
 import { getTheme } from './themes';
 import { injectModalStyles } from './video-modal';
 
-// Safe HTML Helper to securely bypass AMO innerHTML warnings
 function setSafeHTML(el: HTMLElement, html: string) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -21,13 +20,11 @@ function setSafeHTML(el: HTMLElement, html: string) {
   }
 }
 
-// Bound gradient stops and text fills to theme-controlled properties to natively adapt across light and dark modes
 const inlineLogo = DYNAMIC_LOGO_SVG;
 
-// Single global observer instantiated once to monitor text overflow changes efficiently
 let globalTitleResizeObserver: ResizeObserver | null = null;
+let activeObservedElements: HTMLElement[] = [];
 
-// Batch ResizeObserver operations to eliminate layout thrashing
 let pendingMaskUpdates = new Set<HTMLElement>();
 let maskRafId: number | null = null;
 
@@ -37,7 +34,6 @@ function scheduleMaskUpdate(el: HTMLElement) {
     maskRafId = requestAnimationFrame(() => {
       maskRafId = null;
 
-      // 1. Read Phase: Complete all layout queries together to prevent reflows
       const measurements = Array.from(pendingMaskUpdates).map((target) => ({
         target,
         scrollWidth: target.scrollWidth,
@@ -46,7 +42,6 @@ function scheduleMaskUpdate(el: HTMLElement) {
       }));
       pendingMaskUpdates.clear();
 
-      // 2. Write Phase: Update styling safely inside a unified layout boundary
       measurements.forEach(({ target, scrollWidth, clientWidth, scrollLeft }) => {
         const isOverflowing = scrollWidth > clientWidth;
         if (!isOverflowing) {
@@ -75,12 +70,25 @@ function scheduleMaskUpdate(el: HTMLElement) {
   }
 }
 
+function cleanupActiveObservers() {
+  if (globalTitleResizeObserver) {
+    activeObservedElements.forEach(el => {
+      globalTitleResizeObserver?.unobserve(el);
+    });
+  }
+  activeObservedElements = [];
+}
+
 export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean, themeName: string) {
   const activeTheme = getTheme(themeName);
   injectModalStyles(activeTheme);
 
   const existing = document.getElementById('nt-playlist-modal');
-  if (existing) { existing.remove(); return; }
+  if (existing) {
+    cleanupActiveObservers();
+    existing.remove();
+    return;
+  }
 
   const parent = isInline
     ? document.querySelector('ytd-playlist-panel-renderer')
@@ -96,7 +104,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   let hideNonJp = config.playlistHideNonJapanese ?? true;
 
   const videos = items.map(el => {
-    // Broadened selectors to safely extract titles and anchors from both classic rows and modern view models
     const titleEl = el.querySelector('#video-title') || el.querySelector('#title') || el.querySelector('.yt-core-attributed-string');
     const titleText = titleEl?.textContent?.trim() || el.querySelector('a')?.textContent?.trim() || 'Unknown';
 
@@ -106,7 +113,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     let domTime = 1;
     const timeText = lengthEl?.textContent?.trim() || "";
 
-    // Extract exactly the standard duration formatting block, ignoring any neighboring index or metadata digits
     const match = timeText.match(/\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/);
     if (match) {
       const hrs = match[1] ? parseInt(match[1], 10) : 0;
@@ -170,7 +176,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     <button id="pl-confirm-no" class="nt-btn-ghost">Go Back</button><button id="pl-confirm-yes" class="nt-btn-amber">Yes, Log Them</button>
     </div>`);
 
-  // Build playlist rows with DocumentFragment for batch DOM insertion
   const listEl = modal.querySelector('#nt-playlist-modal-list')!;
   const fragment = document.createDocumentFragment();
   for (let i = 0; i < videos.length; i++) {
@@ -191,7 +196,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
   document.body.appendChild(modal);
 
-  // Initialize unified ResizeObserver if not already created
   if (!globalTitleResizeObserver) {
     globalTitleResizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -203,18 +207,20 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
   const titleEls = modal.querySelectorAll('.pl-scroll-title');
   titleEls.forEach((el) => {
-    globalTitleResizeObserver?.observe(el);
-    el.addEventListener('scroll', () => scheduleMaskUpdate(el as HTMLElement), { passive: true });
-    scheduleMaskUpdate(el as HTMLElement);
+    if (el instanceof HTMLElement) {
+      globalTitleResizeObserver?.observe(el);
+      activeObservedElements.push(el);
+      el.addEventListener('scroll', () => scheduleMaskUpdate(el as HTMLElement), { passive: true });
+      scheduleMaskUpdate(el as HTMLElement);
+    }
   });
 
   requestAnimationFrame(() => {
     const popRect = modal.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
-    const gap = 6; // Closer spacing to the button
+    const gap = 6;
     const margin = 12;
 
-    // Determine vertical placement: try placing below first, then above
     let top = btnRect.bottom + gap;
     const fitsBelow = (top + popRect.height) <= window.innerHeight - margin;
     const fitsAbove = (btnRect.top - popRect.height - gap) >= margin;
@@ -223,14 +229,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
       top = btnRect.top - popRect.height - gap;
     }
 
-    // Determine horizontal placement: prioritize aligning to the edges of the button
-    let left = btnRect.left; // Default left-align with button
+    let left = btnRect.left;
     if (isInline) {
-      left = btnRect.right - popRect.width; // Right-align for inline sidebar panels
+      left = btnRect.right - popRect.width;
     } else {
-      // Try left-aligning with the button first
       const fitsLeftAlign = (btnRect.left + popRect.width) <= window.innerWidth - margin;
-      // Try right-aligning with the button second
       const fitsRightAlign = (btnRect.right - popRect.width) >= margin;
 
       if (fitsLeftAlign) {
@@ -238,12 +241,10 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
       } else if (fitsRightAlign) {
         left = btnRect.right - popRect.width;
       } else {
-        // Fallback: Center the modal if neither side fits cleanly within screen boundaries
         left = btnRect.left + (btnRect.width / 2) - (popRect.width / 2);
       }
     }
 
-    // Viewport margin safety clamping as a fallback if everything else overflows
     if (left + popRect.width > window.innerWidth - margin) {
       left = window.innerWidth - popRect.width - margin;
     }
@@ -259,16 +260,12 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
 
     modal.style.top = `${top}px`;
     modal.style.left = `${left}px`;
-    modal.style.visibility = ''; // Make modal visible once position is applied
+    modal.style.visibility = '';
   });
-
-  const cleanupObservers = () => {
-    titleEls.forEach(el => globalTitleResizeObserver?.unobserve(el));
-  };
 
   const clickOutsideHandler = (e: MouseEvent) => {
     if (!modal.contains(e.target as Node) && !btn.contains(e.target as Node)) {
-      cleanupObservers();
+      cleanupActiveObservers();
       modal.remove();
       document.removeEventListener('click', clickOutsideHandler);
     }
@@ -298,7 +295,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   });
 
   modal.querySelector('#pl-cancel')!.addEventListener('click', () => {
-    cleanupObservers();
+    cleanupActiveObservers();
     document.removeEventListener('click', clickOutsideHandler);
     modal.remove();
   });
@@ -326,7 +323,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   });
 
   modal.querySelector('#pl-confirm-yes')!.addEventListener('click', async () => {
-    cleanupObservers();
+    cleanupActiveObservers();
     document.removeEventListener('click', clickOutsideHandler);
     const checked = Array.from(modal.querySelectorAll('.pl-vid-chk:checked')).map((c: any) => videos[c.dataset.idx]);
 
@@ -339,7 +336,6 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     const fallbackChanName = await getChannelNameFallback();
     const fallbackChanId = await getYouTubeChannelId();
 
-    // Fetch details strictly on-demand in parallel chunks of 3 only for selected logging records
     const uploadChunkSize = 3;
     for (let idx = 0; idx < checked.length; idx += uploadChunkSize) {
       const chunk = checked.slice(idx, idx + uploadChunkSize);
@@ -347,11 +343,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
         try {
           const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
           if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
-          if (data?.channel?.contentId) {
-            v.channelId = data.channel.contentId;
-            v.channelTitle = data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish;
-            v.channelImage = data.channel.contentImage;
-            v.channelDesc = data.channel.description?.[0]?.description;
+          if (data?.channel) {
+            v.channelId = data.channel.contentId ?? null;
+            v.channelTitle = (data.channel.title?.contentTitleNative || data.channel.title?.contentTitleEnglish) ?? null;
+            v.channelImage = data.channel.contentImage ?? null;
+            v.channelDesc = data.channel.description?.[0]?.description ?? null;
           }
         } catch (e) { }
 
@@ -361,8 +357,8 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
         const specificMediaData = {
           channelId: finalChanId,
           channelTitle: finalChanTitle,
-          ...(v.channelImage ? { channelImage: v.channelImage } : {}),
-          ...(v.channelDesc ? { channelDescription: v.channelDesc } : {})
+          channelImage: v.channelImage,
+          channelDescription: v.channelDesc
         };
 
         const ok = await submitLog({

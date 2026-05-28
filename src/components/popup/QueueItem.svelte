@@ -1,11 +1,13 @@
 <!--
   ── QueueItem.svelte (Popup) ─────────────────────────────────────────────────
-  A single queue item card in the popup. Matches the original popup/main.ts
-  buildItem() output exactly: editable ghost-num inputs for chars/mins/vol,
-  ghost-date for datetime, and AniList search dropdown for reading items.
 -->
 <script lang="ts">
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import {
+    videoQueueStorage,
+    readingQueueStorage,
+    updateVideoQueueAtomic,
+    updateReadingQueueAtomic,
+  } from "@/lib/storage/queues";
   import {
     resolveVideoChannelMedia,
     submitLog,
@@ -15,12 +17,17 @@
   import { toLocalDT } from "@/lib/utils/time";
   import QueueItemSessions from "./QueueItemSessions.svelte";
   import SearchDropdown from "./SearchDropdown.svelte";
+  import { configStorage } from "@/lib/storage/config";
 
   interface Props {
     item: any;
     type: "video" | "reading";
     onStatusMessage: (msg: string, err?: boolean) => void;
-    onConfirm: (title: string, msg: string) => Promise<boolean>;
+    onConfirm: (
+      title: string,
+      msg: string,
+      warnKey?: string,
+    ) => Promise<boolean>;
     onRefresh: () => void;
   }
 
@@ -41,10 +48,8 @@
   const displayMins = $derived(
     isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
   );
-  const isLinked = $derived(
-    isRead
-      ? !!(item.mediaId && item.mediaId !== "web-reading")
-      : true /* All YouTube videos tracked show as matched */,
+  let isLinked = $derived(
+    isRead ? !!(item.mediaId && item.mediaId !== "web-reading") : true,
   );
 
   let channelName = $derived(
@@ -76,8 +81,19 @@
 
     if (isRead) {
       if (item.mediaId && item.mediaId !== "web-reading") {
-        item.mediaId = "web-reading";
-        item.mediaData = undefined;
+        updateReadingQueueAtomic((q) => {
+          const idx = q.findIndex((x) => x.id === item.id);
+          if (idx > -1) {
+            const newQ = [...q];
+            newQ[idx] = {
+              ...newQ[idx],
+              mediaId: "web-reading",
+              mediaData: undefined,
+            };
+            return newQ;
+          }
+          return q;
+        });
       }
       clearTimeout(debounceTimer);
       if (val.trim().length < 2) {
@@ -105,25 +121,61 @@
   async function handleUnlink(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx > -1) {
-      q[idx] = { ...q[idx], mediaId: "web-reading", mediaData: undefined };
-      await qStorage.setValue(q as any);
-      onRefresh();
+    if (isRead) {
+      await updateReadingQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = {
+            ...newQ[idx],
+            mediaId: "web-reading",
+            mediaData: undefined,
+          };
+          return newQ;
+        }
+        return q;
+      });
+    } else {
+      await updateVideoQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = {
+            ...newQ[idx],
+            mediaId: "web-reading",
+            mediaData: undefined,
+          };
+          return newQ;
+        }
+        return q;
+      });
     }
+    onRefresh();
   }
 
   async function persistField(field: string, value: any) {
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx > -1) {
-      q[idx] = { ...q[idx], [field]: value };
-      await qStorage.setValue(q as any);
-      onRefresh();
+    if (isRead) {
+      await updateReadingQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = { ...newQ[idx], [field]: value };
+          return newQ;
+        }
+        return q;
+      });
+    } else {
+      await updateVideoQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = { ...newQ[idx], [field]: value };
+          return newQ;
+        }
+        return q;
+      });
     }
+    onRefresh();
   }
 
   async function handleTitleChange(e: Event) {
@@ -141,31 +193,37 @@
     const { volume: parsedVolume } = parseTitleForUI(native);
     const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
 
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = (await qStorage.getValue()) as any[];
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx > -1) {
-      q[idx] = {
-        ...q[idx],
-        description: native,
-        mediaId: String(result.contentId),
-        mediaData: {
-          contentId: result.contentId,
-          contentTitleNative: native,
-          contentTitleEnglish:
-            result.title?.contentTitleEnglish || result.contentTitleEnglish,
-          contentTitleRomaji:
-            result.title?.contentTitleRomaji || result.contentTitleRomaji,
-          contentImage: result.coverImage || result.contentImage,
-          coverImage: result.coverImage || result.contentImage,
-          chapters: result.chapters,
-          volumes: result.volumes,
-        },
-        volume: finalVolume,
-      };
-      await qStorage.setValue(q as any);
-      onRefresh();
-    }
+    await updateReadingQueueAtomic((q) => {
+      const idx = q.findIndex((x) => x.id === item.id);
+      if (idx > -1) {
+        const newQ = [...q];
+        newQ[idx] = {
+          ...newQ[idx],
+          description: native,
+          mediaId: String(result.contentId),
+          mediaData: {
+            contentId: result.contentId,
+            contentTitleNative: native,
+            contentTitleEnglish:
+              result.title?.contentTitleEnglish ||
+              result.contentTitleEnglish ||
+              undefined,
+            contentTitleRomaji:
+              result.title?.contentTitleRomaji ||
+              result.contentTitleRomaji ||
+              undefined,
+            contentImage: result.coverImage || result.contentImage || undefined,
+            coverImage: result.coverImage || result.contentImage || undefined,
+            chapters: result.chapters || undefined,
+            volumes: result.volumes || undefined,
+          },
+          volume: finalVolume,
+        };
+        return newQ;
+      }
+      return q;
+    });
+    onRefresh();
   }
 
   /* ── Input Handlers ──────────────────────────────────────────── */
@@ -197,61 +255,86 @@
     field: string,
     val: any,
   ) {
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx === -1) return;
-
-    const entry = q[idx] as any;
-    if (!entry.sessions || !entry.sessions[sessionIdx]) return;
-
-    const session = entry.sessions[sessionIdx];
-    if (field === "chars") {
-      session.chars = Math.max(0, Number(val) || 0);
-    } else if (field === "mins") {
-      session.secs = Math.max(1, Number(val) || 1) * 60;
-    } else if (field === "date") {
-      try {
-        session.date = new Date(val).toISOString();
-      } catch {}
-    }
-
-    /* Auto-sum calculations */
-    const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-    const sumMins = Math.max(1, Math.round(sumSecs / 60));
-
-    const sumChars = isRead
-      ? entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-      : 0;
-
-    // Preserve manual overrides: only update the totals if they match the previous sum
-    const previousSumSecs = item.sessions.reduce(
-      (a: number, b: any) => a + b.secs,
-      0,
-    );
-    const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
-    const previousSumChars = isRead
-      ? item.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-      : 0;
-
-    let finalTime = item.time;
-    let finalChars = item.chars;
-
     if (isRead) {
-      const isTimeOverridden = displayMins > previousSumMins;
-      const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+      await updateReadingQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return q;
 
-      finalTime = isTimeOverridden ? item.time * 60 : sumSecs;
-      finalChars = areCharsOverridden ? item.chars : sumChars;
+        const session = entry.sessions[sessionIdx];
+        if (field === "chars") {
+          session.chars = Math.max(0, Number(val) || 0);
+        } else if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const sumMins = Math.max(1, Math.round(sumSecs / 60));
+        const sumChars = entry.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+
+        const previousSumSecs = item.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+        const previousSumChars = item.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+
+        const isTimeOverridden = displayMins > previousSumMins;
+        const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+
+        entry.time = isTimeOverridden ? item.time * 60 : sumSecs;
+        entry.chars = areCharsOverridden ? item.chars : sumChars;
+
+        return newQ;
+      });
     } else {
-      const isTimeOverridden = displayMins > previousSumMins;
-      finalTime = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
+      await updateVideoQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return q;
+
+        const session = entry.sessions[sessionIdx];
+        if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumSecs = item.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+
+        const isTimeOverridden = displayMins > previousSumMins;
+        entry.time = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
+
+        return newQ;
+      });
     }
-
-    entry.time = finalTime;
-    entry.chars = finalChars;
-
-    await qStorage.setValue(q as any);
     onRefresh();
   }
 
@@ -264,6 +347,22 @@
     if (!current) {
       sending = false;
       return;
+    }
+
+    // Single item unmatched warning logic
+    if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
+      const cfg = (await configStorage.getValue()) as any;
+      if (cfg.warnUnmatched !== false) {
+        const ok = await onConfirm(
+          "Unmatched Media Warning",
+          "This reading log is not linked to any AniList entry and will be logged as unmatched. Are you sure you want to proceed?",
+          "warnUnmatched",
+        );
+        if (!ok) {
+          sending = false;
+          return;
+        }
+      }
     }
 
     if (type === "video") {
@@ -289,7 +388,15 @@
     }
 
     if (success) {
-      await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+      if (isRead) {
+        await updateReadingQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
+      } else {
+        await updateVideoQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
+      }
       onRefresh();
     } else {
       sending = false;
@@ -306,9 +413,16 @@
       "Are you sure you want to delete this pending log?",
     );
     if (!ok) return;
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+
+    if (isRead) {
+      await updateReadingQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+    } else {
+      await updateVideoQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+    }
     onStatusMessage("✓ Log removed");
     onRefresh();
   }
@@ -319,28 +433,44 @@
       "Are you sure you want to delete this session?",
     );
     if (!ok) return;
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx === -1) return;
-    const entry = q[idx] as any;
-    entry.sessions = (entry.sessions ?? []).filter(
-      (s: any) => s.id !== sessionId,
-    );
-    const totalSecs = entry.sessions.reduce(
-      (a: number, b: any) => a + b.secs,
-      0,
-    );
+
     if (isRead) {
-      entry.time = totalSecs;
-      entry.chars = entry.sessions.reduce(
-        (a: number, b: any) => a + (b.chars || 0),
-        0,
-      );
+      await updateReadingQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = totalSecs;
+        entry.chars = entry.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+        return newQ;
+      });
     } else {
-      entry.time = Math.round(totalSecs / 60);
+      await updateVideoQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.round(totalSecs / 60);
+        return newQ;
+      });
     }
-    await qStorage.setValue(q as any);
     onStatusMessage("✓ Session removed");
     onRefresh();
   }
@@ -407,7 +537,7 @@
   }
 </script>
 
-<!-- Queue item card - matches original popup exactly -->
+<!-- Queue item card -->
 <div class="qi" class:sending data-type={type}>
   <!-- Title row -->
   <div class="qi-title-row">
@@ -461,11 +591,11 @@
     <button class="qi-del" title="Remove" onclick={handleDelete}>×</button>
   </div>
 
-  <!-- Meta row with EDITABLE inputs (matches original ghost-num pattern) -->
+  <!-- Meta row with EDITABLE inputs -->
   <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
     {#if isRead}
       <input
-        class="ghost-num num-chars qi-chars-num"
+        class="ghost-num qi-chars-num"
         type="number"
         min="0"
         value={item.chars || 0}

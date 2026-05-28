@@ -11,20 +11,17 @@
   import OverlayTab from "@/components/settings/tabs/OverlayTab.svelte";
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
-  import { notify } from "@/lib/api/youtube"; // Route notifications to the unified smart helper
+  import { notify } from "@/lib/utils/toast";
   import { showToast } from "@/lib/utils/toast";
-  import { applyThemeToDocument } from "@/lib/ui/themes";
+  import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
 
-  /* Import unchanged settings stylesheet globally */
   import "@/styles/settings-shared.css";
 
-  /* ── Reactive state ── */
   let activeTab = $state("queue");
   let queueCount = $state(0);
   let debugMode = $state(false);
 
-  /* Inline custom modal state for settings */
   let modalOpen = $state(false);
   let modalTitle = $state("");
   let modalMsg = $state("");
@@ -38,9 +35,6 @@
     );
   }
 
-  /* ── Synchronous Theme Cache Initialization ── */
-  // Retrieve cached theme settings synchronously from localStorage to instantly align
-  // Svelte variables with HTML header values before first document paint.
   const cachedTheme =
     typeof window !== "undefined"
       ? localStorage.getItem("nta-theme-cache")
@@ -75,7 +69,6 @@
       !err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"));
 
     if (isLogSuccess) {
-      // Show web toast locally inside settings to avoid native duplicate popups
       showToast("Success", msg, false);
     } else {
       notify(err ? "Error" : "Success", msg);
@@ -87,7 +80,6 @@
     msg: string,
     warnKey?: string,
   ): Promise<boolean> {
-    // If a warnKey is provided, check if the warning is configured to be skipped
     if (warnKey) {
       const cfg = (await configStorage.getValue()) as any;
       if (cfg && cfg[warnKey] === false) {
@@ -128,7 +120,6 @@
   }
 
   async function updateQueueCount() {
-    // Parallelize queue array fetches to eliminate serial storage IPC latency
     const [video, reading] = await Promise.all([
       videoQueueStorage.getValue(),
       readingQueueStorage.getValue(),
@@ -137,14 +128,12 @@
   }
 
   onMount(() => {
-    // Restore active tab from extension storage or localStorage
     const loadSavedTab = async () => {
       const savedTab = (await storage.getItem(
         "local:activeSettingsTab",
       )) as string;
       if (savedTab) {
         activeTab = savedTab;
-        // Clean up the key so future manual settings opens don't force a tab redirection
         await storage.setItem("local:activeSettingsTab", null);
       } else {
         const localSaved = localStorage.getItem("nt-active-settings-tab");
@@ -155,7 +144,6 @@
     };
     loadSavedTab();
 
-    // Load configuration values concurrently in parallel
     const loadConfigAndTheme = async () => {
       const [cfg, video, reading] = await Promise.all([
         configStorage.getValue() as Promise<any>,
@@ -171,9 +159,6 @@
         const font = c?.font ?? "sans";
         const useStaticInPageLogo = c?.useStaticInPageLogo === true;
 
-        localStorage.setItem("nta-theme-cache", theme);
-        localStorage.setItem("nta-font-cache", font);
-
         if (isCustomThemeId(theme)) {
           const themeId = theme.replace("custom_", "").replace("custom-", "");
           const customThemes = c?.customThemes || [];
@@ -185,33 +170,29 @@
               t.id === "custom-" + themeId,
           );
           if (targetTheme) {
-            localStorage.setItem(
-              "nta-custom-colors-cache",
-              JSON.stringify(targetTheme.colors),
-            );
+            syncThemeCache(theme, font, targetTheme.colors);
             applyThemeToDocument("dark-amber", font, targetTheme.colors, {
               useStaticInPageLogo,
             });
           } else {
+            syncThemeCache(theme, font, null);
             applyThemeToDocument("dark-amber", font, undefined, {
               useStaticInPageLogo,
             });
           }
         } else {
-          localStorage.removeItem("nta-custom-colors-cache");
+          syncThemeCache(theme, font, null);
           applyThemeToDocument(theme, font, undefined, { useStaticInPageLogo });
         }
       };
 
       applyTheme(cfg);
 
-      /* Watch storage changes dynamically */
       browser.storage.onChanged.addListener(storageListener);
     };
 
     loadConfigAndTheme();
 
-    /* Live update variables if changed in storage */
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
@@ -225,9 +206,6 @@
         const nextFont = val?.font ?? "sans";
         const useStaticInPageLogo = val?.useStaticInPageLogo === true;
 
-        localStorage.setItem("nta-theme-cache", nextTheme);
-        localStorage.setItem("nta-font-cache", nextFont);
-
         if (isCustomThemeId(nextTheme)) {
           const themeId = nextTheme
             .replace("custom_", "")
@@ -237,20 +215,18 @@
             (t: any) => t.id === themeId || t.id === nextTheme,
           );
           if (targetTheme) {
-            localStorage.setItem(
-              "nta-custom-colors-cache",
-              JSON.stringify(targetTheme.colors),
-            );
+            syncThemeCache(nextTheme, nextFont, targetTheme.colors);
             applyThemeToDocument("dark-amber", nextFont, targetTheme.colors, {
               useStaticInPageLogo,
             });
           } else {
+            syncThemeCache(nextTheme, nextFont, null);
             applyThemeToDocument("dark-amber", nextFont, undefined, {
               useStaticInPageLogo,
             });
           }
         } else {
-          localStorage.removeItem("nta-custom-colors-cache");
+          syncThemeCache(nextTheme, nextFont, null);
           applyThemeToDocument(nextTheme, nextFont, undefined, {
             useStaticInPageLogo,
           });
@@ -258,10 +234,8 @@
       }
     };
 
-    /* Listen for SHOW_TOAST messages from other execution contexts */
     const messageListener = (msg: any) => {
       if (msg.action === "SHOW_TOAST") {
-        // Render toast directly without triggering showStatus loop
         showToast(
           msg.title,
           msg.message,
@@ -269,14 +243,12 @@
             msg.title.toLowerCase().includes("error"),
         );
       }
-      // Instantly switch tabs when redirected from an already active open settings tab
       if (msg.action === "SWITCH_SETTINGS_TAB") {
         handleTabChange(msg.tab);
       }
     };
     browser.runtime.onMessage.addListener(messageListener);
 
-    // Return clean-up handler synchronously
     return () => {
       browser.runtime.onMessage.removeListener(messageListener);
       browser.storage.onChanged.removeListener(storageListener);
@@ -317,7 +289,6 @@
   </main>
 </div>
 
-<!-- Custom overlay modal matching original settings theme styles -->
 {#if modalOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -360,7 +331,6 @@
 {/if}
 
 <style>
-  /* Force clean and complete theme-adaptive background stretching across settings page layers */
   :global(html),
   :global(body) {
     background-color: var(--color-background) !important;
@@ -378,7 +348,6 @@
     flex: 1;
   }
 
-  /* Force system theme-adaptive green on all matched list checkmarks and settings status elements globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: var(--color-api-green) !important;
     border-color: color-mix(

@@ -1,26 +1,24 @@
 <!--
   ── SettingsQueueItem.svelte ───────────────────────────────────────────────────
-  A single queue item component for the settings page. Matches the original
-  settings/main.ts buildItem() layout exactly: volume pill editor, characters &
-  minutes spin-nav controls, local date input, collapsible sessions, and
-  full persistence to browser storage.
 -->
 <script lang="ts">
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import {
+    videoQueueStorage,
+    readingQueueStorage,
+    updateVideoQueueAtomic,
+    updateReadingQueueAtomic,
+  } from "@/lib/storage/queues";
   import {
     resolveVideoChannelMedia,
     submitLog,
   } from "@/lib/api/nihongotracker";
-  import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
-  import {
-    stripVideoTitle,
-    parseTitleForUI,
-    escapeHtml,
-  } from "@/lib/utils/text-parsing";
+  import { type AniListSearchResult } from "@/lib/api/anilist";
+  import { stripVideoTitle, parseTitleForUI } from "@/lib/utils/text-parsing";
   import { toLocalDT } from "@/lib/utils/time";
   import SearchDropdown from "@/components/popup/SearchDropdown.svelte";
   import { storage } from "wxt/utils/storage";
   import { onMount } from "svelte";
+  import { configStorage } from "@/lib/storage/config";
 
   interface Props {
     item: any;
@@ -66,9 +64,7 @@
   );
 
   let isLinked = $derived(
-    isRead
-      ? !!(item.mediaId && item.mediaId !== "web-reading")
-      : true /* All YouTube videos tracked show as matched */,
+    isRead ? !!(item.mediaId && item.mediaId !== "web-reading") : true,
   );
 
   let channelName = $derived(
@@ -81,7 +77,6 @@
     isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || ""}`,
   );
 
-  /* Collapsible sessions open/closed state tracking */
   let isSessionsOpen = $state(true);
 
   onMount(async () => {
@@ -97,27 +92,46 @@
     );
   }
 
-  /* ── Persistence helper ──────────────────────────────────────── */
+  /* ── Atomic persistence helper ── */
   async function saveItem(updatedFields: Partial<any>) {
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const idx = q.findIndex((x: any) => x.id === item.id);
-    if (idx > -1) {
-      q[idx] = { ...q[idx], ...updatedFields };
-      // Deep clone to strip Svelte Proxy objects/getters
-      const plainObj = JSON.parse(JSON.stringify(q[idx]));
-      // Explicitly delete mediaData if we unlinked (set to undefined)
-      if (
-        "mediaData" in updatedFields &&
-        updatedFields.mediaData === undefined
-      ) {
-        delete plainObj.mediaData;
-      }
-      q[idx] = plainObj;
-
-      await qStorage.setValue(q as any);
-      onRefresh();
+    if (isRead) {
+      await updateReadingQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const updatedItem = { ...currentQueue[idx], ...updatedFields };
+          const plainObj = JSON.parse(JSON.stringify(updatedItem));
+          if (
+            "mediaData" in updatedFields &&
+            updatedFields.mediaData === undefined
+          ) {
+            delete plainObj.mediaData;
+          }
+          const newQueue = [...currentQueue];
+          newQueue[idx] = plainObj;
+          return newQueue;
+        }
+        return currentQueue;
+      });
+    } else {
+      await updateVideoQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const updatedItem = { ...currentQueue[idx], ...updatedFields };
+          const plainObj = JSON.parse(JSON.stringify(updatedItem));
+          if (
+            "mediaData" in updatedFields &&
+            updatedFields.mediaData === undefined
+          ) {
+            delete plainObj.mediaData;
+          }
+          const newQueue = [...currentQueue];
+          newQueue[idx] = plainObj;
+          return newQueue;
+        }
+        return currentQueue;
+      });
     }
+    onRefresh();
   }
 
   /* ── Editing Handlers ────────────────────────────────────────── */
@@ -176,13 +190,17 @@
         contentId: result.contentId,
         contentTitleNative: native,
         contentTitleEnglish:
-          result.title?.contentTitleEnglish || result.contentTitleEnglish,
+          result.title?.contentTitleEnglish ||
+          result.contentTitleEnglish ||
+          undefined,
         contentTitleRomaji:
-          result.title?.contentTitleRomaji || result.contentTitleRomaji,
-        contentImage: result.coverImage || result.contentImage,
-        coverImage: result.coverImage || result.contentImage,
-        chapters: result.chapters,
-        volumes: result.volumes,
+          result.title?.contentTitleRomaji ||
+          result.contentTitleRomaji ||
+          undefined,
+        contentImage: result.coverImage || result.contentImage || undefined,
+        coverImage: result.coverImage || result.contentImage || undefined,
+        chapters: result.chapters || undefined,
+        volumes: result.volumes || undefined,
       },
       volume: finalVolume,
     });
@@ -281,57 +299,91 @@
     field: string,
     val: any,
   ) {
-    const entry = JSON.parse(JSON.stringify(item));
-    if (!entry.sessions || !entry.sessions[sessionIdx]) return;
-
-    const session = entry.sessions[sessionIdx];
-    if (field === "chars") {
-      session.chars = Math.max(0, Number(val) || 0);
-    } else if (field === "mins") {
-      session.secs = Math.max(1, Number(val) || 1) * 60;
-    } else if (field === "date") {
-      try {
-        session.date = new Date(val).toISOString();
-      } catch {}
-    }
-
-    /* Auto-sum calculations */
-    const sumSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-    const sumMins = Math.max(1, Math.round(sumSecs / 60));
-
-    const sumChars = isRead
-      ? entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-      : 0;
-
-    // Preserve manual overrides: only update the totals if they match the previous sum
-    const previousSumSecs = item.sessions.reduce(
-      (a: number, b: any) => a + b.secs,
-      0,
-    );
-    const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
-    const previousSumChars = isRead
-      ? item.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-      : 0;
-
-    let finalTime = item.time;
-    let finalChars = item.chars;
-
     if (isRead) {
-      const isTimeOverridden = displayMins > previousSumMins;
-      const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+      await updateReadingQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
 
-      finalTime = isTimeOverridden ? item.time * 60 : sumSecs;
-      finalChars = areCharsOverridden ? item.chars : sumChars;
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
+
+        const session = entry.sessions[sessionIdx];
+        if (field === "chars") {
+          session.chars = Math.max(0, Number(val) || 0);
+        } else if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const sumMins = Math.max(1, Math.round(sumSecs / 60));
+        const sumChars = entry.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+
+        const previousSumSecs = item.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+        const previousSumChars = item.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+
+        const isTimeOverridden = displayMins > previousSumMins;
+        const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
+
+        entry.time = isTimeOverridden ? item.time * 60 : sumSecs;
+        entry.chars = areCharsOverridden ? item.chars : sumChars;
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
     } else {
-      const isTimeOverridden = displayMins > previousSumMins;
-      finalTime = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
-    }
+      await updateVideoQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
 
-    await saveItem({
-      sessions: entry.sessions,
-      time: finalTime,
-      chars: finalChars,
-    });
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
+
+        const session = entry.sessions[sessionIdx];
+        if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumSecs = item.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+
+        const isTimeOverridden = displayMins > previousSumMins;
+        entry.time = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
+    }
+    onRefresh();
   }
 
   async function handleRemoveSession(sessionId: string) {
@@ -341,33 +393,54 @@
     );
     if (!ok) return;
 
-    const entry = JSON.parse(JSON.stringify(item));
-    entry.sessions = (entry.sessions ?? []).filter(
-      (s: any) => s.id !== sessionId,
-    );
-
-    const totalSecs = entry.sessions.reduce(
-      (a: number, b: any) => a + b.secs,
-      0,
-    );
-    let finalTime = entry.time;
-    let finalChars = entry.chars;
     if (isRead) {
-      finalTime = totalSecs;
-      finalChars = entry.sessions.reduce(
-        (a: number, b: any) => a + (b.chars || 0),
-        0,
-      );
+      await updateReadingQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
+
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = totalSecs;
+        entry.chars = entry.sessions.reduce(
+          (a: number, b: any) => a + (b.chars || 0),
+          0,
+        );
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
     } else {
-      finalTime = Math.round(totalSecs / 60);
+      await updateVideoQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
+
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.round(totalSecs / 60);
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
     }
 
-    await saveItem({
-      sessions: entry.sessions,
-      time: finalTime,
-      chars: finalChars,
-    });
     onStatus("✓ Session removed");
+    onRefresh();
   }
 
   function getItemPayloads(current: any, type: "reading" | "video") {
@@ -446,6 +519,22 @@
       return;
     }
 
+    // Single item unmatched warning logic
+    if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
+      const cfg = (await configStorage.getValue()) as any;
+      if (cfg.warnUnmatched !== false) {
+        const ok = await onConfirm(
+          "Unmatched Media Warning",
+          "This reading log is not linked to any AniList entry and will be logged as unmatched. Are you sure you want to proceed?",
+          "warnUnmatched",
+        );
+        if (!ok) {
+          sending = false;
+          return;
+        }
+      }
+    }
+
     if (type === "video") {
       try {
         const cId = current.channelId || current.mediaData?.channelId;
@@ -476,7 +565,16 @@
           return;
         }
       }
-      await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+
+      if (isRead) {
+        await updateReadingQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
+      } else {
+        await updateVideoQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
+      }
       onRefresh();
     } catch (e: any) {
       onStatus(`⚠ Error: ${e.message || e}`, true);
@@ -491,9 +589,15 @@
     );
     if (!ok) return;
 
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    await qStorage.setValue(q.filter((x: any) => x.id !== item.id) as any);
+    if (isRead) {
+      await updateReadingQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+    } else {
+      await updateVideoQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+    }
     onStatus("✓ Log removed");
     onRefresh();
   }

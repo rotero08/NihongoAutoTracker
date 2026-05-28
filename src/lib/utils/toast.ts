@@ -1,25 +1,13 @@
 /**
  * ── Toast Notification Utility (Deduplicated, Snappy Close & Hover Pause) ────
- *
- * Injects a non-intrusive toast notification into the current page's DOM.
- * Used by Content Scripts, Popups, and Settings pages alike.
- *
- * Cross-Sandbox DOM Bus: Because content scripts run in isolated JS worlds,
- * memory variables cannot be shared. This engine tags elements in the shared
- * DOM and dispatches CustomEvents to safely communicate and reset active timers.
- *
- * Safe to execute inside frames, enforces ltr horizontal writing modes on vertical
- * text pages, and pauses the countdown timer on active hovers.
  */
 
-// Module-level cache to track active notification elements within this sandbox
 const activeToasts: Record<string, {
   toast: HTMLDivElement;
   timestamp: number;
   resetTimer: () => void;
 }> = {};
 
-// Clean up any orphaned toast elements left in the DOM by previous invalidated contexts
 if (typeof document !== 'undefined') {
   const sweepOrphans = () => {
     document.querySelectorAll('.nt-toast').forEach((el) => {
@@ -39,39 +27,30 @@ if (typeof document !== 'undefined') {
 
 /**
  * Show a toast notification in the current page.
- *
- * @param title - Bold title text (e.g., "Success", "Failed")
- * @param msg - Body message text
- * @param err - If true, uses red error styling instead of green success styling
  */
 export function showToast(title: string, msg: string, err = false): void {
   if (typeof document === 'undefined') return;
 
-  // Guard: Discard toast rendering inside iframe layers
   if (window.self !== window.top) return;
 
   const key = `${title}::${msg}`;
   const escapedKey = encodeURIComponent(key);
   const now = Date.now();
 
-  // Check the shared DOM for an active toast with the same identity
   const existing = document.querySelector(`.nt-toast[data-key="${escapedKey}"]`) as HTMLDivElement;
 
   if (existing) {
     const pingDetail = { handled: false };
     existing.dispatchEvent(new CustomEvent('nt-toast-ping', { detail: pingDetail }));
 
-    // If the owning context is still alive, reset the timer and return
     if (pingDetail.handled) {
       existing.dispatchEvent(new CustomEvent('nt-toast-reset', { detail: { timestamp: Date.now() } }));
       return;
     }
 
-    // Otherwise, clean up the orphaned element.
     existing.remove();
   }
 
-  /* Find or create the toast container */
   let container = document.getElementById('nt-toast-container');
 
   if (!container) {
@@ -92,7 +71,6 @@ export function showToast(title: string, msg: string, err = false): void {
     (document.body || document.documentElement).appendChild(container);
   }
 
-  /* Inject animation and toast styles */
   if (!document.getElementById('nt-toast-shared-styles')) {
     const style = document.createElement('style');
     style.id = 'nt-toast-shared-styles';
@@ -142,7 +120,6 @@ export function showToast(title: string, msg: string, err = false): void {
     (document.head || document.documentElement).appendChild(style);
   }
 
-  /* Create the toast element programmatically */
   const toast = document.createElement('div');
   toast.className = `nt-toast ${err ? 'nt-err' : ''}`;
   toast.setAttribute('data-key', escapedKey);
@@ -259,23 +236,19 @@ export function showToast(title: string, msg: string, err = false): void {
 }
 
 /**
- * System-wide user notification helper (Task 1 & 4).
- * Combines OS-level browser notifications with contextual page-level DOM toasts.
+ * System-wide user notification helper.
  */
 export function notify(title: string, message: string): void {
   try {
     const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
     const hasDocument = typeof document !== 'undefined';
 
-    // 1. Direct local rendering if running inside a context with active DOM (settings, popup, content script)
     if (hasDocument) {
       showToast(title, message, isError);
     }
 
-    // 2. Direct browser/chrome notification creation if permissions and API are available
     if (typeof browser !== 'undefined') {
       if (browser.notifications && typeof browser.notifications.create === 'function') {
-        // Safe casting parameter with 'as any' to avoid WXT PublicPath type mismatches
         const iconUrl = browser.runtime?.getURL('/assets/icon-128.png' as any) || browser.runtime?.getURL('/icon/128.png' as any) || '';
         browser.notifications.create({
           type: 'basic',
@@ -283,17 +256,15 @@ export function notify(title: string, message: string): void {
           title,
           message
         }).catch(() => {
-          // Fall back to tab message relay if OS notifications fail
           relayToastToActiveTab(title, message, isError);
         });
         return;
       }
 
-      // 3. Fallback: Relay the notification to the active tab's content script to render an in-page toast
       relayToastToActiveTab(title, message, isError);
     }
   } catch (_err) {
-    // Safe guard: notification system must remain completely non-throwing
+    /* Safe guard */
   }
 }
 
@@ -311,7 +282,6 @@ function relayToastToActiveTab(title: string, message: string, isError: boolean)
       if (!tab?.id) return;
       const url = tab.url || "";
 
-      // Bypass restricted browser-specific page boundaries
       const isRestricted =
         url.startsWith('chrome://') ||
         url.startsWith('about:') ||

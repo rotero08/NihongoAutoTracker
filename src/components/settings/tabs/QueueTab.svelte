@@ -86,6 +86,19 @@
       if (!ok) return;
     }
 
+    // Unmatched logs warning logic during Send All
+    const hasUnmatched = readingQueue.some(
+      (item) => !item.mediaId || item.mediaId === "web-reading",
+    );
+    if (hasUnmatched && cfg.warnUnmatched !== false) {
+      const ok = await onConfirm(
+        "Unmatched Media Warning",
+        "There are unmatched reading logs in the queue that are not linked to any AniList entry. They will be logged as unmatched. Do you want to proceed?",
+        "warnUnmatched",
+      );
+      if (!ok) return;
+    }
+
     isSendingAll = true;
 
     function getItemPayloads(item: any, type: "reading" | "video") {

@@ -20,7 +20,7 @@ import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 
 export default defineBackground(() => {
   // Use WXT's normalized action API which unifies Manifest V2 and Manifest V3 environments
-  const actionAPI = browser.action;
+  const actionAPI = browser.action || (browser as any).browserAction;
 
   /* ── Context Menu Creation ──────────────────────────────────────────────── */
 
@@ -430,16 +430,7 @@ export default defineBackground(() => {
 
         ctx.restore();
 
-        const rawData = ctx.getImageData(0, 0, size, size);
-
-        if (typeof document === 'undefined') {
-          // Service Worker context (Chrome MV3) - requires explicit new ImageData constructor re-wrapping to bypass serialization bugs
-          const securePixelClampedArray = new Uint8ClampedArray(rawData.data);
-          return new ImageData(securePixelClampedArray, size, size);
-        } else {
-          // DOM / Background Page context (Firefox MV2/MV3) - standard ImageData is fully native and compatible directly
-          return rawData;
-        }
+        return ctx.getImageData(0, 0, size, size);
       } catch (err) {
         console.error(`[NTA Icon Diagnostic] Exception while drawing size ${size}:`, err);
         return null;

@@ -2,12 +2,16 @@ import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
 import { applyThemeToDocument, applyCustomThemeToDoc, clearCustomThemeFromDoc, parseColorToRgb, rgbToHsl, hslToRgb } from '@/lib/ui/themes';
 
-// High-performance cache for computed DOM theme checks to avoid layout thrashing
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
 const THEME_DETECTION_CACHE_TTL = 1500; // ms
 
-// Re-export styling handlers to maintain library compatibility
+/* Throttled accent search to shield CPU on translation mutations */
+let _cachedAccentColor: string | null = null;
+let _isAccentCached = false;
+let _lastAccentCheckTime = 0;
+const ACCENT_CACHE_TTL = 10000; // 10 seconds cache
+
 export { applyCustomThemeToDoc, clearCustomThemeFromDoc };
 
 export function getActiveThemeName(cfg: any): string {
@@ -48,7 +52,6 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
 function isValidAccent(rgb: { r: number, g: number, b: number }, isDark: boolean): boolean {
   const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
 
-  // Filter out pure grayscale, very low saturation colors, or extreme whites/blacks
   if (hsl.s < 10) return false;
   if (hsl.l < 12 || hsl.l > 92) return false;
 
@@ -56,13 +59,19 @@ function isValidAccent(rgb: { r: number, g: number, b: number }, isDark: boolean
 }
 
 function findDOMAccentColor(isDark: boolean): string | null {
+  const now = Date.now();
+  if (_isAccentCached && (now - _lastAccentCheckTime) < ACCENT_CACHE_TTL) {
+    return _cachedAccentColor;
+  }
+  _lastAccentCheckTime = now;
+  _isAccentCached = true;
+
   const rootStyle = window.getComputedStyle(document.documentElement);
   const bodyStyle = window.getComputedStyle(document.body);
 
   const host = typeof window !== 'undefined' ? window.location.hostname : '';
   let cssVars: string[] = [];
 
-  // Site-specific variable prioritization to match the correct theme accents
   if (host.includes('yatsu.moe')) {
     cssVars = ['--yatsu-accent', '--yatsu-primary', '--color-primary', '--color-accent', '--accent-color'];
   } else if (host.includes('ttsu.app') || host.includes('manabe.es') || host.includes('yomiyasu')) {
@@ -80,12 +89,12 @@ function findDOMAccentColor(isDark: boolean): string | null {
     if (val) {
       const rgb = parseColorToRgb(val);
       if (isValidAccent(rgb, isDark)) {
+        _cachedAccentColor = val;
         return val;
       }
     }
   }
 
-  // Fallback to DOM elements only if we are not on the main reader pages
   const isReaderPage = host.includes('reader.ttsu.app') ||
     host.includes('app.yatsu.moe') ||
     host.includes('manga.manabe.es') ||
@@ -93,10 +102,11 @@ function findDOMAccentColor(isDark: boolean): string | null {
     !!getActiveReaderAdapter();
 
   if (isReaderPage) {
-    return isDark ? '#f5a623' : '#92400e';
+    const fallbackVal = isDark ? '#f5a623' : '#92400e';
+    _cachedAccentColor = fallbackVal;
+    return fallbackVal;
   }
 
-  // Active, highlighted, or selected elements
   const specificSelectors = [
     '[class*="accent"]', '[class*="highlight"]', '[class*="active"]', '[class*="selected"]',
     '.active', '.selected', '.is-active', '.is-selected', '.tab-active', '[aria-selected="true"]',
@@ -114,29 +124,29 @@ function findDOMAccentColor(isDark: boolean): string | null {
         }
         const style = window.getComputedStyle(el);
 
-        // Check background-color
         const bg = style.backgroundColor;
         if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
           const rgb = parseColorToRgb(bg);
           if (isValidAccent(rgb, isDark)) {
+            _cachedAccentColor = bg;
             return bg;
           }
         }
 
-        // Check color
         const col = style.color;
         if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
           const rgb = parseColorToRgb(col);
           if (isValidAccent(rgb, isDark)) {
+            _cachedAccentColor = col;
             return col;
           }
         }
 
-        // Check border-color
         const borderCol = style.borderColor || style.borderTopColor;
         if (borderCol && borderCol !== 'rgba(0, 0, 0, 0)' && borderCol !== 'transparent') {
           const rgb = parseColorToRgb(borderCol);
           if (isValidAccent(rgb, isDark)) {
+            _cachedAccentColor = borderCol;
             return borderCol;
           }
         }
@@ -144,7 +154,6 @@ function findDOMAccentColor(isDark: boolean): string | null {
     } catch (e) { }
   }
 
-  // Fallback generic interactive tags
   const genericSelectors = ['a', 'button'];
   for (const selector of genericSelectors) {
     try {
@@ -160,6 +169,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
         if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
           const rgb = parseColorToRgb(col);
           if (isValidAccent(rgb, isDark)) {
+            _cachedAccentColor = col;
             return col;
           }
         }
@@ -167,6 +177,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
         if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
           const rgb = parseColorToRgb(bg);
           if (isValidAccent(rgb, isDark)) {
+            _cachedAccentColor = bg;
             return bg;
           }
         }
@@ -174,6 +185,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
     } catch (e) { }
   }
 
+  _cachedAccentColor = null;
   return null;
 }
 
@@ -243,7 +255,6 @@ export function detectReaderThemeColors(): any {
       accent = extractedAccent;
     }
 
-    // Mathematically adjust the matched active color to ensure ideal legibility and contrast
     const rgbAccent = parseColorToRgb(accent);
     const hslAccent = rgbToHsl(rgbAccent.r, rgbAccent.g, rgbAccent.b);
 
@@ -332,7 +343,6 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
     let themeName = cfg.theme ?? 'dark-amber';
     let customColors = undefined;
 
-    // Detect if we are in an extension popup / options page
     const isExtensionPage = typeof window !== 'undefined' &&
       (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
 
@@ -343,7 +353,6 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
         const urlObj = new URL(activeTab.url);
         const host = urlObj.hostname;
 
-        // Find if there is an adapter for this host
         const { READER_ADAPTERS } = await import('@/lib/adapters/readers');
         const adapter = READER_ADAPTERS.find(a => host.includes(a.hostname));
 
@@ -384,7 +393,6 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
 
       const detectedColors = detectReaderThemeColors();
       if (detectedColors) {
-        // Fallback to cached valid values to bypass transient amber resets on page loads
         const defaultAccent = detectedColors.background === '#07070e' ? '#f5a623' : '#92400e';
         if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
           detectedColors.accent = cachedColors.accent;

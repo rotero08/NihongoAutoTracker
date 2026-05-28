@@ -13,6 +13,7 @@
         THEME_OPTIONS,
         FONT_OPTIONS,
         THEMES,
+        lightenHexColor,
     } from "@/lib/ui/themes";
 
     interface Props {
@@ -43,27 +44,21 @@
     let selectedFont = $state("sans");
     let lastActivePresetTheme = $state("dark-amber");
 
-    // Adaptive brand preferences
     let useStaticToolbarIcon = $state(false);
     let useStaticInPageLogo = $state(false);
 
-    // Toggle controlling whether the popup inherits reader themes when browsing reader sites
     let syncPopupWithReaderTheme = $state(true);
 
-    // Fallbacks to keep showing the last valid selection while editing unnamed themes
     let lastActiveTtuOverride = $state("global");
     let lastActiveYatsuOverride = $state("global");
     let lastActiveYomiyasuOverride = $state("global");
 
-    // Live custom themes storage
     let customThemes = $state<CustomTheme[]>([]);
 
-    // Live unapplied change drafts (Realtime Preview targets)
     let themeDraftColors = $state<Record<string, Record<string, string>>>({});
     let themeDraftNames = $state<Record<string, string>>({});
     let triedSavingEmptyName = $state<Record<string, boolean>>({});
 
-    // Context-based exclusive collapse state
     let isCollapsed = $state<Record<string, boolean>>({
         global: true,
         ttu: true,
@@ -75,10 +70,8 @@
     let yatsuThemeOverride = $state("global");
     let yomiyasuThemeOverride = $state("global");
 
-    // Navigation lock state
     let isProceeding = false;
 
-    // Inline Confirmation Modal State
     let modalOpen = $state(false);
     let modalTitle = $state("");
     let modalMsg = $state("");
@@ -102,7 +95,6 @@
         { value: "add-custom", label: "+ Add custom theme" },
     ]);
 
-    // Derived states to preserve dropdown titles until theme name is committed/saved
     const selectedThemeToShow = $derived(
         isCustomThemeId(selectedTheme) &&
             !customThemes.find((t) => t.id === selectedTheme)?.name
@@ -131,7 +123,6 @@
             : yomiyasuThemeOverride,
     );
 
-    // Determine target fallback values for previews based strictly on currently open editor
     let activeEditingThemeId = $derived(
         !isCollapsed["global"] && isCustomThemeId(selectedTheme)
             ? selectedTheme
@@ -144,30 +135,6 @@
                   ? yomiyasuThemeOverride
                   : "",
     );
-
-    function lightenHexColor(hex: string, percent: number): string {
-        if (!hex || !hex.startsWith("#")) return hex;
-        try {
-            let h = hex.trim();
-            if (h.length === 4) {
-                h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-            }
-            let num = parseInt(h.slice(1), 16),
-                amt = Math.round(2.55 * percent),
-                R = (num >> 16) + amt,
-                G = ((num >> 8) & 0x00ff) + amt,
-                B = (num & 0x0000ff) + amt;
-            R = Math.max(0, Math.min(255, R));
-            G = Math.max(0, Math.min(255, G));
-            B = Math.max(0, Math.min(255, B));
-            return (
-                "#" +
-                (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
-            );
-        } catch (e) {
-            return hex;
-        }
-    }
 
     function getThemeColors(themeId: string): Record<string, string> {
         if (isCustomThemeId(themeId)) {
@@ -198,18 +165,6 @@
         const draftColors = themeDraftColors[themeId];
         const draftName = themeDraftNames[themeId];
         if (!draftColors || draftName === undefined) return false;
-
-        const _trackName = draftName;
-        const _trackBackground = draftColors.background;
-        const _trackSurface = draftColors.surface;
-        const _trackSurfaceAlt = draftColors.surfaceAlt;
-        const _trackBorder = draftColors.border;
-        const _trackBorderHover = draftColors.borderHover;
-        const _trackText = draftColors.text;
-        const _trackMuted = draftColors.textMuted;
-        const _trackAccent = draftColors.accent;
-        const _trackAccentHov = draftColors.accentHover;
-        const _trackSuccess = draftColors.success;
 
         if (!theme) {
             const fallbackPresetId =
@@ -1117,7 +1072,6 @@
             Settings page, and video tracking overlays.
         </p>
 
-        <!-- Dynamic Preferences Card Sub-component -->
         <ThemePreferences
             bind:useStaticToolbarIcon
             bind:useStaticInPageLogo
@@ -1206,7 +1160,6 @@
             exclusively to this reader site.
         </p>
 
-        <!-- Reader Theme Synchronization Toggle placed exactly where it originally was -->
         <div class="field" style="margin-top: -4px; margin-bottom: 16px;">
             <label class="toggle">
                 <input
@@ -1223,7 +1176,6 @@
             </label>
         </div>
 
-        <!-- Reader Overrides Sub-component -->
         <ReaderOverrides
             {readerThemeOptionsDerived}
             bind:ttuThemeOverride
@@ -1246,7 +1198,6 @@
         />
     </div>
 
-    <!-- Live Centered Preview column -->
     {#if activeEditingThemeId !== ""}
         {@const currentDraft =
             themeDraftColors[activeEditingThemeId] || DEFAULT_CUSTOM_COLORS}

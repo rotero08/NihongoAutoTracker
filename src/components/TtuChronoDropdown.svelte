@@ -25,6 +25,11 @@
     // Trigger state to handle reactivity for non-reactive outside mutations (like setInterval)
     let updateTick = $state(0);
 
+    // Derived reactive runner tracking raw Proxy mutations
+    let isRunning = $derived(updateTick >= 0 ? ttuState.running : false);
+    let currentTimerMs = $derived(updateTick >= 0 ? ttuState.timeMs : 0);
+    let currentCharCount = $derived(updateTick >= 0 ? ttuState.chars : 0);
+
     // Search, Linked Media, and History States
     let isDropdownOpen = $state(false);
     let linkedMedia = $state<any>(null);
@@ -59,15 +64,15 @@
     );
     let totalMins = $derived(
         updateTick >= 0
-            ? cachedHistoryMins + Math.floor(ttuState.timeMs / 60000)
+            ? cachedHistoryMins + Math.floor(currentTimerMs / 60000)
             : 0,
     );
     let totalChars = $derived(
-        updateTick >= 0 ? cachedHistoryChars + ttuState.chars : 0,
+        updateTick >= 0 ? cachedHistoryChars + currentCharCount : 0,
     );
     let sessSpeed = $derived(
-        updateTick >= 0 && ttuState.timeMs > 0
-            ? Math.round((ttuState.chars / (ttuState.timeMs / 60000)) * 60)
+        updateTick >= 0 && currentTimerMs > 0
+            ? Math.round((currentCharCount / (currentTimerMs / 60000)) * 60)
             : 0,
     );
     let totSpeed = $derived(
@@ -190,7 +195,7 @@
     }
 
     async function refreshLinkerUI(force = false) {
-        if (isStorageOperationPending) return; // Block reads if standard storage operations are currently saving/modifying state
+        if (isStorageOperationPending && !force) return; // Block reads if standard storage operations are currently saving/modifying state, unless forced
 
         const title = getTTUTitle();
         const links = (await ttuLinkStorage.getValue()) || {};
@@ -339,21 +344,32 @@
         }
         try {
             showToast("Pending", "Sending session directly...");
-            const success = await submitLog({
+            const title = getTTUTitle();
+            const payload = {
+                type: "reading",
                 mediaId: String(linkedMedia.mediaId),
-                chars: ttuState.chars,
-                time: Math.round(ttuState.timeMs / 1000),
-                volume: linkedMedia.volume || 1,
+                description: linkedMedia.mediaData?.contentTitleNative || title,
+                chars: currentCharCount,
+                time: Math.max(1, Math.round(currentTimerMs / 60000)), // Convert milliseconds directly to minutes
+                volume: Math.max(1, Number(linkedMedia.volume || 1)),
                 date: new Date().toISOString(),
-            });
-            if (success) {
+                private: false,
+                episodes: 0,
+                pages: 0,
+                unknownDate: false,
+                mediaData: linkedMedia.mediaData || {},
+            };
+
+            const result = await submitLog(payload);
+            if (result && result.success) {
                 showToast("Success", "Logged directly to Nihongo Tracker!");
                 ttuState.timeMs = 0;
                 ttuState.chars = 0;
                 await updateHistoryData();
                 updateTick++;
             } else {
-                showToast("Error", "Direct send failed");
+                const errText = result?.error ? `: ${result.error}` : "";
+                showToast("Error", "Direct send failed" + errText);
             }
         } catch {
             showToast("Error", "Failed to communicate with Nihongo Tracker");
@@ -658,7 +674,7 @@
             });
 
             if (existing) {
-                if (isMatched || ttuState.running) {
+                if (isMatched || isRunning) {
                     existing.volume = next;
                     await readingQueueStorage.setValue(queue);
                 } else {
@@ -771,9 +787,7 @@
     <svg viewBox="0 0 24 24" fill="currentColor">
         <path
             id="nt-ttu-main-icon-path"
-            d={ttuState.running
-                ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
-                : "M8 5v14l11-7z"}
+            d={isRunning ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z" : "M8 5v14l11-7z"}
             style="fill: currentColor !important;"
         />
     </svg>
@@ -807,7 +821,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-time"
                         onclick={startTimeEdit}
-                        title="Edit">{fmt(ttuState.timeMs)}</button
+                        title="Edit">{fmt(currentTimerMs)}</button
                     >
                 {/if}
             </div>
@@ -835,7 +849,7 @@
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-chars"
                         onclick={startCharsEdit}
-                        title="Edit">{ttuState.chars}</button
+                        title="Edit">{currentCharCount}</button
                     >
                 {/if}
             </div>
@@ -851,11 +865,11 @@
                 class="nt-ttu-btn-icon"
                 id="nt-ttu-btn-toggle"
                 onclick={toggleTimer}
-                title={ttuState.running ? "Pause Timer" : "Start Timer"}
+                title={isRunning ? "Pause Timer" : "Start Timer"}
             >
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path
-                        d={ttuState.running
+                        d={isRunning
                             ? "M6 19h4V5H6v14zm8-14v14h4V5h-4z"
                             : "M8 5v14l11-7z"}
                         style="fill: currentColor !important;"
@@ -930,7 +944,7 @@
                     fill="currentColor"
                     style="width: 15px; height: 15px;"
                     ><path
-                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
+                        d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24-1.13-.56-1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
                     /></svg
                 >
             </button>
@@ -1060,6 +1074,7 @@
                                 onkeypress={(e) => e.stopPropagation()}
                                 spellcheck="false"
                                 autocomplete="off"
+                                use:autofocus
                             />
                         </div>
                         <div class="nt-ttu-link-vol-anchor">
@@ -1259,7 +1274,7 @@
         border-color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
 
-    /* Semantic unstyled helper class to remove standard browser button templates */
+    /* Outer styling overrides */
     :global(.nt-ttu-btn-text) {
         background: transparent;
         border: none;
@@ -1475,7 +1490,6 @@
         height: 15px !important;
     }
 
-    /* Make the resume/pause toggler change color dynamically */
     :global(#nt-ttu-btn-toggle) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }

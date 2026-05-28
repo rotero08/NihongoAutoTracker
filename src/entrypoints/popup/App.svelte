@@ -1,12 +1,17 @@
 <!-- Popup App.svelte -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import {
+    videoQueueStorage,
+    readingQueueStorage,
+    updateVideoQueueAtomic,
+    updateReadingQueueAtomic,
+  } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import QueueList from "@/components/popup/QueueList.svelte";
   import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
   import CustomSelect from "@/components/settings/CustomSelect.svelte";
-  import { notify } from "@/lib/utils/toast"; // Moved from youtube.ts
+  import { notify } from "@/lib/utils/toast";
   import {
     submitLog,
     resolveVideoChannelMedia,
@@ -16,6 +21,7 @@
     applyThemeToDocument,
     applyCustomThemeToDoc,
     clearCustomThemeFromDoc,
+    syncThemeCache,
     THEME_OPTIONS,
     FONT_OPTIONS,
   } from "@/lib/ui/themes";
@@ -27,7 +33,6 @@
   import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
 
-  // Ensure browser API is always safely defined across different extension environments
   const browser: any =
     typeof (globalThis as any).browser !== "undefined"
       ? (globalThis as any).browser
@@ -273,26 +278,18 @@
     if (cfg) {
       const themeVal = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
       const fontVal = cfg.font ?? "sans";
-      localStorage.setItem(THEME_CACHE_KEY, themeVal);
-      localStorage.setItem(FONT_CACHE_KEY, fontVal);
+      let matchedColorsObj = null;
       if (isCustomThemeId(themeVal)) {
         const activeThemeObj = (cfg.customThemes ?? []).find(
           (t: any) => t.id === themeVal,
         );
         if (activeThemeObj) {
-          localStorage.setItem(
-            CUSTOM_COLORS_CACHE_KEY,
-            JSON.stringify(activeThemeObj.colors),
-          );
+          matchedColorsObj = activeThemeObj.colors;
         } else if (cfg.customColors) {
-          localStorage.setItem(
-            CUSTOM_COLORS_CACHE_KEY,
-            JSON.stringify(cfg.customColors),
-          );
+          matchedColorsObj = cfg.customColors;
         }
-      } else {
-        localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
       }
+      syncThemeCache(themeVal, fontVal, matchedColorsObj);
     }
 
     applyInitialTheme(cfg, activeUrl, detectedColors);
@@ -386,26 +383,18 @@
         syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
 
         if (val) {
-          localStorage.setItem(THEME_CACHE_KEY, nextTheme);
-          localStorage.setItem(FONT_CACHE_KEY, nextFont);
+          let matchedColorsObj = null;
           if (isCustomThemeId(nextTheme)) {
             const activeThemeObj = (val.customThemes ?? []).find(
               (t: any) => t.id === nextTheme,
             );
             if (activeThemeObj) {
-              localStorage.setItem(
-                CUSTOM_COLORS_CACHE_KEY,
-                JSON.stringify(activeThemeObj.colors),
-              );
+              matchedColorsObj = activeThemeObj.colors;
             } else if (val.customColors) {
-              localStorage.setItem(
-                CUSTOM_COLORS_CACHE_KEY,
-                JSON.stringify(val.customColors),
-              );
+              matchedColorsObj = val.customColors;
             }
-          } else {
-            localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
           }
+          syncThemeCache(nextTheme, nextFont, matchedColorsObj);
         }
 
         let host = "";
@@ -532,8 +521,7 @@
         cfg.selectedThemeId = undefined;
         cfg.customColors = undefined;
         selectedTheme = "dark-amber";
-        localStorage.setItem(THEME_CACHE_KEY, "dark-amber");
-        localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
+        syncThemeCache("dark-amber", selectedFont, null);
         clearCustomThemeFromDoc();
         applyThemeToDocument("dark-amber", selectedFont);
       }
@@ -543,8 +531,8 @@
     }
 
     selectedTheme = val;
-    localStorage.setItem(THEME_CACHE_KEY, val);
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
+    let matchedColorsObj = null;
     if (isCustomThemeId(val)) {
       cfg.theme = val;
       cfg.selectedThemeId = val;
@@ -553,10 +541,7 @@
       );
       if (activeThemeObj) {
         cfg.customColors = { ...activeThemeObj.colors };
-        localStorage.setItem(
-          CUSTOM_COLORS_CACHE_KEY,
-          JSON.stringify(activeThemeObj.colors),
-        );
+        matchedColorsObj = activeThemeObj.colors;
       }
       await configStorage.setValue(cfg);
       applyThemeToDocument("dark-amber", selectedFont, activeThemeObj?.colors, {
@@ -569,25 +554,28 @@
       cfg.theme = val;
       cfg.selectedThemeId = undefined;
       cfg.customColors = undefined;
-      localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
       await configStorage.setValue(cfg);
       clearCustomThemeFromDoc();
       applyThemeToDocument(val, selectedFont, undefined, {
         useStaticInPageLogo,
       });
     }
+    syncThemeCache(val, selectedFont, matchedColorsObj);
   }
 
   async function handleQuickFont(val: string) {
     selectedFont = val;
-    localStorage.setItem(FONT_CACHE_KEY, val);
     const cfg = (await configStorage.getValue()) as any;
     const useStaticInPageLogo = cfg?.useStaticInPageLogo === true;
     await configStorage.setValue({ ...cfg, font: val });
+    let matchedColorsObj = null;
     if (isCustomThemeId(selectedTheme)) {
       const activeThemeObj = (cfg.customThemes ?? []).find(
         (t: any) => t.id === selectedTheme,
       );
+      if (activeThemeObj) {
+        matchedColorsObj = activeThemeObj.colors;
+      }
       applyThemeToDocument("dark-amber", val, activeThemeObj?.colors, {
         useStaticInPageLogo,
       });
@@ -599,6 +587,7 @@
         useStaticInPageLogo,
       });
     }
+    syncThemeCache(selectedTheme, val, matchedColorsObj);
   }
 
   /* ── Settings Actions ── */
@@ -620,11 +609,9 @@
         error: false,
       };
 
-      // Broadcast to Settings tab / other extension pages
       if (browser?.runtime?.sendMessage) {
         browser.runtime.sendMessage(payload).catch(() => {});
       }
-      // Broadcast to active reader/content script
       if (browser?.tabs?.query) {
         browser.tabs
           .query({ active: true, currentWindow: true })
@@ -666,6 +653,20 @@
       );
       if (!ok) return;
     }
+
+    // Unmatched logs warning logic during Send All
+    const hasUnmatched = readingQueue.some(
+      (item) => !item.mediaId || item.mediaId === "web-reading",
+    );
+    if (hasUnmatched && cfg.warnUnmatched !== false) {
+      const ok = await confirmModal.confirm(
+        "Unmatched Media Warning",
+        "There are unmatched reading logs in the queue that are not linked to any AniList entry. They will be logged as unmatched. Do you want to proceed?",
+        "warnUnmatched",
+      );
+      if (!ok) return;
+    }
+
     isSendingAll = true;
 
     function getItemPayloads(item: any, type: "reading" | "video") {
@@ -814,24 +815,19 @@
       }
     }
 
-    const freshReadingQueue = await readingQueueStorage.getValue();
-    const freshVideoQueue = await videoQueueStorage.getValue();
-
-    const nextReadingQueue = [
+    await updateReadingQueueAtomic((freshReadingQueue) => [
       ...freshReadingQueue.filter(
         (item: any) => !rItems.some((sent: any) => sent.id === item.id),
       ),
       ...rItems.filter((item: any) => failedReadingIds.has(item.id)),
-    ];
-    const nextVideoQueue = [
+    ]);
+
+    await updateVideoQueueAtomic((freshVideoQueue) => [
       ...freshVideoQueue.filter(
         (item: any) => !vItems.some((sent: any) => sent.id === item.id),
       ),
       ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
-    ];
-
-    await readingQueueStorage.setValue(nextReadingQueue);
-    await videoQueueStorage.setValue(nextVideoQueue);
+    ]);
 
     if (totalFailed > 0) {
       if (totalSent > 0) {
@@ -853,10 +849,12 @@
       "Are you sure you want to clear all pending logs?",
     );
     if (!ok) return;
-    if (currentFilter === "all" || currentFilter === "video")
-      await videoQueueStorage.setValue([]);
-    if (currentFilter === "all" || currentFilter === "reading")
-      await readingQueueStorage.setValue([]);
+    if (currentFilter === "all" || currentFilter === "video") {
+      await updateVideoQueueAtomic(() => []);
+    }
+    if (currentFilter === "all" || currentFilter === "reading") {
+      await updateReadingQueueAtomic(() => []);
+    }
     await loadData();
   }
 
@@ -901,7 +899,7 @@
         <path
           transform="translate(0,0)"
           fill="url(#BrandLogoGrad)"
-          d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"
+          d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"
         />
         <path
           transform="translate(1,0)"
@@ -1182,7 +1180,6 @@
     color: var(--color-text);
   }
 
-  /* Force system success green on all matched list checkmarks and popup items globally */
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: #3ddc84 !important;
     border-color: rgba(61, 220, 132, 0.25) !important;
@@ -1195,7 +1192,7 @@
     flex-shrink: 0;
   }
 
-  /* ── Queue header & tabs (Contrast Mapped) ── */
+  /* ── Queue header & tabs ── */
   .queue-header {
     display: flex;
     align-items: center;
@@ -1293,7 +1290,6 @@
     overflow-y: auto;
   }
 
-  /* Force centered alignments for any empty queue placeholders rendered by QueueList */
   .queue-container :global(.empty-state),
   .queue-container :global(.empty-message),
   .queue-container :global(.queue-empty),
@@ -1337,7 +1333,6 @@
     border-color: var(--color-border-hover);
   }
 
-  /* Style select dropdown option layouts inside popover globally */
   :global(
       .compact-popover .select-option,
       .compact-popover .option,
@@ -1349,7 +1344,6 @@
     width: 100%;
   }
 
-  /* Restrict standard selection dropdown menu heights to keep layout compact and scrollable */
   :global(
       .select-dropdown,
       .dropdown-menu,
@@ -1362,7 +1356,6 @@
     overflow-y: auto !important;
   }
 
-  /* Modern sleek minimalist scrollbar styles across popup elements */
   :global(::-webkit-scrollbar) {
     width: 6px !important;
     height: 6px !important;
@@ -1378,7 +1371,6 @@
   :global(::-webkit-scrollbar-thumb:hover) {
     background: rgba(255, 255, 255, 0.25) !important;
   }
-  /* Firefox Scrollbar support */
   :global(*) {
     scrollbar-width: thin !important;
     scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;

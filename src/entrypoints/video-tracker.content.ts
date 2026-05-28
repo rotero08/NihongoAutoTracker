@@ -25,7 +25,6 @@ import { setSafeHTML } from '@/lib/utils/dom';
 
 let cachedConfig: any = {};
 
-// Cached page-level classification to prevent high-frequency DOM reflows
 let isMusicVideoCached = false;
 let isJapaneseVideoCached = false;
 let metadataResolved = false;
@@ -216,7 +215,6 @@ async function handleBadgeClick() {
   });
 }
 
-// Memory Leak Fix variables to cleanly track/unbind video listeners (Task 7)
 let activeVideoElement: HTMLVideoElement | null = null;
 let boundVideoListeners: Record<string, EventListener> = {};
 
@@ -256,7 +254,6 @@ const attach = (vid: HTMLVideoElement) => {
     engine.finalizeSession(currentUrl);
   }
 
-  // Clean up prior event listeners before mapping new ones (Task 7 Fix)
   unbindActiveVideoListeners();
 
   trackedVideo = vid;
@@ -269,7 +266,6 @@ const attach = (vid: HTMLVideoElement) => {
 
   engine.initSession(currentUrl, 0);
 
-  // Define named event references for precise GC tracking and teardown (Task 7 Fix)
   const onPlaying = () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
     engine.startPlayClock();
@@ -443,6 +439,11 @@ function getActivePlaylistContainers(): HTMLElement[] {
 }
 
 function runPlaylistInjection(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  if (!host.includes('youtube.com') && !host.includes('youtu.be')) {
+    return false;
+  }
   if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || isYouTubeShorts()) {
     return false;
   }
@@ -652,12 +653,14 @@ export default defineContentScript({
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {
+      window.removeEventListener('yt-navigate-finish', startTargetedObserver);
       clearExtractionCaches();
       document.getElementById('nt-playlist-modal')?.remove();
       document.getElementById('nt-modal-popup')?.remove();
       engine.flushPlayClock();
-      unbindActiveVideoListeners(); // Clean up prior listeners immediately when switching videos (Task 7 Fix)
+      unbindActiveVideoListeners();
       trackedVideo = null;
+      window.addEventListener('yt-navigate-finish', startTargetedObserver);
     });
 
     configStorage.watch((newCfg) => {

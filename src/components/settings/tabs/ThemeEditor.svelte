@@ -1,7 +1,7 @@
 <!-- ThemeEditor.svelte -->
 <script lang="ts">
     import { onMount } from "svelte";
-    import { THEMES } from "@/lib/ui/themes";
+    import { THEMES, lightenHexColor } from "@/lib/ui/themes";
 
     interface Props {
         themeId: string;
@@ -38,10 +38,6 @@
     let importCode = $state("");
     let exportStatus = $state("Share");
 
-    /**
-     * Serializes the current theme name and color map into a UTF-8 safe base64
-     * string and copies it directly to the system clipboard for easy sharing.
-     */
     async function handleExport() {
         try {
             const compactData = {
@@ -64,10 +60,6 @@
         }
     }
 
-    /**
-     * Decodes a base64 string matching the shared theme format, parses its fields,
-     * and maps them back onto the active theme draft properties.
-     */
     function handleImport() {
         if (!importCode.trim()) return;
         try {
@@ -130,30 +122,6 @@
         }
     }
 
-    function lightenHexColor(hex: string, percent: number): string {
-        if (!hex || !hex.startsWith("#")) return hex;
-        try {
-            let h = hex.trim();
-            if (h.length === 4) {
-                h = "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-            }
-            let num = parseInt(h.slice(1), 16),
-                amt = Math.round(2.55 * percent),
-                R = (num >> 16) + amt,
-                G = ((num >> 8) & 0x00ff) + amt,
-                B = (num & 0x0000ff) + amt;
-            R = Math.max(0, Math.min(255, R));
-            G = Math.max(0, Math.min(255, G));
-            B = Math.max(0, Math.min(255, B));
-            return (
-                "#" +
-                (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)
-            );
-        } catch {
-            return hex;
-        }
-    }
-
     function handleColorChange(key: string) {
         if (key === "accent" && themeColors.accent) {
             themeColors.accentHover = lightenHexColor(themeColors.accent, 12);
@@ -172,7 +140,6 @@
             window.removeEventListener("click", handleGlobalClick, true);
     });
 
-    // Derived color fields array matching the exact naming and key lookups
     const colorFields = $derived(
         compact
             ? [
@@ -201,10 +168,9 @@
               ],
     );
 
-    // Derived modification status for buttons
     function isThemeModified(): boolean {
         const customTheme = customThemes.find((t) => t.id === themeId);
-        if (!customTheme) return true; // New drafts are always considered modified to allow save/revert clean setups
+        if (!customTheme) return true;
 
         if (themeName !== customTheme.name) return true;
 
@@ -275,7 +241,6 @@
                 >
             </button>
 
-            <!-- Compact inline trigger for pasting shared codes -->
             <button
                 type="button"
                 style="background: transparent; border: 1px dashed var(--color-border); color: var(--color-text-muted); font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: color 0.15s, border-color 0.15s;"
@@ -297,7 +262,7 @@
                 <div
                     style="position: absolute; {compact
                         ? 'bottom: calc(100% + 4px);'
-                        : 'top: calc(100% + 4px);'} right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 1000; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
+                        : 'top: calc(100% + 4px);'} right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 100; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
                 >
                     {#each Object.entries(THEMES) as [key, value]}
                         {@const themeObj = value as any}
@@ -445,7 +410,6 @@
         </div>
     {/if}
 
-    <!-- Inline import form overlay triggered via the template header option -->
     {#if importInputOpen}
         <div
             style="display: flex; gap: 6px; flex-direction: column; margin-bottom: 6px; padding: 8px; background: rgba(0,0,0,0.15); border-radius: 4px; border: 1px solid var(--color-border-hover);"
@@ -562,7 +526,6 @@
         >
             Revert
         </button>
-        <!-- Share/Export action trigger -->
         <button
             class="btn btn-ghost"
             style={compact

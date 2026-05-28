@@ -29,7 +29,6 @@ import { mount, unmount } from 'svelte';
 import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
 import type { QueuedReadingLog, ReadingMediaData } from '@/lib/types';
 
-// Extreme performance and build guard check [1]
 const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && !!window.location.hostname && (
   window.self === window.top ||
   window.location.hostname.includes('manga.manabe.es') ||
@@ -42,15 +41,12 @@ let currentConfig: any = {};
 let isAnalyzingPage = false;
 let cachedIsJapanese: boolean | null = null;
 
-// Trackers to optimize mutation and chrono lookups
 let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
 
-// Mounted Svelte Component instance reference
 let mountedChronoComponent: any = null;
 
-// ── Performance caches ──────────────────────────────────────────────────────
 let _readingViewCache: boolean | null = null;
 let _readingViewCacheTime = 0;
 const READING_VIEW_CACHE_TTL = 500; // ms
@@ -65,12 +61,10 @@ let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
 let _lastRecalculateTime = 0;
-const RECALCULATE_THROTTLE_MS = 250; // Throttles layout calculation to avoid dropped frames on active scrolling
+const RECALCULATE_THROTTLE_MS = 250;
 
-// Track to verify if our local session has successfully synced to standard storage queues (Sync Fix)
 let hasSyncedThisSession = false;
 
-// Central instances for extracted utilities
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
 const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
@@ -254,8 +248,6 @@ interface StateRefs {
   lastSectionIndex: number;
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
-  sessionInitialSectionIndex: number;
-  sessionInitialStartChar: number;
 }
 
 const stateRefs: StateRefs = {
@@ -264,9 +256,7 @@ const stateRefs: StateRefs = {
   globalLastTick: Date.now(),
   lastSectionIndex: -1,
   lastSectionTotal: 0,
-  visitedSections: new Map<number, number>(),
-  sessionInitialSectionIndex: -1,
-  sessionInitialStartChar: -1
+  visitedSections: new Map<number, number>()
 };
 
 const ttuState = new Proxy({
@@ -283,7 +273,6 @@ const ttuState = new Proxy({
       if (wasRunning && !isRunning) {
         stabilizer.handleTimerPaused();
       }
-      // Instantly dispatch to sync active state bindings and fix pause/resume bugs
       const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
       if (wrapper) {
         wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
@@ -300,7 +289,6 @@ const ttuState = new Proxy({
     }
     if (prop === 'chars') {
       target.chars = Number(value) || 0;
-      // Instantly dispatch to sync active state bindings and fix pause/resume bugs
       const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
       if (wrapper) {
         wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
@@ -331,7 +319,6 @@ function parseTitleWithConfig(docTitle: string) {
   return parseTitle(docTitle, currentConfig.titleRegexes);
 }
 
-// Global cached layout mode tracker to sanitize continuous <-> paginated switches
 let lastLoggedPaginatedMode: boolean | null = null;
 
 function getReaderName() {
@@ -346,7 +333,6 @@ function isReadingViewActive(): boolean {
   }
   const path = window.location.pathname;
 
-  // Only restrict generic homepages on non-reader websites
   const adapter = getActiveReaderAdapter();
   if (!adapter) {
     if (path.includes('/settings') || path === '/' || path === '') {
@@ -422,7 +408,6 @@ async function liveSyncQueue() {
     const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
 
     const queue = await readingQueueStorage.getValue();
-    // Resolve matching rules aligned strictly with the custom target overridden volume index
     let existing = queue.find(q => {
       if (q.originalTitle === rawTitle) return true;
       const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
@@ -481,7 +466,7 @@ async function liveSyncQueue() {
     }
 
     await readingQueueStorage.setValue(queue);
-    hasSyncedThisSession = true; // Flag sync completed to allow deletion tracking
+    hasSyncedThisSession = true;
   } finally {
     isSyncing = false;
   }
@@ -515,7 +500,7 @@ async function saveSessionAndQueue() {
   stateRefs.visitedSections.clear();
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
-  hasSyncedThisSession = false; // Reset session sync on final save
+  hasSyncedThisSession = false;
 
   showToast('Success', 'Session queued!');
 }
@@ -560,7 +545,6 @@ function recalculateChars() {
 
   const now = Date.now();
   if (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS) {
-    // Schedule a delayed execution if we throttled it, to guarantee we catch the final state
     if (scrollTimeout) clearTimeout(scrollTimeout);
     scrollTimeout = setTimeout(() => {
       recalculateChars();
@@ -657,7 +641,6 @@ async function setupTTUChronometer() {
     const wrapper = document.createElement('div');
     wrapper.id = 'nt-ttu-chrono-wrapper';
 
-    // Enable FAB floating styling classes when Svelte is not loaded inside standard footers
     const isFloating = !document.getElementById('ttu-page-footer') && !document.querySelector('div[title="Click to copy Progress"]');
     if (isFloating) {
       wrapper.classList.add('nt-floating');
@@ -665,7 +648,6 @@ async function setupTTUChronometer() {
 
     pt.el.insertAdjacentElement(pt.pos, wrapper);
 
-    // Mount Svelte 5 component inside our wrapper directly
     mountedChronoComponent = mount(TtuChronoDropdown, {
       target: wrapper,
       props: {
@@ -782,7 +764,6 @@ function isTargetInIgnoredContainer(target: HTMLElement): boolean {
   return false;
 }
 
-// Memory Safe Event Listeners inside relevant frames [1]
 if (isRelevantFrame) {
   const handleScrollUpdate = () => {
     if (!ttuState.running || !isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
@@ -807,12 +788,33 @@ if (isRelevantFrame) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
+
+  // SPA History and Push-state Navigation Interceptors
+  window.addEventListener('popstate', () => {
+    _readingViewCache = null;
+    handleMutations();
+  });
+  window.addEventListener('hashchange', () => {
+    _readingViewCache = null;
+    handleMutations();
+  });
+
+  const origPushState = window.history.pushState;
+  window.history.pushState = function (...args) {
+    origPushState.apply(this, args);
+    _readingViewCache = null;
+    handleMutations();
+  };
+  const origReplaceState = window.history.replaceState;
+  window.history.replaceState = function (...args) {
+    origReplaceState.apply(this, args);
+    _readingViewCache = null;
+    handleMutations();
+  };
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
   stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
-  stateRefs.sessionInitialStartChar = isPaginated ? 0 : current;
-  stateRefs.sessionInitialSectionIndex = activeSection;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
@@ -832,6 +834,7 @@ function isChapterLoading(): boolean {
   return false;
 }
 
+// Optimized element validation bypass
 function isDictNode(node: Node): boolean {
   if (node.nodeType === Node.TEXT_NODE) return true;
   if (node.nodeType === Node.ELEMENT_NODE) {
@@ -856,14 +859,12 @@ function scheduleMutations() {
   _mutationRafScheduled = true;
   if (_mutationTimeout) clearTimeout(_mutationTimeout);
 
-  // Throttle mutation ticks to 120ms to completely prevent DOM layout stutters during scrolling
   _mutationTimeout = setTimeout(() => {
     _mutationRafScheduled = false;
     handleMutations();
   }, 120);
 }
 
-// Optimized MutationObserver scoping strictly to reader containers and checking elements locally (Task 6.1 & 6.2)
 let activeMutationObserver: MutationObserver | null = null;
 let currentObservedElement: Element | null = null;
 
@@ -906,7 +907,6 @@ function setupOptimizedMutationObserver() {
             if (node.nodeType === Node.ELEMENT_NODE) {
               const el = node as HTMLElement;
               const cl = el.className;
-              // Check elements directly from added nodes array to skip global document lookups
               if (el.classList.contains('jiten-word') || el.getAttribute('ajb') === 'true' || (cl && typeof cl === 'string' && cl.toLowerCase().indexOf('jiten') !== -1)) {
                 hasJitenAdded = true;
                 break;
@@ -922,7 +922,6 @@ function setupOptimizedMutationObserver() {
           }
         }
 
-        // Run the fast theme sync check anyway to guarantee the matched theme persists
         if (isReadingViewActive()) {
           scheduleInstantThemeSync();
         }
@@ -996,11 +995,13 @@ function setupOptimizedMutationObserver() {
       className: targetEl.className,
       isReaderContainer: targetEl !== document.body && targetEl !== document.documentElement
     });
+
+    // Execute absolute injection check immediately upon observer startup/resets
+    handleMutations();
   };
 
   startObserver();
 
-  // Watch for reader containers mounting periodically if currently observing body/html root
   const checkInterval = setInterval(() => {
     const container = findReaderContainer();
     if (container && currentObservedElement !== container) {
@@ -1014,7 +1015,6 @@ function setupOptimizedMutationObserver() {
   });
 }
 
-// CPU and Memory optimized MutationObservers restricted strictly to relevant frames [1]
 if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
   setupOptimizedMutationObserver();
 }
@@ -1057,14 +1057,12 @@ function handleMutations() {
       }
       wrapper.remove();
     }
-    // Prevent observers from remaining detached in memory
     if (progressObserver) {
       progressObserver.disconnect();
       progressObserver = null;
     }
   }
 
-  // Polymorphic adapters styles hook
   if (wrapper && adapter) {
     adapter.onUpdateStyles?.(wrapper);
   }
@@ -1087,8 +1085,6 @@ function handleMutations() {
         stateRefs.lastSectionIndex = -1;
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
-        stateRefs.sessionInitialSectionIndex = -1;
-        stateRefs.sessionInitialStartChar = -1;
         ttuState.chars = 0;
         ttuState.timeMs = 0;
         stateRefs.globalLastTick = Date.now();
@@ -1117,7 +1113,6 @@ function handleMutations() {
             recalculateChars();
           }
         } else {
-          // Fetch current volume to match the correct volume-specific state refs
           const rawTitle = getTTUTitle();
           const parsedVolume = parseTitleWithConfig(rawTitle).volume;
           ttuLinkStorage.getValue().then((links) => {
@@ -1141,13 +1136,7 @@ function handleMutations() {
             }
 
             if (isPaginated) {
-              if (activeSection < stateRefs.sessionInitialSectionIndex) {
-                stateRefs.globalSessionStartChar = total;
-              } else if (activeSection === stateRefs.sessionInitialSectionIndex) {
-                stateRefs.globalSessionStartChar = stateRefs.sessionInitialStartChar;
-              } else {
-                stateRefs.globalSessionStartChar = 0;
-              }
+              stateRefs.globalSessionStartChar = 0;
             }
 
             stateRefs.lastSectionIndex = activeSection;
@@ -1211,7 +1200,6 @@ if (isRelevantFrame) {
   });
 }
 
-// Unified class-based initialization of standard visual overlay timer tracking (Task 3)
 function startTimeTracker() {
   const timer = new TimerEngine();
   (window as any).__nt_tracker_session_active_ms__ = {
@@ -1228,14 +1216,11 @@ export default defineContentScript({
   cssInjectionMode: 'manifest',
 
   async main() {
-    // Return early on non-relevant frames to prevent multiple Svelte instances
     if (!isRelevantFrame) return;
 
     currentConfig = await configStorage.getValue() || {};
     const cfg = currentConfig;
 
-    // Force syncPopupWithReaderTheme to true in the reader site context so that
-    // reader site override theme is always applied to the reader page itself.
     const activeThemeCfg = getActiveThemeConfig(cfg);
     const adapter = getActiveReaderAdapter();
     const originalName = adapter ? adapter.name : null;
@@ -1280,7 +1265,6 @@ export default defineContentScript({
           const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
           if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         } else {
-          // Standard web pages overlay recovery and dynamic update styles
           if (isWebsiteOverlaySkipped(newCfg) || newCfg.overlayPosition === 'hidden' || getOverlayDismissed()) {
             const overlay = overlayController.getOverlayElement();
             if (overlay) overlay.style.display = 'none';
@@ -1348,7 +1332,6 @@ export default defineContentScript({
         const linkedMedia = linkMap[rawTitle];
         const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
-        // Volume-specific queue matching to prevent cross-linking between different volumes
         const existing = currentQueue.find((q: any) => {
           if (q.originalTitle === rawTitle) return true;
           const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
@@ -1356,7 +1339,6 @@ export default defineContentScript({
         });
 
         if (!existing && ttuState.timeMs > 0) {
-          // Safety lock: only reset session if this session was previously synced to avoid resetting early configurations
           if (hasSyncedThisSession) {
             ttuState.timeMs = 0;
             ttuState.chars = 0;
@@ -1390,7 +1372,6 @@ export default defineContentScript({
             } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
               if (links[rawTitle]) {
                 const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
-                // Avoid deleting link map entry if it matches a custom unmatched volume override
                 if (links[rawTitle].volume === parsedVol) {
                   delete links[rawTitle];
                   updated = true;
