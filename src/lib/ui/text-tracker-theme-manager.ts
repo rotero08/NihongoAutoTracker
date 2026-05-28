@@ -108,26 +108,49 @@ export function adjustLightness(rgb: { r: number, g: number, b: number }, offset
 
 function isValidAccent(rgb: { r: number, g: number, b: number }, isDark: boolean): boolean {
   const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
-  if (hsl.s < 15) return false;
-  if (isDark) {
-    return hsl.l > 30 && hsl.l < 90;
-  } else {
-    return hsl.l > 10 && hsl.l < 70;
-  }
+
+  // Filter out pure grayscale, very low saturation colors, or extreme whites/blacks
+  if (hsl.s < 10) return false;
+  if (hsl.l < 12 || hsl.l > 92) return false;
+
+  return true;
 }
 
 function findDOMAccentColor(isDark: boolean): string | null {
-  const selectors = [
-    '.active', '.selected', '.is-active', '.bg-primary', '.text-primary',
-    '[aria-selected="true"]', '.tab-active', '.btn-primary',
-    '.ttu-active', '[class*="active"]', '[class*="selected"]',
-    'a', 'button', 'svg[class*="active"]', 'span[class*="active"]'
+  const rootStyle = window.getComputedStyle(document.documentElement);
+  const bodyStyle = window.getComputedStyle(document.body);
+
+  // 1. Prioritize native CSS variables representing the exact theme accent/primary colors
+  const cssVars = [
+    '--color-accent', '--accent-color', '--accent', '--theme-color', '--main-color',
+    '--theme-accent', '--primary', '--color-primary', '--md-sys-color-primary',
+    '--yatsu-accent', '--yatsu-primary', '--ttu-color-accent', '--ttu-accent', '--color-main'
+  ];
+  for (const cssVar of cssVars) {
+    const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
+    if (val) {
+      const rgb = parseColorToRgb(val);
+      if (isValidAccent(rgb, isDark)) {
+        return val;
+      }
+    }
+  }
+
+  // 2. Active, highlighted, or selected elements
+  const specificSelectors = [
+    '[class*="accent"]', '[class*="highlight"]', '[class*="active"]', '[class*="selected"]',
+    '.active', '.selected', '.is-active', '.is-selected', '.tab-active', '[aria-selected="true"]',
+    'button[class*="primary"]', 'a[class*="primary"]', '.btn-primary', '.bg-primary', '.text-primary'
   ];
 
-  for (const selector of selectors) {
+  for (const selector of specificSelectors) {
     try {
       const elements = document.querySelectorAll(selector);
       for (const el of Array.from(elements)) {
+        // Exclude our own extension wrappers to avoid circular style inheritance
+        if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+          continue;
+        }
         const style = window.getComputedStyle(el);
 
         // Check background-color
@@ -160,20 +183,33 @@ function findDOMAccentColor(isDark: boolean): string | null {
     } catch (e) { }
   }
 
-  const rootStyle = window.getComputedStyle(document.documentElement);
-  const bodyStyle = window.getComputedStyle(document.body);
-  const cssVars = [
-    '--color-accent', '--color-primary', '--accent', '--primary',
-    '--theme-accent', '--theme-primary', '--ttu-accent', '--yatsu-accent'
-  ];
-  for (const cssVar of cssVars) {
-    const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
-    if (val) {
-      const rgb = parseColorToRgb(val);
-      if (isValidAccent(rgb, isDark)) {
-        return val;
+  // 3. Fallback generic interactive tags (links, buttons)
+  const genericSelectors = ['a', 'button'];
+  for (const selector of genericSelectors) {
+    try {
+      const elements = document.querySelectorAll(selector);
+      for (const el of Array.from(elements)) {
+        // Exclude our own extension wrappers to avoid circular style inheritance
+        if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+          continue;
+        }
+        const style = window.getComputedStyle(el);
+        const col = style.color;
+        if (col && col !== 'rgba(0, 0, 0, 0)' && col !== 'transparent') {
+          const rgb = parseColorToRgb(col);
+          if (isValidAccent(rgb, isDark)) {
+            return col;
+          }
+        }
+        const bg = style.backgroundColor;
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+          const rgb = parseColorToRgb(bg);
+          if (isValidAccent(rgb, isDark)) {
+            return bg;
+          }
+        }
       }
-    }
+    } catch (e) { }
   }
 
   return null;
@@ -209,6 +245,9 @@ export function detectReaderThemeColors(): any {
       for (const sel of selectors) {
         const el = document.querySelector(sel);
         if (el) {
+          if (el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
+            continue;
+          }
           const bg = window.getComputedStyle(el).backgroundColor;
           if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'rgba(0,0,0,0)' && bg !== 'transparent') {
             bgColor = bg;
@@ -307,7 +346,7 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
     let themeName = cfg.theme ?? 'dark-amber';
     let customColors = undefined;
 
-    // Detect if we are in an extension popup / options page (Issue 2 Fix)
+    // Detect if we are in an extension popup / options page
     const isExtensionPage = typeof window !== 'undefined' &&
       (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
 
