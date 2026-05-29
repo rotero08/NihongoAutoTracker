@@ -1,4 +1,4 @@
-<!-- START OF FILE SettingsQueueItem.svelte -->
+<!-- SettingsQueueItem.svelte -->
 
 <script lang="ts">
   import {

@@ -1,4 +1,4 @@
-<!-- START OF FILE DebugTab.svelte -->
+<!-- DebugTab.svelte -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
   import type { DebugLogEntry } from "@/lib/types";

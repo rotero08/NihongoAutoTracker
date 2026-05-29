@@ -1,5 +1,3 @@
-// START OF FILE player-tracker-engine.ts
-
 /**
  * ── Player Tracker Engine ────────────────────────────────────────────────────
  *

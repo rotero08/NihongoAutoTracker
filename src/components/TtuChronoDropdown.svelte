@@ -1,4 +1,4 @@
-<!-- START OF FILE TtuChronoDropdown.svelte -->
+<!-- TtuChronoDropdown.svelte -->
 
 <script lang="ts">
     import { onMount } from "svelte";

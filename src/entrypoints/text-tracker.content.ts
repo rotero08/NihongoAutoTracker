@@ -1,5 +1,3 @@
-// START OF FILE text-tracker.content.ts
-
 /**
  * ── Text Tracker Content Script ──────────────────────────────────────────────
  */

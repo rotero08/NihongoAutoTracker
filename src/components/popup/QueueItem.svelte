@@ -1,4 +1,4 @@
-<!-- START OF FILE QueueItem.svelte -->
+<!-- QueueItem.svelte -->
 
 <script lang="ts">
   import {

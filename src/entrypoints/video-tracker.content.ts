@@ -1,5 +1,3 @@
-// START OF FILE video-tracker.content.ts
-
 /**
  * ── Video Tracker Content Script ─────────────────────────────────────────────
  */
