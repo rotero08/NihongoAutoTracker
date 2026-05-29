@@ -492,7 +492,11 @@
 
     // Handles focusing on search bar to trigger search automatically with current text
     function handleSearchFocus() {
-        if (anilistSearchQuery.trim().length >= 2) {
+        if (
+            anilistSearchQuery.trim().length >= 2 &&
+            anilistResults.length === 0 &&
+            !isSearchingAnilist
+        ) {
             handleAnilistInput(anilistSearchQuery);
         }
     }
@@ -1427,7 +1431,7 @@
         gap: 6px;
         font-size: 11px;
         color: var(--color-success, var(--nt-success, #3ddc84)) !important;
-        padding: 4px 6px;
+        padding: 2px 4px; /* Increased vertical padding to prevent top/bottom text clipping */
         border-radius: 4px;
         transition: background 0.15s;
         background: color-mix(
@@ -1464,6 +1468,7 @@
         -webkit-box-orient: vertical !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
+        line-height: 1.4 !important; /* Set proper line height to avoid Japanese characters being clipped */
     }
 
     :global(.nt-ttu-link-compact-inner:hover) {
