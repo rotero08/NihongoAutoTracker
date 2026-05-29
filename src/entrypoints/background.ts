@@ -42,6 +42,9 @@ export default defineBackground(() => {
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg.action === 'NOTIFY') {
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - Background] Relay request for notification toast received:`, msg);
+        }
         // Send to the active tab's content scripts (for page-level toasts)
         browser.tabs
           .query({ active: true, currentWindow: true })
@@ -66,7 +69,12 @@ export default defineBackground(() => {
         }).catch(() => null);
       }
 
-      if (msg.action === 'QUEUE_UPDATED') refreshBadge();
+      if (msg.action === 'QUEUE_UPDATED') {
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - Background] Queue update notification received. Refreshing badge.`);
+        }
+        refreshBadge();
+      }
 
       if (msg.action === 'GET_QUEUE_COUNT') {
         videoQueueStorage.getValue().then((q) => {
@@ -79,6 +87,10 @@ export default defineBackground(() => {
 
       if (msg.action === 'OPEN_SETTINGS') {
         const settingsUrl = browser.runtime.getURL("/settings.html");
+
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - Background] Opening Settings page, requested sub-tab:`, msg.tab || 'none');
+        }
 
         // Query only settings-specific tabs to bypass native URL matching overhead 
         // and serialization latency across process boundaries.
@@ -120,12 +132,18 @@ export default defineBackground(() => {
       }
     } catch (err) {
       // Discard context-invalidation exceptions silently
+      if (import.meta.env.DEV) {
+        console.warn(`[NAT DEV - Background] Message listener caught transient exception:`, err);
+      }
     }
   });
 
   /* ── Context Menu Click Handler ─────────────────────────────────────────── */
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
+    if (import.meta.env.DEV) {
+      console.log(`[NAT DEV - Background] Context Menu clicked:`, info.menuItemId);
+    }
     if (info.menuItemId === 'log-yt-video') {
       const url = info.linkUrl || info.pageUrl || tab?.url;
       if (!url || !url.includes('youtube.com')) return;
@@ -233,6 +251,11 @@ export default defineBackground(() => {
       if (!cfg.autoSendEndOfDay) return;
 
       const now = new Date();
+
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - Background] Alarm tick for EOD flush check: ${now.toLocaleTimeString()}`);
+      }
+
       // Execute exactly at 23:59 of local time
       if (now.getHours() === 23 && now.getMinutes() === 59) {
         const lastFlushDate = await storage.getItem('local:lastFlushDate');
@@ -246,12 +269,19 @@ export default defineBackground(() => {
       }
     });
   } else {
+    if (import.meta.env.DEV) {
+      console.warn(`[NAT DEV - Background] browser.alarms is undefined in hosting environment.`);
+    }
   }
 
   async function flushTodayQueue(type: 'reading' | 'video', qStorage: any) {
     const q = await qStorage.getValue();
     const todayStr = new Date().toLocaleDateString();
     const remaining: any[] = [];
+
+    if (import.meta.env.DEV) {
+      console.log(`[NAT DEV - Background] Starting EOD flush for ${type}. Current queue size: ${q.length}`);
+    }
 
     for (const item of q) {
       const itemDateStr = new Date(item.date).toLocaleDateString();
@@ -340,6 +370,9 @@ export default defineBackground(() => {
 
       let success = true;
       for (const p of payloads) {
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - Background] Submitting EOD payload for ${type}: ${base.description}`);
+        }
         const res = await submitLog(p);
         if (!res || !(res as any).success) success = false;
       }

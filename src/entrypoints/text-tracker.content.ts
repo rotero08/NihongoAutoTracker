@@ -334,6 +334,7 @@ function parseTitleWithConfig(docTitle: string) {
 
 let lastLoggedPaginatedMode: boolean | null = null;
 
+// Cleaned reader name lookup
 function getReaderName() {
   const adapter = getActiveReaderAdapter();
   return adapter ? adapter.name : 'Reader';
@@ -436,7 +437,10 @@ async function liveSyncQueue(force = false) {
         return qParsed.query === parsedTitle && (qParsed.volume || 1) === targetVolume;
       });
 
-      await addDebugLog('INFO', 'TextTracker', `liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
+      // Swapped disk storage logging for a lightweight compiler-optimized development warning
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - TextTracker] liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
+      }
 
       if (!existing) {
         existing = {
@@ -1062,11 +1066,14 @@ function setupOptimizedMutationObserver() {
       subtree: true
     });
 
-    addDebugLog('INFO', 'TextTracker', `MutationObserver restricted target`, {
-      tagName: targetEl.tagName,
-      className: targetEl.className,
-      isReaderContainer: targetEl !== document.body && targetEl !== document.documentElement
-    });
+    // Swapped high-frequency disk logging for compile-time optimized warning inside startObserver
+    if (import.meta.env.DEV) {
+      console.log(`[NAT DEV - TextTracker] MutationObserver restricted target`, {
+        tagName: targetEl.tagName,
+        className: targetEl.className,
+        isReaderContainer: targetEl !== document.body && targetEl !== document.documentElement
+      });
+    }
 
     // Execute absolute injection check immediately upon observer startup/resets
     handleMutations();

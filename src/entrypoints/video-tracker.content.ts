@@ -56,12 +56,15 @@ function resolvePageLanguageAndType() {
 
   metadataResolved = !isGenericTitle;
 
-  addDebugLog('INFO', 'VideoTracker', 'Resolved video classification metadata', {
-    title: currentTitle,
-    isMusic: isMusicVideoCached,
-    isJapanese: isJapaneseVideoCached,
-    resolved: metadataResolved
-  });
+  // Swapped noisy storage logs with compile-time dead-code eliminated console logs
+  if (import.meta.env.DEV) {
+    console.log(`[NAT DEV - VideoTracker] Resolved video classification metadata`, {
+      title: currentTitle,
+      isMusic: isMusicVideoCached,
+      isJapanese: isJapaneseVideoCached,
+      resolved: metadataResolved
+    });
+  }
 }
 
 let _adPlayingCached = false;
@@ -246,7 +249,9 @@ const attach = (vid: HTMLVideoElement) => {
     return;
   }
 
-  addDebugLog('INFO', 'VideoTracker', `New Video Context Detected`, { url: cleanedHref });
+  if (import.meta.env.DEV) {
+    console.log(`[NAT DEV - VideoTracker] New Video Context Detected`, { url: cleanedHref });
+  }
 
   document.getElementById('nt-playlist-modal')?.remove();
   document.getElementById('nt-modal-popup')?.remove();
@@ -360,13 +365,17 @@ const attach = (vid: HTMLVideoElement) => {
     let updated = false;
     if (foundId && foundId !== channelId) {
       channelId = foundId;
-      addDebugLog('INFO', 'VideoTracker', `Channel ID Discovered`, { channelId: foundId });
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - VideoTracker] Channel ID Discovered`, { channelId: foundId });
+      }
       updated = true;
     }
 
     if (foundName && foundName !== cachedChannelName) {
       cachedChannelName = foundName;
-      addDebugLog('INFO', 'VideoTracker', `Channel Name Discovered`, { channelName: foundName });
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - VideoTracker] Channel Name Discovered`, { channelName: foundName });
+      }
       updated = true;
     }
 

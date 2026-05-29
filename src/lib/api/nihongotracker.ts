@@ -45,12 +45,16 @@ export async function submitLog(
   const mediaData = payload.mediaData as any;
   if (payload.mediaId === 'web-video' && mediaData?.channelId && mediaData.channelId !== 'web-video') {
     payload.mediaId = mediaData.channelId;
-    await addDebugLog('INFO', 'API', 'Correcting mediaId using discovered mediaData ID', {
-      newMediaId: payload.mediaId,
-    });
+    if (import.meta.env.DEV) {
+      console.log(`[NAT DEV - API] Correcting mediaId using discovered mediaData ID`, {
+        newMediaId: payload.mediaId,
+      });
+    }
   }
 
-  await addDebugLog('INFO', 'API', `Submitting Log (${payload.type})`, payload);
+  if (import.meta.env.DEV) {
+    console.log(`[NAT DEV - API] Submitting Log (${payload.type})`, payload);
+  }
 
   try {
     const response = await fetch(`${API_BASE}/logs`, {
@@ -64,11 +68,14 @@ export async function submitLog(
     });
 
     if (response.ok) {
-      await addDebugLog('INFO', 'API', 'Log sent successfully');
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - API] Log sent successfully`);
+      }
       if (!silent) notify('Success', 'Log sent to NihongoTracker!');
       return { success: true, status: response.status };
     } else {
       const errorText = await response.text();
+      // Keep persistent disk error log on failure so user has diagnostic feedback
       await addDebugLog('ERROR', 'API', `Log failed with code ${response.status}`, errorText);
       if (!silent) notify('Error', `Log failed (${response.status}): ${errorText.slice(0, 100)}`);
       return { success: false, status: response.status, error: errorText };
@@ -104,10 +111,12 @@ export async function resolveVideoChannelMedia(input: {
   const channelTitle = input.channelTitle?.trim();
   if (!channelId && !channelTitle) return {};
 
-  await addDebugLog('INFO', 'API', 'Resolving Channel Media', {
-    input_channelId: channelId,
-    input_channelTitle: channelTitle,
-  });
+  if (import.meta.env.DEV) {
+    console.log(`[NAT DEV - API] Resolving Channel Media`, {
+      input_channelId: channelId,
+      input_channelTitle: channelTitle,
+    });
+  }
 
   /* Retrieve API key from input or storage */
   let apiKey = input.apiKey || '';
@@ -146,10 +155,12 @@ export async function resolveVideoChannelMedia(input: {
 
       if (normalized.channelTitle || normalized.channelImage || normalized.channelDescription) {
         if (channelId && !normalized.channelId) normalized.channelId = channelId;
-        await addDebugLog('INFO', 'API', 'Media successfully matched API request', {
-          endpoint: url,
-          normalized,
-        });
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - API] Media successfully matched API request`, {
+            endpoint: url,
+            normalized,
+          });
+        }
         return normalized;
       }
     } catch {
