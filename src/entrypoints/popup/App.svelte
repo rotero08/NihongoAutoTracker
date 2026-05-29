@@ -601,9 +601,7 @@
       try {
         await browser.runtime.openOptionsPage();
         return;
-      } catch (e) {
-        error("Failed to open options page directly:", e);
-      }
+      } catch (e) {}
     }
     if (browser?.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
@@ -649,9 +647,7 @@
     if (confirmModal) {
       try {
         return await confirmModal.confirm(title, msg, warnKey);
-      } catch (e) {
-        error("ConfirmModal error, falling back to window.confirm:", e);
-      }
+      } catch (e) {}
     }
     return window.confirm(msg);
   }

@@ -26,6 +26,141 @@ if (typeof document !== 'undefined') {
 }
 
 /**
+ * Shared normalizer to standardize symbols, phrasing, and visual layout.
+ * Distinguishes contexts (single logs, bulk logs, direct sends, playlist logging).
+ */
+function normalizeToast(title: string, msg: string, err = false): { normTitle: string; normMessage: string; isError: boolean } {
+  let normTitle = (title || '').trim();
+  let normMessage = (msg || '').trim();
+  let isError = err;
+
+  const lowerTitle = normTitle.toLowerCase();
+  const lowerMessage = normMessage.toLowerCase();
+
+  // 1. Classify error or success state
+  if (
+    lowerTitle.includes('fail') ||
+    lowerTitle.includes('error') ||
+    lowerTitle.includes('no japanese found') ||
+    lowerMessage.includes('fail') ||
+    lowerMessage.includes('error') ||
+    isError
+  ) {
+    isError = true;
+  }
+
+  // 2. Extract message from title if message field is empty
+  if (!normMessage) {
+    if (lowerTitle.startsWith('failed!') || lowerTitle.startsWith('failed') || lowerTitle.startsWith('error')) {
+      normMessage = normTitle.replace(/^(failed!|failed|error:?)\s*/i, '').trim();
+      if (!normMessage) normMessage = 'An unexpected error occurred';
+    } else if (lowerTitle.startsWith('success!') || lowerTitle.startsWith('success')) {
+      normMessage = normTitle.replace(/^(success!?)\s*/i, '').trim();
+      if (!normMessage) normMessage = 'Action completed successfully';
+    } else {
+      normMessage = normTitle;
+    }
+  }
+
+  // Strip existing status symbols and whitespace from the beginning to prevent double-prepends
+  normMessage = normMessage.replace(/^[✓✗⚠▸▾\s*•·~xX\-:!⚠]*\s*/i, '');
+
+  // Strip trailing punctuation for clean and consistent layout
+  normMessage = normMessage.replace(/[!.]$/, '');
+
+  const cleanLowerMessage = normMessage.toLowerCase();
+
+  // 3. Unify phrasing structures while strictly preserving operation distinctions
+  if (cleanLowerMessage.includes('missing api key')) {
+    normMessage = 'Missing API key';
+    isError = true;
+  }
+  // Match Direct Send (TTU CronoDropdown direct logging bypass)
+  else if (cleanLowerMessage.includes('logged directly to nihongotracker')) {
+    normMessage = 'Logged directly to NihongoTracker';
+  }
+  // Match Single Queue Log (Standard single-item success submissions)
+  else if (cleanLowerMessage.includes('log sent to nihongotracker')) {
+    normMessage = 'Logged to NihongoTracker';
+  }
+  // Match Local Session Save (Queued locally in cache)
+  else if (cleanLowerMessage === 'session queued') {
+    normMessage = 'Session queued locally';
+  }
+  // Match Bulk Send All - Full Success
+  else if (/successfully sent all (\d+) logs/i.test(normMessage)) {
+    const match = normMessage.match(/successfully sent all (\d+) logs/i);
+    if (match) {
+      normMessage = `Logged all ${match[1]} queue entries to NihongoTracker`;
+    }
+  }
+  // Match Bulk Send All - Partial Failure
+  else if (/sent (\d+) logs, but (\d+) failed/i.test(normMessage)) {
+    const match = normMessage.match(/sent (\d+) logs, but (\d+) failed/i);
+    if (match) {
+      normMessage = `Logged ${match[1]} queue entries, but ${match[2]} failed`;
+      isError = true;
+    }
+  }
+  // Match Playlist Chunk Logging - Successes
+  else if (/logged (\d+)\/(\d+) videos/i.test(normMessage)) {
+    const match = normMessage.match(/logged (\d+)\/(\d+) videos/i);
+    if (match) {
+      normMessage = `Logged ${match[1]}/${match[2]} playlist videos`;
+    }
+  }
+  // Match Playlist Chunk Logging - Full Failures
+  else if (/failed to log videos \(0\/(\d+) logged\)/i.test(normMessage)) {
+    const match = normMessage.match(/failed to log videos \(0\/(\d+) logged\)/i);
+    if (match) {
+      normMessage = `Failed to log playlist videos (0/${match[1]} logged)`;
+      isError = true;
+    }
+  }
+  // Match Local Session Removal from Settings Queue List
+  else if (cleanLowerMessage === 'session removed') {
+    normMessage = 'Session removed from queue';
+  }
+  // Match Local Queue Entry Removal from Settings Queue List
+  else if (cleanLowerMessage === 'log removed') {
+    normMessage = 'Queue entry removed';
+  }
+  // Match Theme Deletion from Appearance Settings Panel
+  else if (cleanLowerMessage === 'deleted theme') {
+    normMessage = 'Theme deleted';
+  }
+  // Match Synced Theme Unlock Status
+  else if (cleanLowerMessage === 'synced theme unlocked') {
+    normMessage = 'Synced theme unlocked';
+  }
+  // Match Empty Selection Checks (Text Selection Handler)
+  else if (cleanLowerMessage.includes('selection had no japanese characters') || cleanLowerMessage.includes('selection has no japanese characters') || cleanLowerMessage.includes('had no japanese characters')) {
+    normMessage = 'Selection has no Japanese characters';
+    isError = true;
+  }
+  // Match Empty Playlist Scan Error (Playlist Modal Handler)
+  else if (cleanLowerMessage.includes('no valid videos found in playlist')) {
+    normMessage = 'No valid videos found in playlist';
+    isError = true;
+  }
+  // Match AniList Linkage Clear Actions
+  else if (cleanLowerMessage.includes('anilist match unlinked')) {
+    normMessage = 'AniList match unlinked';
+  }
+
+  // 4. Force uniform titles and prefix with correct indicators
+  if (isError) {
+    normTitle = 'Error';
+    normMessage = `⚠ ${normMessage}`;
+  } else {
+    normTitle = 'Success';
+    normMessage = `✓ ${normMessage}`;
+  }
+
+  return { normTitle, normMessage, isError };
+}
+
+/**
  * Show a toast notification in the current page.
  */
 export function showToast(title: string, msg: string, err = false): void {
@@ -33,7 +168,13 @@ export function showToast(title: string, msg: string, err = false): void {
 
   if (window.self !== window.top) return;
 
-  const key = `${title}::${msg}`;
+  // Apply centralized normalization logic
+  const normalized = normalizeToast(title, msg, err);
+  const normTitle = normalized.normTitle;
+  const normMessage = normalized.normMessage;
+  err = normalized.isError;
+
+  const key = `${normTitle}::${normMessage}`;
   const escapedKey = encodeURIComponent(key);
   const now = Date.now();
 
@@ -127,17 +268,17 @@ export function showToast(title: string, msg: string, err = false): void {
   const content = document.createElement('div');
   content.className = 'nt-toast-content';
 
-  if (title) {
+  if (normTitle) {
     const titleSpan = document.createElement('span');
     titleSpan.className = 'nt-toast-title';
-    titleSpan.textContent = title;
+    titleSpan.textContent = normTitle;
     content.appendChild(titleSpan);
   }
 
-  if (msg) {
+  if (normMessage) {
     const msgSpan = document.createElement('span');
     msgSpan.className = 'nt-toast-msg';
-    msgSpan.textContent = msg;
+    msgSpan.textContent = normMessage;
     content.appendChild(msgSpan);
   }
 
@@ -240,7 +381,12 @@ export function showToast(title: string, msg: string, err = false): void {
  */
 export function notify(title: string, message: string): void {
   try {
-    const isError = title.toLowerCase().includes('fail') || title.toLowerCase().includes('error');
+    // Apply centralized normalization logic
+    const normalized = normalizeToast(title, message);
+    const normTitle = normalized.normTitle;
+    const normMessage = normalized.normMessage;
+    const isError = normalized.isError;
+
     const hasDocument = typeof document !== 'undefined';
     const isExtensionPage = typeof window !== 'undefined' &&
       (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
@@ -261,23 +407,23 @@ export function notify(title: string, message: string): void {
 
           if (isRestricted) {
             if (hasDocument) {
-              showToast(title, message, isError);
+              showToast(normTitle, normMessage, isError);
             }
           } else {
-            relayToastToActiveTab(title, message, isError);
+            relayToastToActiveTab(normTitle, normMessage, isError);
           }
         })
         .catch(() => {
           if (hasDocument) {
-            showToast(title, message, isError);
+            showToast(normTitle, normMessage, isError);
           }
         });
     } else {
       if (hasDocument) {
-        showToast(title, message, isError);
+        showToast(normTitle, normMessage, isError);
       }
       if (typeof browser !== 'undefined') {
-        relayToastToActiveTab(title, message, isError);
+        relayToastToActiveTab(normTitle, normMessage, isError);
       }
     }
   } catch (_err) {

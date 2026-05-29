@@ -37,7 +37,7 @@ export async function submitLog(
   const apiKey = config?.apiKey ?? '';
 
   if (!apiKey) {
-    if (!silent) notify('Failed! Missing API key', '');
+    if (!silent) notify('Error', 'Missing API key');
     return { success: false, error: 'Missing API key' };
   }
 
@@ -70,12 +70,12 @@ export async function submitLog(
     } else {
       const errorText = await response.text();
       await addDebugLog('ERROR', 'API', `Log failed with code ${response.status}`, errorText);
-      if (!silent) notify(`Failed! ${response.status}`, errorText.slice(0, 100));
+      if (!silent) notify('Error', `Log failed (${response.status}): ${errorText.slice(0, 100)}`);
       return { success: false, status: response.status, error: errorText };
     }
   } catch (err: any) {
     await addDebugLog('ERROR', 'API', 'Network error', err);
-    if (!silent) notify('Failed!', err.message);
+    if (!silent) notify('Error', err.message);
     return { success: false, error: err.message };
   }
 }

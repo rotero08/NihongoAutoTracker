@@ -333,13 +333,16 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
     modal.querySelector('#pl-confirm-no')!.setAttribute('disabled', 'true');
 
     let successCount = 0;
+    let lastError = '';
     const fallbackChanName = await getChannelNameFallback();
     const fallbackChanId = await getYouTubeChannelId();
 
     const uploadChunkSize = 3;
     for (let idx = 0; idx < checked.length; idx += uploadChunkSize) {
       const chunk = checked.slice(idx, idx + uploadChunkSize);
-      await Promise.all(chunk.map(async (v) => {
+
+      // Execute chunk concurrently while gathering returned success/error structures
+      const results = await Promise.all(chunk.map(async (v) => {
         try {
           const data = await fetchYouTubeVideoData(`https://www.youtube.com/watch?v=${v.id}`);
           if (data?.video?.episodeDuration) v.time = Math.max(1, data.video.episodeDuration);
@@ -366,12 +369,33 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
           description: stripVideoTitle(v.title), mediaData: specificMediaData,
           time: v.time, date: new Date().toISOString(),
           private: false, episodes: 0, pages: 0, unknownDate: false
-        });
-        if (ok?.success) successCount++;
+        }, true); // silent = true ensures batch submits do not spam single notifications
+
+        return {
+          success: !!ok?.success,
+          error: ok?.error || ''
+        };
       }));
+
+      // Accumulate counts synchronously to fully prevent state race conditions
+      for (const res of results) {
+        if (res.success) {
+          successCount++;
+        } else if (res.error) {
+          lastError = res.error;
+        }
+      }
     }
 
-    showToast('Success', `Logged ${successCount}/${checked.length} videos`);
+    if (successCount === 0) {
+      if (lastError) {
+        showToast('Error', lastError, true);
+      } else {
+        showToast('Error', `Failed to log videos (0/${checked.length} logged)`, true);
+      }
+    } else {
+      showToast('Success', `Logged ${successCount}/${checked.length} videos`);
+    }
     modal.remove();
   });
 }
