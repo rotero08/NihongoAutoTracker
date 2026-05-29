@@ -713,6 +713,7 @@ function isYatsuSidebarOpen(): boolean {
   return false;
 }
 
+
 async function setupTTUChronometer() {
   if (isChronoInitializing) return;
 
@@ -1392,7 +1393,7 @@ function handleMutations() {
   }
 
   if (!adapter) {
-    if (window.self === window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
+    if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
       const overlay = overlayController.getOverlayElement();
       if (!overlay) {
         overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
