@@ -1,6 +1,5 @@
-<!--
-  ── SettingsQueueItem.svelte ───────────────────────────────────────────────────
--->
+<!-- START OF FILE SettingsQueueItem.svelte -->
+
 <script lang="ts">
   import {
     videoQueueStorage,
@@ -19,6 +18,7 @@
   import { storage } from "wxt/utils/storage";
   import { onMount } from "svelte";
   import { configStorage } from "@/lib/storage/config";
+  import { addDebugLog } from "@/lib/storage/debug";
 
   interface Props {
     item: any;
@@ -149,6 +149,11 @@
       if (val.trim().length < 2) {
         searchDropdown?.close();
         return;
+      }
+      if (import.meta.env.DEV) {
+        console.log(
+          `[NAT DEV - SettingsQueueItem] Debouncing search for AniList matching: ${val.trim()}`,
+        );
       }
       debounceTimer = setTimeout(() => searchDropdown?.search(val.trim()), 500);
     }
@@ -519,6 +524,12 @@
       return;
     }
 
+    if (import.meta.env.DEV) {
+      console.log(
+        `[NAT DEV - SettingsQueueItem] Initiating manual send for: ${current.description || current.contentTitleNative}`,
+      );
+    }
+
     // Single item unmatched warning logic
     if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
       const cfg = (await configStorage.getValue()) as any;
@@ -562,6 +573,13 @@
             : `⚠ Failed: ${result?.error}`;
           onStatus(errText, true);
           sending = false;
+          // Persistent error logging for manual queue sends
+          await addDebugLog(
+            "ERROR",
+            "SettingsQueueItem",
+            `Manual queue log submission failed: ${payload.description}`,
+            result?.error,
+          );
           return;
         }
       }
@@ -579,6 +597,12 @@
     } catch (e: any) {
       onStatus(`⚠ Error: ${e.message || e}`, true);
       sending = false;
+      await addDebugLog(
+        "ERROR",
+        "SettingsQueueItem",
+        `Exception during manual send for ${current.description}`,
+        e,
+      );
     }
   }
 

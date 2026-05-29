@@ -1,7 +1,6 @@
 <!-- START OF FILE DebugTab.svelte -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
-  import { debugLogStorage } from "@/lib/storage/debug";
   import type { DebugLogEntry } from "@/lib/types";
   import { onMount } from "svelte";
 
@@ -22,12 +21,14 @@
   });
 
   export async function load() {
-    const [cfg, rawLogs] = await Promise.all([
+    const [cfg, response] = await Promise.all([
       configStorage.getValue() as Promise<any>,
-      debugLogStorage.getValue(),
+      browser.runtime
+        .sendMessage({ action: "GET_DEBUG_LOGS" })
+        .catch(() => ({ logs: [] })),
     ]);
 
-    logs = rawLogs;
+    logs = response?.logs || [];
     parseSystemDiagnostics(cfg);
   }
 
@@ -142,7 +143,9 @@
 
   async function clearLogs() {
     if (!confirm("Are you sure you want to clear all debug logs?")) return;
-    await debugLogStorage.setValue([]);
+    await browser.runtime
+      .sendMessage({ action: "CLEAR_DEBUG_LOGS" })
+      .catch(() => {});
     await load();
     onStatus("✓ Logs Cleared");
   }
@@ -210,7 +213,7 @@
       <span style="background: #252a34"></span>
       <span style="background: #252a34"></span>
     </div>
-    <span class="console-tab-name">daemon.log</span>
+    <span class="console-tab-name">immersion-daemon.log</span>
   </div>
   <div class="console-body" id="debug-logs-list">
     {#if logs.length === 0}

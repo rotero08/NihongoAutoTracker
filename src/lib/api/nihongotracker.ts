@@ -1,3 +1,5 @@
+// START OF FILE nihongotracker.ts
+
 /**
  * ── NihongoTracker API Client ────────────────────────────────────────────────
  *

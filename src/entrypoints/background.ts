@@ -1,3 +1,5 @@
+// START OF FILE background.ts
+
 /**
  * ── Background Service Worker ────────────────────────────────────────────────
  *
@@ -13,7 +15,7 @@ import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
 import { notify } from '@/lib/utils/toast';
 import { JP_ALL_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
-import { addDebugLog } from '@/lib/storage/debug';
+import { addDebugLog, pushRamLog, clearRamLogs, getRamLogs } from '@/lib/storage/debug';
 import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
 import { storage } from 'wxt/utils/storage';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
@@ -21,6 +23,11 @@ import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 export default defineBackground(() => {
   // Use WXT's normalized action API which unifies Manifest V2 and Manifest V3 environments
   const actionAPI = browser.action || (browser as any).browserAction;
+
+  // Register the background-specific global RAM logger hook
+  (globalThis as any).__NT_APPEND_RAM_LOG__ = (entry: any) => {
+    pushRamLog(entry);
+  };
 
   /* ── Context Menu Creation ──────────────────────────────────────────────── */
 
@@ -41,6 +48,23 @@ export default defineBackground(() => {
 
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
+      if (msg.action === 'ADD_DEBUG_LOG') {
+        pushRamLog(msg.entry);
+        sendResponse({ success: true });
+        return;
+      }
+
+      if (msg.action === 'GET_DEBUG_LOGS') {
+        sendResponse({ logs: getRamLogs() });
+        return;
+      }
+
+      if (msg.action === 'CLEAR_DEBUG_LOGS') {
+        clearRamLogs();
+        sendResponse({ success: true });
+        return;
+      }
+
       if (msg.action === 'NOTIFY') {
         if (import.meta.env.DEV) {
           console.log(`[NAT DEV - Background] Relay request for notification toast received:`, msg);

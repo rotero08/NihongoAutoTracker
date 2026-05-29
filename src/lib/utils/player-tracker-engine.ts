@@ -1,3 +1,5 @@
+// START OF FILE player-tracker-engine.ts
+
 /**
  * ── Player Tracker Engine ────────────────────────────────────────────────────
  *
@@ -131,6 +133,8 @@ export class PlayerTrackerEngine {
                 const possibleMediaId = item.mediaData?.channelId || channelId || item.mediaId;
                 item.mediaId = (possibleMediaId && possibleMediaId !== "web-video") ? possibleMediaId : "web-video";
             } else {
+                // First automatic queue addition boundary - log persistently in RAM
+                await addDebugLog('INFO', 'VideoTracker', `Automatically queued video: ${finalTitle}`);
                 queue.push({
                     id: crypto.randomUUID(),
                     contentTitleNative: channelName,
@@ -209,68 +213,81 @@ export class PlayerTrackerEngine {
         channelName: string,
         videoTitle: string
     ): Promise<void> {
-        if (this.playClockStart < 0 && !vid.paused && !vid.ended) {
-            this.playClockStart = performance.now();
-        }
-
-        const liveSecs = this.getLiveWatched();
-        this.onUpdateBadge(liveSecs, this.getTotal());
-
-        if (this.hasTriggered || vid.duration <= 0) return;
-
-        const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
-
-        if (!autoOn && this.reachedQueueThreshold(cfg, vid) && (liveSecs - this.lastSyncSecs) >= 10) {
-            this.lastSyncSecs = liveSecs;
-            const { isJapanese, isMusic } = this.getJapaneseClassification();
-            const skipMusic = isMusic && !cfg.logMusicVideos;
-
-            if (isJapanese && !skipMusic) {
-                await this.upsertQueueLive(videoTitle, channelName, channelId);
+        try {
+            if (this.playClockStart < 0 && !vid.paused && !vid.ended) {
+                this.playClockStart = performance.now();
             }
-        }
 
-        if (autoOn && (liveSecs - this.lastAutoCheckSecs) >= 5) {
-            this.lastAutoCheckSecs = liveSecs;
-            const { isJapanese, isMusic } = this.getJapaneseClassification();
-            const skipMusic = isMusic && !cfg.logMusicVideos;
+            const liveSecs = this.getLiveWatched();
+            this.onUpdateBadge(liveSecs, this.getTotal());
 
-            if (isJapanese && !skipMusic) {
-                const threshType = cfg.thresholdType ?? 'percent';
-                const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-                const isLive = vid.duration === Infinity;
-                const triggered = isLive
-                    ? (liveSecs / 60) >= (threshType === 'percent' ? 5 : threshValue)
-                    : (threshType === 'percent'
-                        ? (vid.currentTime / vid.duration) * 100 >= threshValue
-                        : (liveSecs / 60) >= threshValue);
+            if (this.hasTriggered || vid.duration <= 0) return;
 
-                if (triggered) {
-                    this.hasTriggered = true;
-                    const sessionMins = Math.max(1, Math.round(liveSecs / 60));
-                    const mediaData = await getChannelMediaData(channelId, channelName);
-                    const finalTitle = stripVideoTitle(videoTitle);
+            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
 
-                    const ok = await submitLog({
-                        type: 'video',
-                        mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
-                        description: finalTitle,
-                        mediaData,
-                        time: sessionMins,
-                        date: new Date().toISOString(),
-                        private: false,
-                        episodes: 0,
-                        pages: 0,
-                        unknownDate: false
-                    });
+            if (!autoOn && this.reachedQueueThreshold(cfg, vid) && (liveSecs - this.lastSyncSecs) >= 10) {
+                this.lastSyncSecs = liveSecs;
+                const { isJapanese, isMusic } = this.getJapaneseClassification();
+                const skipMusic = isMusic && !cfg.logMusicVideos;
 
-                    if (ok) {
-                        await updateVideoQueueAtomic(async (queue) => queue.filter(q => q.contentTitleEnglish !== this.currentUrl));
-                        this.onResetSession();
-                    } else {
-                        this.hasTriggered = false;
+                if (isJapanese && !skipMusic) {
+                    await this.upsertQueueLive(videoTitle, channelName, channelId);
+                }
+            }
+
+            if (autoOn && (liveSecs - this.lastAutoCheckSecs) >= 5) {
+                this.lastAutoCheckSecs = liveSecs;
+                const { isJapanese, isMusic } = this.getJapaneseClassification();
+                const skipMusic = isMusic && !cfg.logMusicVideos;
+
+                if (isJapanese && !skipMusic) {
+                    const threshType = cfg.thresholdType ?? 'percent';
+                    const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
+                    const isLive = vid.duration === Infinity;
+                    const triggered = isLive
+                        ? (liveSecs / 60) >= (threshType === 'percent' ? 5 : threshValue)
+                        : (threshType === 'percent'
+                            ? (vid.currentTime / vid.duration) * 100 >= threshValue
+                            : (liveSecs / 60) >= threshValue);
+
+                    if (triggered) {
+                        this.hasTriggered = true;
+                        const sessionMins = Math.max(1, Math.round(liveSecs / 60));
+                        const mediaData = await getChannelMediaData(channelId, channelName);
+                        const finalTitle = stripVideoTitle(videoTitle);
+
+                        if (import.meta.env.DEV) {
+                            console.log(`[NAT DEV - VideoTracker] Auto-logging threshold reached for: ${finalTitle}`);
+                        }
+
+                        const ok = await submitLog({
+                            type: 'video',
+                            mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
+                            description: finalTitle,
+                            mediaData,
+                            time: sessionMins,
+                            date: new Date().toISOString(),
+                            private: false,
+                            episodes: 0,
+                            pages: 0,
+                            unknownDate: false
+                        });
+
+                        if (ok?.success) {
+                            await addDebugLog('INFO', 'VideoTracker', `Auto-logged video successfully: ${finalTitle}`);
+                            await updateVideoQueueAtomic(async (queue) => queue.filter(q => q.contentTitleEnglish !== this.currentUrl));
+                            this.onResetSession();
+                        } else {
+                            this.hasTriggered = false;
+                            await addDebugLog('ERROR', 'VideoTracker', `Auto-log failed for: ${finalTitle}`, ok?.error);
+                        }
                     }
                 }
+            }
+        } catch (err) {
+            await addDebugLog('ERROR', 'VideoTracker', 'Exception encountered inside timeupdate tick', err);
+            if (import.meta.env.DEV) {
+                console.error(`[NAT DEV - VideoTracker] handleTimeUpdate critical exception:`, err);
             }
         }
     }

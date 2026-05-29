@@ -1,3 +1,5 @@
+// START OF FILE text-tracker.content.ts
+
 /**
  * ── Text Tracker Content Script ──────────────────────────────────────────────
  */
@@ -148,7 +150,7 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
         alignItems: 'center',
         justifyContent: 'center',
         fontSize: '11px',
-        textAlign: 'center',
+        textalign: 'center',
         padding: '16px',
         borderRadius: '8px',
         zIndex: '9999'
@@ -240,11 +242,13 @@ async function isJapanesePage(cfg: any): Promise<boolean> {
   const jpCount = (sample.match(/[\u3040-\u30ff\u4e00-\u9fff]/g) ?? []).length;
   const result = jpCount >= 40;
 
-  addDebugLog('INFO', 'TextTracker', `Page Analysis`, {
-    host,
-    japaneseCharsFound: jpCount,
-    isJapanese: result
-  });
+  if (import.meta.env.DEV) {
+    console.log(`[NAT DEV - TextTracker] Analyzed Host Language Context`, {
+      host,
+      japaneseCharsFound: jpCount,
+      isJapanese: result
+    });
+  }
 
   cachedIsJapanese = result;
   return result;
@@ -503,6 +507,7 @@ async function liveSyncQueue(force = false) {
 async function saveSessionAndQueue() {
   if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
 
+  // Direct manual save -> persistent log inside active RAM storage
   await addDebugLog('INFO', 'TextTracker', `Saving explicit TTU session`, { chars: ttuState.chars, timeMs: ttuState.timeMs });
 
   const title = getTTUTitle();
@@ -826,6 +831,9 @@ if (isRelevantFrame) {
 
     scrollTimeout = setTimeout(() => {
       if (!isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - TextTracker] Scrolling hook active, triggering char recalculation.`);
+      }
       recalculateChars();
     }, 150);
   };

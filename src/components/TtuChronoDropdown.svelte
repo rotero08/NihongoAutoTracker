@@ -1,3 +1,5 @@
+<!-- START OF FILE TtuChronoDropdown.svelte -->
+
 <script lang="ts">
     import { onMount } from "svelte";
     import { searchAniList } from "@/lib/api/anilist";
@@ -6,6 +8,7 @@
     import { ttuHistoryStorage, ttuLinkStorage } from "@/lib/storage/ttu";
     import { fmt } from "@/lib/utils/time";
     import { showToast } from "@/lib/utils/toast";
+    import { addDebugLog } from "@/lib/storage/debug";
 
     // Svelte 5 Runes Properties
     let {
@@ -340,12 +343,24 @@
                 await updateHistoryData();
             } else {
                 showToast("Error", res?.error || "Direct send failed", true);
+                await addDebugLog(
+                    "ERROR",
+                    "TtuChronoDropdown",
+                    "Direct send failed",
+                    res?.error,
+                );
             }
-        } catch {
+        } catch (err) {
             showToast(
                 "Error",
                 "Failed to communicate with NihongoTracker",
                 true,
+            );
+            await addDebugLog(
+                "ERROR",
+                "TtuChronoDropdown",
+                "Direct send caught critical exception",
+                err,
             );
         }
     }

@@ -1,3 +1,5 @@
+// START OF FILE queues.ts
+
 /**
  * ── Queue Storage ────────────────────────────────────────────────────────────
  *
@@ -35,15 +37,30 @@ let queueWritePromiseChain: Promise<any> = Promise.resolve();
  * Executes an atomic queue transaction sequentially, eliminating read-modify-write race conditions.
  */
 export async function executeQueueTransaction<T>(transaction: () => Promise<T>): Promise<T> {
+  const transactionId = Math.random().toString(36).substring(2, 9);
   if (import.meta.env.DEV) {
-    console.log(`[NAT DEV - Queue] Queue transaction queued. Lock pending...`);
+    console.log(`[NAT DEV - Queue] [Tx: ${transactionId}] Queued transaction. Lock chain updated.`);
   }
-  const next = queueWritePromiseChain.then(transaction);
-  queueWritePromiseChain = next.catch((err) => {
+
+  const next = queueWritePromiseChain.then(async () => {
     if (import.meta.env.DEV) {
-      console.error(`[NAT DEV - Queue] Lock chain caught error in transaction:`, err);
+      console.log(`[NAT DEV - Queue] [Tx: ${transactionId}] Lock acquired. Executing transaction...`);
     }
+    const result = await transaction();
+    if (import.meta.env.DEV) {
+      console.log(`[NAT DEV - Queue] [Tx: ${transactionId}] Transaction executed successfully. Releasing lock.`);
+    }
+    return result;
   });
+
+  queueWritePromiseChain = next.catch(async (err) => {
+    if (import.meta.env.DEV) {
+      console.error(`[NAT DEV - Queue] [Tx: ${transactionId}] Lock chain caught error in transaction:`, err);
+    }
+    // Log storage exceptions persistently on boundary failure
+    await addDebugLog('ERROR', 'Queue', `Transaction ${transactionId} encountered storage exception`, err);
+  });
+
   return next;
 }
 
@@ -58,12 +75,14 @@ export async function updateVideoQueueAtomic(
   return executeQueueTransaction(async () => {
     try {
       const current = await videoQueueStorage.getValue();
-      const updated = await modifier(current);
-      await videoQueueStorage.setValue(updated);
-
       if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Video queue atomically updated. Size shifted from ${current.length} to ${updated.length}`);
+        console.log(`[NAT DEV - Queue] Reading video queue for atomic update. Current size: ${current.length}`);
       }
+      const updated = await modifier(current);
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - Queue] Active write: Updating video queue. Next size: ${updated.length}`);
+      }
+      await videoQueueStorage.setValue(updated);
       return updated;
     } catch (err) {
       await addDebugLog('ERROR', 'Queue', 'Failed to update video queue atomically', err);
@@ -83,12 +102,14 @@ export async function updateReadingQueueAtomic(
   return executeQueueTransaction(async () => {
     try {
       const current = await readingQueueStorage.getValue();
-      const updated = await modifier(current);
-      await readingQueueStorage.setValue(updated);
-
       if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Reading queue atomically updated. Size shifted from ${current.length} to ${updated.length}`);
+        console.log(`[NAT DEV - Queue] Reading reading queue for atomic update. Current size: ${current.length}`);
       }
+      const updated = await modifier(current);
+      if (import.meta.env.DEV) {
+        console.log(`[NAT DEV - Queue] Active write: Updating reading queue. Next size: ${updated.length}`);
+      }
+      await readingQueueStorage.setValue(updated);
       return updated;
     } catch (err) {
       await addDebugLog('ERROR', 'Queue', 'Failed to update reading queue atomically', err);

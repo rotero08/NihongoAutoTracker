@@ -1,3 +1,5 @@
+// START OF FILE video-tracker.content.ts
+
 /**
  * ── Video Tracker Content Script ─────────────────────────────────────────────
  */
@@ -626,6 +628,9 @@ export default defineContentScript({
         const vid = document.querySelector<HTMLVideoElement>('video');
         if (vid) {
           if (trackedVideo !== vid || currentUrl !== currentHref) {
+            if (import.meta.env.DEV) {
+              console.log(`[NAT DEV - VideoTracker] Standard polling loop: active video shift detected.`);
+            }
             attach(vid);
           }
         }

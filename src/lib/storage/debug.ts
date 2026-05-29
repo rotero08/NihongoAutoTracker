@@ -1,36 +1,39 @@
 /**
- * ── Debug Log Storage ────────────────────────────────────────────────────────
+ * ── Debug Log Storage (RAM-Only Sliding Window) ──────────────────────────────
  *
- * Manages the debug log entries used for diagnosing tracking or API issues.
- * Logs are collected from all extension contexts (content scripts, background)
- * and displayed in the Settings → Debug tab when advanced mode is enabled.
+ * Manages debug logs entirely in RAM to prevent disk write performance issues.
+ * Capped at a maximum of 200 entries. Logs are managed centrally in the
+ * background service worker context and accessed via message passing.
  */
 
-import { storage } from 'wxt/utils/storage';
 import type { DebugLogEntry } from '../types';
 
-/** Maximum number of debug log entries to retain. Prevents unbounded growth. */
-const MAX_DEBUG_LOGS = 200;
+// Global in-memory log buffer (only holds data in the active background runtime)
+let ramLogs: DebugLogEntry[] = [];
+
+export function getRamLogs(): DebugLogEntry[] {
+  return ramLogs;
+}
+
+export function pushRamLog(entry: DebugLogEntry): void {
+  ramLogs.push(entry);
+  if (ramLogs.length > 200) {
+    ramLogs.splice(0, ramLogs.length - 200);
+  }
+}
+
+export function clearRamLogs(): void {
+  ramLogs = [];
+}
 
 /**
- * Debug log storage — an array of structured log entries.
- * Newer entries are appended to the end (chronological order).
- * The array is capped at MAX_DEBUG_LOGS entries.
- */
-export const debugLogStorage = storage.defineItem<DebugLogEntry[]>('local:debugLogs', {
-  fallback: [],
-});
-
-/**
- * Add a debug log entry to storage.
- *
- * This is a convenience function used throughout content scripts and
- * the background script. It handles the read-append-trim-write cycle.
+ * Add a debug log entry.
+ * Redirects content script and panel logs to the background script's RAM buffer.
  *
  * @param level - Severity level: 'INFO', 'WARN', or 'ERROR'
- * @param source - Component that generated the log (e.g., 'VideoTracker', 'Background')
+ * @param source - Component that generated the log (e.g., 'VideoTracker')
  * @param message - Human-readable log message
- * @param data - Optional additional data (will be JSON-stringified)
+ * @param data - Optional additional data
  */
 export async function addDebugLog(
   level: DebugLogEntry['level'],
@@ -42,17 +45,22 @@ export async function addDebugLog(
     level,
     source,
     message,
-    data: data ? JSON.stringify(data) : undefined,
+    data: data ? (typeof data === 'string' ? data : JSON.stringify(data)) : undefined,
     timestamp: new Date().toISOString(),
   };
 
-  const logs = await debugLogStorage.getValue();
-  logs.push(entry);
-
-  /* Trim oldest entries if we exceed the cap */
-  if (logs.length > MAX_DEBUG_LOGS) {
-    logs.splice(0, logs.length - MAX_DEBUG_LOGS);
+  // If we are in the background page context, append directly to our RAM array
+  if ((globalThis as any).__NT_APPEND_RAM_LOG__) {
+    (globalThis as any).__NT_APPEND_RAM_LOG__(entry);
+  } else {
+    // Otherwise (content script, popup, settings tab), send a runtime message to background
+    try {
+      await browser.runtime.sendMessage({
+        action: 'ADD_DEBUG_LOG',
+        entry,
+      });
+    } catch {
+      // Fail silently if context is invalidated or background is sleeping
+    }
   }
-
-  await debugLogStorage.setValue(logs);
 }

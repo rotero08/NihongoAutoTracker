@@ -1,6 +1,5 @@
-<!--
-  ── QueueItem.svelte (Popup) ─────────────────────────────────────────────────
--->
+<!-- START OF FILE QueueItem.svelte -->
+
 <script lang="ts">
   import {
     videoQueueStorage,
@@ -18,6 +17,7 @@
   import QueueItemSessions from "./QueueItemSessions.svelte";
   import SearchDropdown from "./SearchDropdown.svelte";
   import { configStorage } from "@/lib/storage/config";
+  import { addDebugLog } from "@/lib/storage/debug";
 
   interface Props {
     item: any;
@@ -349,6 +349,12 @@
       return;
     }
 
+    if (import.meta.env.DEV) {
+      console.log(
+        `[NAT DEV - QueueItem] Initiating manual send from popup for: ${current.description || current.contentTitleNative}`,
+      );
+    }
+
     // Single item unmatched warning logic
     if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
       const cfg = (await configStorage.getValue()) as any;
@@ -384,6 +390,13 @@
         success = false;
         lastError = res?.error || "Unknown error";
         lastErrorCode = res?.status || 0;
+        // Log manual log send failure persistently on failure
+        await addDebugLog(
+          "ERROR",
+          "QueueItem",
+          `Manual log send failed from popup: ${p.description}`,
+          lastError,
+        );
       }
     }
 
