@@ -1,8 +1,4 @@
-<!--
-  ── DebugTab.svelte ──────────────────────────────────────────────────────────
-  Debug log viewer. Monochromatic developer console style with a clean,
-  theme-integrated scrollbar, on-demand diagnostics, and clipboard/file exports.
--->
+<!-- START OF FILE DebugTab.svelte -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
   import { debugLogStorage } from "@/lib/storage/debug";
@@ -87,7 +83,7 @@
     } else {
       report += `\`\`\`text\n`;
       logs.forEach((log) => {
-        const time = new Date(log.timestamp).toLocaleTimeString();
+        const time = new Date(log.timestamp).toISOString();
         report += `[${time}] [${log.level}] [${log.source}] ${log.message}\n`;
         if (log.data) {
           report += `  Data: ${log.data}\n`;
@@ -210,11 +206,11 @@
 <div class="console-window">
   <div class="console-header">
     <div class="console-dots">
-      <span style="background: var(--color-text-muted)"></span>
-      <span style="background: var(--color-text-muted)"></span>
-      <span style="background: var(--color-text-muted)"></span>
+      <span style="background: #252a34"></span>
+      <span style="background: #252a34"></span>
+      <span style="background: #252a34"></span>
     </div>
-    <span class="console-tab-name">immersion-daemon.log</span>
+    <span class="console-tab-name">daemon.log</span>
   </div>
   <div class="console-body" id="debug-logs-list">
     {#if logs.length === 0}
@@ -273,7 +269,7 @@
 
   /* Console Window Styling */
   .console-window {
-    background: #07070a;
+    background: #08080a;
     border: 1px solid var(--color-border);
     border-radius: var(--rounded-box);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
@@ -281,7 +277,7 @@
     overflow: hidden;
   }
   .console-header {
-    background: #0f0f14;
+    background: #0d0d10;
     border-bottom: 1px solid var(--color-border);
     padding: 8px 12px;
     display: flex;
@@ -311,19 +307,19 @@
     height: 380px;
     overflow-y: scroll;
     box-sizing: border-box;
-    /* Custom, highly-integrated console scrollbars */
     scrollbar-width: thin;
     scrollbar-color: var(--color-border) transparent;
   }
   .console-body::-webkit-scrollbar {
     width: 6px;
+    height: 6px;
   }
   .console-body::-webkit-scrollbar-track {
     background: transparent;
   }
   .console-body::-webkit-scrollbar-thumb {
     background: var(--color-border);
-    border-radius: 4px;
+    border-radius: 3px;
   }
   .console-body::-webkit-scrollbar-thumb:hover {
     background: var(--color-text-muted);
@@ -341,7 +337,8 @@
   }
   .console-line {
     padding: 4px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+    color: var(--color-text-muted);
   }
   .console-line:last-child {
     border-bottom: none;
@@ -361,10 +358,10 @@
     color: var(--color-text-muted);
   }
   .console-line.error .console-level {
-    color: var(--color-error);
+    color: #e06c75;
   }
   .console-line.warn .console-level {
-    color: var(--color-accent);
+    color: #e5c07b;
   }
   .console-src {
     color: var(--color-text-muted);
@@ -375,13 +372,13 @@
     word-break: break-all;
   }
   .console-line.error .console-msg {
-    color: var(--color-error);
+    color: #e06c75;
   }
   .console-data {
     margin: 4px 0 0 16px;
     padding: 6px;
-    background: #0c0c10;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: #0a0a0d;
+    border: 1px solid rgba(255, 255, 255, 0.03);
     border-radius: 4px;
     color: var(--color-text-muted);
     font-size: 10px;
