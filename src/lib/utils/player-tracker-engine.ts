@@ -23,6 +23,10 @@ export class PlayerTrackerEngine {
     private currentSessionId = crypto.randomUUID();
     private currentUrl = "";
     private hasTriggered = false;
+    private activeVid: HTMLVideoElement | null = null;
+    private isUsingVideoTime = false;
+    private lastKnownVideoTime = -1;
+    private isUserSeeking = false;
 
     constructor(
         private onUpdateBadge: (currentSecs: number, totalSecs: number) => void,
@@ -42,12 +46,40 @@ export class PlayerTrackerEngine {
         return this.completedSessionSecs;
     }
 
-    public getLiveWatched(): number {
-        return this.watchedSecs + (this.playClockStart >= 0 ? (performance.now() - this.playClockStart) / 1000 : 0);
+    public getIsUserSeeking(): boolean {
+        return this.isUserSeeking;
     }
 
-    public getTotal(): number {
-        return this.completedSessionSecs + this.getLiveWatched();
+    public clearVideoElement(): void {
+        this.activeVid = null;
+    }
+
+    public getLiveWatched(currentVidTime?: number): number {
+        if (this.playClockStart < 0) {
+            return Math.floor(this.watchedSecs);
+        }
+        const vidTime = currentVidTime !== undefined ? currentVidTime : (this.activeVid && !isNaN(this.activeVid.currentTime) ? this.activeVid.currentTime : NaN);
+        if (this.isUsingVideoTime && !isNaN(vidTime)) {
+            let referenceVidTime = vidTime;
+            if (this.isUserSeeking) {
+                referenceVidTime = this.lastKnownVideoTime;
+            }
+
+            const baseWatched = Math.floor(this.watchedSecs);
+            const currentInt = Math.floor(referenceVidTime);
+            const startInt = Math.floor(this.playClockStart);
+            const elapsed = currentInt - startInt;
+
+            return baseWatched + (elapsed > 0 ? elapsed : 0);
+        } else {
+            const elapsed = (performance.now() - this.playClockStart) / 1000;
+            return Math.floor(this.watchedSecs + (elapsed > 0 ? elapsed : 0));
+        }
+    }
+
+    public getTotal(precomputedLiveSecs?: number): number {
+        const liveSecs = precomputedLiveSecs !== undefined ? precomputedLiveSecs : this.getLiveWatched();
+        return this.completedSessionSecs + liveSecs;
     }
 
     public getHasTriggered(): boolean {
@@ -64,18 +96,96 @@ export class PlayerTrackerEngine {
 
     public flushPlayClock(discard = false): void {
         if (this.playClockStart < 0) return;
-        const elapsed = (performance.now() - this.playClockStart) / 1000;
+        let elapsed = 0;
+        if (this.isUsingVideoTime && this.activeVid && !isNaN(this.activeVid.currentTime)) {
+            const currentVidTime = this.activeVid.currentTime;
+            if (this.isUserSeeking) {
+                elapsed = this.lastKnownVideoTime - this.playClockStart;
+            } else {
+                elapsed = currentVidTime - this.playClockStart;
+            }
+        } else {
+            elapsed = (performance.now() - this.playClockStart) / 1000;
+        }
         this.playClockStart = -1;
+        this.isUsingVideoTime = false;
         if (!discard && elapsed > 0 && elapsed < 7200) {
             this.watchedSecs += elapsed;
         }
     }
 
-    public startPlayClock(): void {
-        this.playClockStart = performance.now();
+    public startPlayClock(vid?: HTMLVideoElement | null): void {
+        if (vid) {
+            this.activeVid = vid;
+        }
+        if (this.activeVid && !isNaN(this.activeVid.currentTime)) {
+            this.isUsingVideoTime = true;
+            if (this.watchedSecs === 0 && this.activeVid.currentTime < 5.0) {
+                this.playClockStart = 0.0;
+            } else {
+                this.playClockStart = this.activeVid.currentTime;
+            }
+            this.lastKnownVideoTime = this.activeVid.currentTime;
+        } else {
+            this.isUsingVideoTime = false;
+            this.playClockStart = performance.now();
+        }
     }
 
-    public initSession(url: string, completedSecs: number): void {
+    public updateBadgeLive(vid: HTMLVideoElement): void {
+        if (this.isUserSeeking) {
+            return;
+        }
+        if (this.playClockStart < 0 && !vid.paused && !vid.ended) {
+            this.startPlayClock(vid);
+        }
+
+        let currentVidTime = NaN;
+        if (this.activeVid && !isNaN(this.activeVid.currentTime)) {
+            currentVidTime = this.activeVid.currentTime;
+
+            // Delta progression guard to handle out-of-order timeupdate events or micro-seeks
+            if (this.lastKnownVideoTime !== -1 && !this.isUserSeeking) {
+                const delta = currentVidTime - this.lastKnownVideoTime;
+                if (delta > 10 || delta < -3) {
+                    if (this.playClockStart >= 0) {
+                        const elapsedBeforeSkip = this.lastKnownVideoTime - this.playClockStart;
+                        if (elapsedBeforeSkip > 0 && elapsedBeforeSkip < 7200) {
+                            this.watchedSecs += elapsedBeforeSkip;
+                        }
+                    }
+                    this.playClockStart = currentVidTime;
+                }
+            }
+            this.lastKnownVideoTime = currentVidTime;
+        }
+
+        const liveSecs = this.getLiveWatched(currentVidTime);
+        this.onUpdateBadge(liveSecs, this.getTotal(liveSecs));
+    }
+
+    public handleSeeking(): void {
+        this.isUserSeeking = true;
+        if (this.playClockStart >= 0 && this.activeVid && !isNaN(this.activeVid.currentTime)) {
+            const elapsedBeforeSkip = this.lastKnownVideoTime - this.playClockStart;
+            if (elapsedBeforeSkip > 0 && elapsedBeforeSkip < 7200) {
+                this.watchedSecs += elapsedBeforeSkip;
+            }
+        }
+        this.playClockStart = -1;
+    }
+
+    public handleSeeked(vid: HTMLVideoElement): void {
+        this.isUserSeeking = false;
+        this.activeVid = vid;
+        if (!isNaN(vid.currentTime)) {
+            this.playClockStart = vid.currentTime;
+            this.lastKnownVideoTime = vid.currentTime;
+            this.isUsingVideoTime = true;
+        }
+    }
+
+    public initSession(url: string, completedSecs: number, vid?: HTMLVideoElement | null): void {
         this.currentUrl = cleanUrl(url);
         this.completedSessionSecs = completedSecs;
         this.watchedSecs = 0;
@@ -84,6 +194,11 @@ export class PlayerTrackerEngine {
         this.lastAutoCheckSecs = 0;
         this.hasTriggered = false;
         this.currentSessionId = crypto.randomUUID();
+        this.lastKnownVideoTime = -1;
+        this.isUserSeeking = false;
+        if (vid) {
+            this.activeVid = vid;
+        }
     }
 
     public reset(): void {
@@ -94,6 +209,10 @@ export class PlayerTrackerEngine {
         this.lastAutoCheckSecs = 0;
         this.currentSessionId = crypto.randomUUID();
         this.hasTriggered = false;
+        this.activeVid = null;
+        this.isUsingVideoTime = false;
+        this.lastKnownVideoTime = -1;
+        this.isUserSeeking = false;
     }
 
     public async upsertQueueLive(
@@ -214,12 +333,9 @@ export class PlayerTrackerEngine {
         videoTitle: string
     ): Promise<void> {
         try {
-            if (this.playClockStart < 0 && !vid.paused && !vid.ended) {
-                this.playClockStart = performance.now();
-            }
+            this.updateBadgeLive(vid);
 
             const liveSecs = this.getLiveWatched();
-            this.onUpdateBadge(liveSecs, this.getTotal());
 
             if (this.hasTriggered || vid.duration <= 0) return;
 

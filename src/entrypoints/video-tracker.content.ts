@@ -34,6 +34,11 @@ let lastAnalyzedUrl = '';
 let lastAnalyzedTitle = '';
 let channelPollInterval: any = null;
 
+// Layout guard reference variables to prevent redundant DOM updates and layout thrashing
+let lastRenderedCurrentSecs = -1;
+let lastRenderedTotalSecs = -1;
+let lastRenderedUrl = '';
+
 function isYouTubeShorts(): boolean {
   return typeof window !== 'undefined' && window.location.pathname.startsWith('/shorts/');
 }
@@ -91,6 +96,19 @@ function isAdPlaying(): boolean {
 const engine = new PlayerTrackerEngine(
   (currentSecs, totalSecs) => {
     if (!trackedVideo || !currentUrl || isYouTubeShorts()) return;
+
+    const roundedCurrent = Math.floor(currentSecs);
+    const roundedTotal = Math.floor(totalSecs);
+
+    // If values have not changed and the URL is the same, skip rendering to avoid layout thrashing
+    if (roundedCurrent === lastRenderedCurrentSecs && roundedTotal === lastRenderedTotalSecs && currentUrl === lastRenderedUrl) {
+      return;
+    }
+
+    lastRenderedCurrentSecs = roundedCurrent;
+    lastRenderedTotalSecs = roundedTotal;
+    lastRenderedUrl = currentUrl;
+
     badgeRenderer.ensureCounter(
       currentSecs,
       totalSecs,
@@ -132,6 +150,9 @@ const state = { hasTriggered: false, isManualLogging: false };
 const resetSession = () => {
   engine.reset();
   currentUrl = cleanUrl(window.location.href);
+  lastRenderedCurrentSecs = -1;
+  lastRenderedTotalSecs = -1;
+  lastRenderedUrl = '';
   const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
   if (badgeLabel) badgeLabel.textContent = "0:00";
 };
@@ -233,6 +254,12 @@ function unbindActiveVideoListeners() {
     boundVideoListeners = {};
     activeVideoElement = null;
   }
+  // Clear engine references and polling intervals to prevent memory leaks
+  engine.clearVideoElement();
+  if (channelPollInterval) {
+    clearInterval(channelPollInterval);
+    channelPollInterval = null;
+  }
 }
 
 const attach = (vid: HTMLVideoElement) => {
@@ -268,38 +295,46 @@ const attach = (vid: HTMLVideoElement) => {
   trackedVideo = vid;
   activeVideoElement = vid;
   currentUrl = cleanedHref;
+  lastRenderedCurrentSecs = -1;
+  lastRenderedTotalSecs = -1;
+  lastRenderedUrl = '';
   channelId = null;
   cachedChannelName = '';
   metadataResolved = false;
   document.getElementById('nt-status-badge')?.remove();
 
-  engine.initSession(currentUrl, 0);
+  engine.initSession(currentUrl, 0, vid);
 
   const onPlaying = () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
-    engine.startPlayClock();
+    engine.startPlayClock(vid);
   };
 
   const onPlay = () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
-    engine.startPlayClock();
+    engine.startPlayClock(vid);
     if (vid.currentTime < 5) engine.setHasTriggered(false);
   };
 
   const onPause = () => { engine.flushPlayClock(); };
   const onWaiting = () => { engine.flushPlayClock(); };
-  const onSeeking = () => { engine.flushPlayClock(); };
+
+  const onSeeking = () => {
+    engine.handleSeeking();
+  };
 
   const onSeeked = () => {
     if (isYouTubeShorts()) return;
     if (vid.currentTime < 5) engine.setHasTriggered(false);
-    if (!vid.paused && !vid.ended && !isAdPlaying()) {
-      engine.startPlayClock();
-    }
+    engine.handleSeeked(vid);
   };
 
   const onTimeUpdate = async () => {
     if (isYouTubeShorts()) return;
+
+    // Fast Path: Update the badge instantly on every single timeupdate event to eliminate input lag
+    engine.updateBadgeLive(vid);
+
     const now = performance.now();
     if (now - lastTickTime < 1000) return;
     lastTickTime = now;
@@ -310,6 +345,7 @@ const attach = (vid: HTMLVideoElement) => {
       return;
     }
 
+    // Slow Path: Handle database entries and threshold logging safely on a throttled interval
     await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
   };
 
@@ -357,7 +393,7 @@ const attach = (vid: HTMLVideoElement) => {
   }
 
   if (!vid.paused && !vid.ended && !isAdPlaying()) {
-    engine.startPlayClock();
+    engine.startPlayClock(vid);
   }
 
   const tryChannel = async () => {
@@ -418,7 +454,7 @@ const attach = (vid: HTMLVideoElement) => {
       ? (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0)
       : 0;
 
-    engine.initSession(currentUrl, completedSessionSecs);
+    engine.initSession(currentUrl, completedSessionSecs, vid);
 
     badgeRenderer.ensureCounter(
       engine.getLiveWatched(),
@@ -622,30 +658,54 @@ export default defineContentScript({
     }, true);
 
     // Active state-checking healing thread to recover play clocks suspended by backgrounding or transient buffer drops
-    setInterval(() => {
-      const currentHref = cleanUrl(window.location.href);
-      if (!isYouTubeShorts() && (currentHref.includes('watch') || !window.location.hostname.includes('youtube.com'))) {
-        const vid = document.querySelector<HTMLVideoElement>('video');
-        if (vid) {
-          if (trackedVideo !== vid || currentUrl !== currentHref) {
-            if (import.meta.env.DEV) {
-              console.log(`[NAT DEV - VideoTracker] Standard polling loop: active video shift detected.`);
+    let healingLoopTimer: any = null;
+
+    const startHealingLoop = (intervalTime = 1000) => {
+      if (healingLoopTimer) {
+        clearInterval(healingLoopTimer);
+      }
+      healingLoopTimer = setInterval(() => {
+        const currentHref = cleanUrl(window.location.href);
+        if (!isYouTubeShorts() && (currentHref.includes('watch') || !window.location.hostname.includes('youtube.com'))) {
+          const vid = document.querySelector<HTMLVideoElement>('video');
+          if (vid) {
+            if (trackedVideo !== vid || currentUrl !== currentHref) {
+              if (import.meta.env.DEV) {
+                console.log(`[NAT DEV - VideoTracker] Standard polling loop: active video shift detected.`);
+              }
+              attach(vid);
+            } else {
+              // Keep the badge ticking smoothly on every polling loop interval
+              if (!vid.paused && !vid.ended && !isAdPlaying()) {
+                engine.updateBadgeLive(vid);
+              }
             }
-            attach(vid);
           }
         }
-      }
 
-      if (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying() && !isYouTubeShorts()) {
-        if (engine.getPlayClockStart() < 0) {
-          engine.startPlayClock();
+        if (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying() && !isYouTubeShorts()) {
+          if (engine.getPlayClockStart() < 0 && !engine.getIsUserSeeking()) {
+            engine.startPlayClock(trackedVideo);
+          }
+        } else if (trackedVideo && (trackedVideo.paused || trackedVideo.ended || isAdPlaying() || isYouTubeShorts())) {
+          if (engine.getPlayClockStart() >= 0) {
+            engine.flushPlayClock();
+          }
         }
-      } else if (trackedVideo && (trackedVideo.paused || trackedVideo.ended || isAdPlaying() || isYouTubeShorts())) {
-        if (engine.getPlayClockStart() >= 0) {
-          engine.flushPlayClock();
-        }
+      }, intervalTime);
+    };
+
+    // Initialize healing loop
+    startHealingLoop(1000);
+
+    // Manage healing loop throttling behavior on visibility shifts
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        startHealingLoop(5000);
+      } else {
+        startHealingLoop(1000);
       }
-    }, 250);
+    });
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;
