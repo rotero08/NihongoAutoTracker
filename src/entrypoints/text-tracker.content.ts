@@ -76,6 +76,10 @@ const STORAGE_WRITE_THROTTLE_MS = 10000; // 10 seconds
 let _lastThemeSyncTime = 0;
 const THEME_SYNC_THROTTLE_MS = 250;
 
+// Yatsu settings sidebar tracking states
+let _wasTimerRunningBeforeYatsuSidebar = false;
+let _isYatsuSidebarCurrentlyOpen = false;
+
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
 const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
@@ -679,6 +683,38 @@ function scheduleInstantThemeSync() {
   });
 }
 
+function isYatsuSidebarOpen(): boolean {
+  if (window.location.hostname !== 'app.yatsu.moe') return false;
+
+  const body = document.body;
+  if (!body) return false;
+
+  const els = body.querySelectorAll(
+    'aside, [role="dialog"], [class*="drawer"], [class*="modal"], [class*="backdrop"], [class*="overlay"]'
+  );
+
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i];
+    const id = el.id;
+    if (
+      id === 'nt-ttu-chrono-wrapper' ||
+      id === 'nt-overlay' ||
+      id === 'nt-toast-container' ||
+      el.classList.contains('nt-toast') ||
+      el.closest('#nt-ttu-chrono-wrapper') ||
+      el.closest('#nt-overlay')
+    ) {
+      continue;
+    }
+
+    if ((el as HTMLElement).offsetParent !== null || el.getAttribute('aria-hidden') !== 'true') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function setupTTUChronometer() {
   if (isChronoInitializing) return;
 
@@ -754,6 +790,26 @@ async function setupTTUChronometer() {
           if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
         return;
+      }
+
+      // Check and handle Yatsu sidebar timer pausing
+      if (window.location.hostname === 'app.yatsu.moe') {
+        const sidebarOpen = isYatsuSidebarOpen();
+        if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen) {
+          _isYatsuSidebarCurrentlyOpen = true;
+          if (ttuState.running) {
+            _wasTimerRunningBeforeYatsuSidebar = true;
+            ttuState.running = false;
+          } else {
+            _wasTimerRunningBeforeYatsuSidebar = false;
+          }
+        } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
+          _isYatsuSidebarCurrentlyOpen = false;
+          if (_wasTimerRunningBeforeYatsuSidebar) {
+            ttuState.running = true;
+            stateRefs.globalLastTick = Date.now();
+          }
+        }
       }
 
       if (ttuState.running && !stabilizer.getGracePeriodActive()) {
@@ -1183,6 +1239,31 @@ function handleMutations() {
     _wasReadingViewActive = true;
     clearThemeDetectionCache();
     scheduleInstantThemeSync();
+
+    // Reset session and timer values completely when returning to the reading view
+    ttuState.timeMs = 0;
+    ttuState.chars = 0;
+    ttuState.running = false;
+
+    const currentCount = extractAdvancedCharCount(undefined, true);
+    stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
+    stateRefs.globalManualCharOffset = 0;
+    stateRefs.lastSectionIndex = -1;
+    stateRefs.lastSectionTotal = 0;
+    stateRefs.visitedSections.clear();
+    stateRefs.globalLastTick = Date.now();
+    hasSyncedThisSession = false;
+
+    // Reset Yatsu sidebar tracking states
+    _wasTimerRunningBeforeYatsuSidebar = false;
+    _isYatsuSidebarCurrentlyOpen = false;
+
+    // Notify chronological dropdown to refresh its visual state
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) {
+      wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
+    }
   } else if (!isActive) {
     _wasReadingViewActive = false;
   }
