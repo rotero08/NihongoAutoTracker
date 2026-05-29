@@ -26,7 +26,6 @@ async function injectMockData() {
         videoQueueStorage.setValue(MOCK_VIDEO_QUEUE as any),
         readingQueueStorage.setValue(MOCK_READING_QUEUE as any)
       ]);
-      console.log('[DEV] Mock data injected into queues');
     }
   }
 
@@ -34,7 +33,6 @@ async function injectMockData() {
     const cfg = await configStorage.getValue();
     if (!cfg?.apiKey) {
       await configStorage.setValue({ ...cfg, apiKey: import.meta.env.VITE_NT_API_KEY });
-      console.log('[DEV] API key pre-populated from .env');
     }
   }
 }

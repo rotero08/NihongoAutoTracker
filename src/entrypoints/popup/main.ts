@@ -34,7 +34,6 @@ async function injectMockData() {
         videoQueueStorage.setValue(MOCK_VIDEO_QUEUE as any),
         readingQueueStorage.setValue(MOCK_READING_QUEUE as any)
       ]);
-      console.log('[DEV] Mock data injected into queues');
     }
   }
 
@@ -43,7 +42,6 @@ async function injectMockData() {
     const cfg = await configStorage.getValue();
     if (!cfg?.apiKey) {
       await configStorage.setValue({ ...cfg, apiKey: ntApiKey });
-      console.log('[DEV] API key pre-populated from .env');
     }
   }
 }
@@ -56,6 +54,5 @@ mount(App, { target: document.getElementById('app')! });
 const isDev = typeof import.meta.env !== 'undefined' && import.meta.env.DEV;
 if (isDev) {
   injectMockData().catch((err) => {
-    console.error('[DEV] Failed to inject mock data:', err);
   });
 }

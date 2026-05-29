@@ -45,7 +45,6 @@
   const total = $derived(videoQueue.length + readingQueue.length);
 
   export async function load() {
-    console.log("[load] Loading queues concurrently from storage...");
     const [video, reading, cfg] = await Promise.all([
       videoQueueStorage.getValue(),
       readingQueueStorage.getValue(),

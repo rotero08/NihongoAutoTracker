@@ -20,7 +20,7 @@ async function run() {
     const addonId = process.env.AMO_ADDON_ID;
 
     if (!issuer || !secret || !addonId) {
-        console.error("Missing required environment variables.");
+        error("Missing required environment variables.");
         process.exit(1);
     }
 
@@ -29,7 +29,7 @@ async function run() {
     const descriptionPath = path.resolve(__dirname, '../../STORE_DESCRIPTION.md');
 
     if (!fs.existsSync(descriptionPath)) {
-        console.error(`Store description file not found at: ${descriptionPath}`);
+        error(`Store description file not found at: ${descriptionPath}`);
         process.exit(1);
     }
 
@@ -37,13 +37,13 @@ async function run() {
 
     // AMO store page description limit is 3000 characters. 
     if (content.length > 3000) {
-        console.warn("Description is longer than 3000 characters. Truncating to fit AMO guidelines...");
+        "Description is longer than 3000 characters. Truncating to fit AMO guidelines...");
         content = content.substring(0, 2995) + '...';
     }
 
     const token = generateToken(issuer, secret);
 
-    console.log("Updating store page description on Firefox AMO...");
+    log("Updating store page description on Firefox AMO...");
 
     // Update listing details on AMO via PATCH request
     const response = await fetch(`https://addons.mozilla.org/api/v5/addons/addon/${addonId}/`, {
@@ -60,15 +60,15 @@ async function run() {
     });
 
     if (response.ok) {
-        console.log("Successfully updated extension store page description.");
+        log("Successfully updated extension store page description.");
     } else {
         const errData = await response.json();
-        console.error("Failed to update store page description:", JSON.stringify(errData, null, 2));
+        error("Failed to update store page description:", JSON.stringify(errData, null, 2));
         process.exit(1);
     }
 }
 
 run().catch(err => {
-    console.error("Description sync failed with error:", err);
+    error("Description sync failed with error:", err);
     process.exit(1);
 });

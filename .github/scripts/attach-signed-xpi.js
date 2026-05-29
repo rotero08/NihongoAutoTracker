@@ -6,7 +6,7 @@ const AMO_ADDON_ID = process.env.AMO_ADDON_ID;
 const REPO = process.env.GITHUB_REPOSITORY;
 
 if (!GITHUB_TOKEN || !AMO_ADDON_ID || !REPO) {
-    console.error("Missing required environment variables.");
+    error("Missing required environment variables.");
     process.exit(1);
 }
 
@@ -28,12 +28,12 @@ async function fetchGitHub(url, options = {}) {
 }
 
 async function run() {
-    console.log("Polling Firefox AMO for approved versions...");
+    log("Polling Firefox AMO for approved versions...");
 
     // 1. Fetch recent versions of your extension from Firefox AMO
     const amoRes = await fetch(`https://addons.mozilla.org/api/v5/addons/addon/${AMO_ADDON_ID}/versions/?page_size=10`);
     if (!amoRes.ok) {
-        console.error(`Failed to fetch versions from AMO: ${amoRes.status}`);
+        error(`Failed to fetch versions from AMO: ${amoRes.status}`);
         process.exit(1);
     }
     const amoData = await amoRes.json();
@@ -48,7 +48,7 @@ async function run() {
         // Check if the version has an approved, public file ready for download
         const file = amoVersionEntry.files.find(f => f.status === 'public' || f.status === 'approved');
         if (!file || !file.url) {
-            console.log(`Version ${versionNum} on AMO is not signed or approved yet. Skipping.`);
+            log(`Version ${versionNum} on AMO is not signed or approved yet. Skipping.`);
             continue;
         }
 
@@ -57,7 +57,7 @@ async function run() {
 
         // If the release doesn't exist on GitHub, create a Draft Release automatically
         if (!release) {
-            console.log(`No GitHub release found for tag ${expectedTag}. Creating a Draft Release...`);
+            log(`No GitHub release found for tag ${expectedTag}. Creating a Draft Release...`);
             try {
                 release = await fetchGitHub(`https://api.github.com/repos/${REPO}/releases`, {
                     method: 'POST',
@@ -70,9 +70,9 @@ async function run() {
                         body: `Automated draft release for version ${expectedTag}.`
                     })
                 });
-                console.log(`Created Draft Release: ${expectedTag}`);
+                log(`Created Draft Release: ${expectedTag}`);
             } catch (err) {
-                console.error(`Failed to create Draft Release for ${expectedTag}:`, err);
+                error(`Failed to create Draft Release for ${expectedTag}:`, err);
                 continue;
             }
         }
@@ -81,16 +81,16 @@ async function run() {
         const targetFileName = `NihongoAutoTracker-v${versionNum}.xpi`;
         const hasXpi = release.assets.some(asset => asset.name === targetFileName);
         if (hasXpi) {
-            console.log(`Release ${expectedTag} already has ${targetFileName} attached. Skipping.`);
+            log(`Release ${expectedTag} already has ${targetFileName} attached. Skipping.`);
             continue;
         }
 
-        console.log(`Downloading signed .xpi for ${expectedTag} from AMO...`);
+        log(`Downloading signed .xpi for ${expectedTag} from AMO...`);
 
         // 3. Download the signed file from Firefox
         const downloadRes = await fetch(file.url);
         if (!downloadRes.ok) {
-            console.error(`Failed to download file from ${file.url}`);
+            error(`Failed to download file from ${file.url}`);
             continue;
         }
 
@@ -99,7 +99,7 @@ async function run() {
         const tempFilePath = path.join(__dirname, targetFileName);
         fs.writeFileSync(tempFilePath, buffer);
 
-        console.log(`Uploading ${targetFileName} to GitHub Release ${expectedTag}...`);
+        log(`Uploading ${targetFileName} to GitHub Release ${expectedTag}...`);
 
         // 4. Upload the downloaded file to the Draft Release
         const uploadUrl = `https://uploads.github.com/repos/${REPO}/releases/${release.id}/assets?name=${targetFileName}`;
@@ -118,12 +118,12 @@ async function run() {
             });
 
             if (uploadRes.ok) {
-                console.log(`Successfully attached ${targetFileName} to release ${expectedTag}.`);
+                log(`Successfully attached ${targetFileName} to release ${expectedTag}.`);
             } else {
-                console.error(`Failed to upload asset to GitHub: ${uploadRes.status} - ${await uploadRes.text()}`);
+                error(`Failed to upload asset to GitHub: ${uploadRes.status} - ${await uploadRes.text()}`);
             }
         } catch (err) {
-            console.error("Error encountered during asset upload:", err);
+            error("Error encountered during asset upload:", err);
         } finally {
             // Clean up the temporary local file
             if (fs.existsSync(tempFilePath)) {
@@ -134,6 +134,6 @@ async function run() {
 }
 
 run().catch(err => {
-    console.error("Workflow failed with error:", err);
+    error("Workflow failed with error:", err);
     process.exit(1);
 });

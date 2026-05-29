@@ -246,7 +246,6 @@ export default defineBackground(() => {
       }
     });
   } else {
-    console.warn("[NTA Background] browser.alarms is undefined. Skipping Daily Flush alarm registration. Check permissions.");
   }
 
   async function flushTodayQueue(type: 'reading' | 'video', qStorage: any) {
@@ -380,8 +379,6 @@ export default defineBackground(() => {
     const accentHoverColor = colors?.accentHover || '#ffd060';
     const logoTextColor = colors?.logoText || '#f4f4f3';
 
-    console.log("[NTA Icon Diagnostic] Starting updateExtensionIcon with colors:", colors);
-
     // Safe, cross-environment builder selecting standard HTML Canvas or OffscreenCanvas depending on MV2/MV3 context
     const createCanvas = (size: number) => {
       if (typeof document !== 'undefined') {
@@ -400,7 +397,6 @@ export default defineBackground(() => {
         const canvas = createCanvas(size);
         const ctx = canvas.getContext('2d') as any;
         if (!ctx) {
-          console.error(`[NTA Icon Diagnostic] Failed to get canvas context for size ${size}`);
           return null;
         }
 
@@ -432,7 +428,6 @@ export default defineBackground(() => {
 
         return ctx.getImageData(0, 0, size, size);
       } catch (err) {
-        console.error(`[NTA Icon Diagnostic] Exception while drawing size ${size}:`, err);
         return null;
       }
     };
@@ -443,26 +438,22 @@ export default defineBackground(() => {
         const imgData32 = drawIconOfSize(32);
 
         if (imgData16 && imgData32) {
-          console.log("[NTA Icon Diagnostic] Successfully generated context-free ImageData models.");
           await actionAPI.setIcon({
             imageData: {
               "16": imgData16,
               "32": imgData32
             }
           });
-          console.log("[NTA Icon Diagnostic] actionAPI.setIcon complete.");
           return;
         }
       }
 
-      console.warn("[NTA Icon Diagnostic] Canvas rendering unavailable. Defaulting to relative image path.");
       const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
       const path = isBackgroundDark
         ? (isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png')
         : 'icon/16.png';
       await actionAPI.setIcon({ path });
     } catch (e) {
-      console.error("[NTA Icon Diagnostic] Root extension setIcon process failed:", e);
       const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
       const path = isBackgroundDark
         ? (isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png')
@@ -473,7 +464,6 @@ export default defineBackground(() => {
 
   async function updateIconForConfig(config: any) {
     if (config?.useStaticToolbarIcon === true) {
-      console.log("[NTA Icon Diagnostic] useStaticToolbarIcon is enabled. Setting default static brand icon.");
       const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
       const path = isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png';
       actionAPI.setIcon({ path }).catch(() => { });
@@ -523,11 +513,9 @@ export default defineBackground(() => {
   // Load dynamic theme extension icon on initial startup (guaranteed to run even if configuration is uninitialized)
   configStorage.getValue().then((val) => {
     updateIconForConfig(val || {}).catch((e) => {
-      console.error("[NTA Icon Startup Fail]", e);
     });
     refreshBadge();
   }).catch((e) => {
-    console.error("[NTA Icon Startup Fetch Fail]", e);
   });
 
   // Intercept configuration theme changes in real-time

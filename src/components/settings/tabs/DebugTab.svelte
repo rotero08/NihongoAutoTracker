@@ -49,8 +49,8 @@
   </div>
 </div>
 <p class="hint" style="margin-top:0">
-  Logs are continually collected locally to help diagnose tracking or API
-  issues.
+  With this, logs are continually collected locally to help diagnose tracking or
+  API issues.
 </p>
 
 <div class="debug-container" id="debug-logs-list">

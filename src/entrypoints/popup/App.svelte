@@ -602,7 +602,7 @@
         await browser.runtime.openOptionsPage();
         return;
       } catch (e) {
-        console.error("Failed to open options page directly:", e);
+        error("Failed to open options page directly:", e);
       }
     }
     if (browser?.runtime?.sendMessage) {
@@ -650,7 +650,7 @@
       try {
         return await confirmModal.confirm(title, msg, warnKey);
       } catch (e) {
-        console.error("ConfirmModal error, falling back to window.confirm:", e);
+        error("ConfirmModal error, falling back to window.confirm:", e);
       }
     }
     return window.confirm(msg);
