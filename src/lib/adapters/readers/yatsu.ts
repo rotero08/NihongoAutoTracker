@@ -14,10 +14,13 @@ export const yatsuAdapter: ReaderAdapter = {
   },
 
   onUpdateStyles(wrapper: HTMLElement): void {
+    const readerArea = document.querySelector('#reader-container, .reader-wrapper, #ttu-page-footer');
     const isWhispersyncActive = !!(
-      document.querySelector('.yatsu-whispersync, [class*="whispersync"], [id*="whispersync"]') ||
-      Array.from(document.querySelectorAll('button, div, span')).some(el =>
-        el.textContent?.toLowerCase().includes('whispersync')
+      readerArea && (
+        readerArea.querySelector('[class*="whispersync"], [id*="whispersync"]') ||
+        Array.from(readerArea.querySelectorAll('button, div, span')).some(el =>
+          el.textContent?.toLowerCase().includes('whispersync')
+        )
       )
     );
     if (isWhispersyncActive) {

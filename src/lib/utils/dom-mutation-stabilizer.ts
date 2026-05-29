@@ -16,6 +16,10 @@ export class DOMMutationStabilizer {
     private silentGraceTimeout: any = null;
     private lastSilentMutationTime = 0;
 
+    // Cache to prevent redundant full-document queries within high-frequency loops
+    private lastDetectionTime = 0;
+    private cachedDetectionResult = false;
+
     constructor(
         private ttuState: { running: boolean },
         private onSetChronoButtonDisabled: (disabled: boolean, message?: string) => void,
@@ -36,12 +40,24 @@ export class DOMMutationStabilizer {
         this.hasInitialJitenParseOccurred = false;
     }
 
+    private checkJitenActive(): boolean {
+        const now = Date.now();
+        if (now - this.lastDetectionTime < 100) {
+            return this.cachedDetectionResult;
+        }
+        this.lastDetectionTime = now;
+        // Optimized selector bypassing the slow wildcard class scan [class*="jiten"]
+        const active = !!document.querySelector('.jiten-word, .jiten-popup, [ajb="true"], [class^="jiten-"], [class*=" jiten-"]');
+        this.cachedDetectionResult = active;
+        return active;
+    }
+
     /**
      * Infinite-precision Dynamic Debounce Stabilization (Visual overlay for stopped timer)
      * accepts optional fast bypass parameter to skip costly document.querySelector runs (Task 6.2)
      */
     public runGracePeriodIfJiten(alreadyDetected?: boolean): void {
-        const isJitenActive = alreadyDetected ?? !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+        const isJitenActive = alreadyDetected ?? this.checkJitenActive();
         if (!isJitenActive) return;
 
         this.lastJitenMutationTime = Date.now();
@@ -83,7 +99,7 @@ export class DOMMutationStabilizer {
      * Silent Background Protection during running sessions
      */
     public runSilentGracePeriodIfJiten(alreadyDetected?: boolean): void {
-        const isJitenActive = alreadyDetected ?? !!document.querySelector('span.jiten-word, [class*="jiten"], [ajb="true"]');
+        const isJitenActive = alreadyDetected ?? this.checkJitenActive();
         if (!isJitenActive) return;
 
         this.lastSilentMutationTime = Date.now();

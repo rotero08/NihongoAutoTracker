@@ -94,7 +94,7 @@
             timeMs = ttuState.timeMs;
             chars = ttuState.chars;
             readerConfig = getCurrentReaderConfig(); // Sync reader config immediately on change events
-            refreshLinkerUI();
+            // refreshLinkerUI(); // Removed to avoid high storage retrieval overhead during ticks
         };
         const handleHistoryRefresh = () => {
             updateHistoryData();
@@ -545,6 +545,7 @@
         }
     }
 
+    // Manual session edits
     function startVolEdit(e: MouseEvent) {
         e.stopPropagation();
         volInputVal = linkedMedia ? linkedMedia.volume : volInputVal;

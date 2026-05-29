@@ -4,20 +4,49 @@ import { applyThemeToDocument, applyCustomThemeToDoc, clearCustomThemeFromDoc, p
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
-const THEME_DETECTION_CACHE_TTL = 100; // ms (Responsive refresh)
-
+const THEME_DETECTION_CACHE_TTL = 15000; // ms (Increases performance, cleared on active configuration triggers)
 /* Throttled accent search to shield CPU on translation mutations */
 let _cachedAccentColor: string | null = null;
 let _isAccentCached = false;
 let _lastAccentCheckTime = 0;
-const ACCENT_CACHE_TTL = 100; // ms (Responsive refresh)
-
+const ACCENT_CACHE_TTL = 5000; // ms (Responsive refresh)
 export { applyCustomThemeToDoc, clearCustomThemeFromDoc };
 
 export function clearThemeDetectionCache() {
   _cachedThemeColors = null;
   _cachedAccentColor = null;
   _isAccentCached = false;
+}
+
+/**
+ * Performant utility function to suppress custom layout mutation alerts while
+ * dynamically updating stylesheet structures across root elements. Supports
+ * both synchronous and asynchronous functions by holding the lock until settlement.
+ */
+function runWithThemeLock<T>(fn: () => T): T {
+  if (typeof window === 'undefined') {
+    return fn();
+  }
+  (window as any).__nt_applying_theme__ = true;
+  try {
+    const result = fn();
+    if (result instanceof Promise) {
+      return result.finally(() => {
+        // Keep lock active through the macro-task transition after async resolution
+        setTimeout(() => {
+          (window as any).__nt_applying_theme__ = false;
+        }, 0);
+      }) as any;
+    } else {
+      setTimeout(() => {
+        (window as any).__nt_applying_theme__ = false;
+      }, 0);
+      return result;
+    }
+  } catch (e) {
+    (window as any).__nt_applying_theme__ = false;
+    throw e;
+  }
 }
 
 export function getActiveThemeName(cfg: any): string {
@@ -223,111 +252,17 @@ export function detectReaderThemeColors(): any {
 }
 
 export function updateActiveThemeStyles(themeName: string, cfg: any) {
-  const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
-  if (themeName === 'match-reader') {
-    const detectedColors = detectReaderThemeColors();
-    if (detectedColors) {
-      const host = window.location.hostname;
-      browser.storage.local.set({
-        [`local:readerColors:${host}`]: detectedColors,
-        [`readerColors:${host}`]: detectedColors
-      }).catch(() => { });
-
-      applyCustomThemeToDoc(detectedColors);
-      applyThemeToDocument("dark-amber", cfg.font ?? "sans", detectedColors, { useStaticInPageLogo });
-      injectThemeStyles('custom', cfg.font ?? 'sans');
-    } else {
-      clearCustomThemeFromDoc();
-      applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
-      injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
-    }
-  } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
-    const colors = getCustomColorsForSite(cfg);
-    if (colors) {
-      applyCustomThemeToDoc(colors);
-      applyThemeToDocument("dark-amber", cfg.font ?? "sans", colors, { useStaticInPageLogo });
-      injectThemeStyles('custom', cfg.font ?? 'sans');
-    } else {
-      clearCustomThemeFromDoc();
-      applyThemeToDocument('dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
-      injectThemeStyles('dark-amber', cfg.font ?? 'sans');
-    }
-  } else {
-    clearCustomThemeFromDoc();
-    applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
-    injectThemeStyles(themeName, cfg.font ?? 'sans');
-  }
-}
-
-export async function applyActiveTheme(cfg: any): Promise<void> {
-  try {
-    let themeName = cfg.theme ?? 'dark-amber';
-    let customColors = undefined;
-
-    const isExtensionPage = typeof window !== 'undefined' &&
-      (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
-
-    if (isExtensionPage) {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      const activeTab = tabs[0];
-      if (activeTab && activeTab.url) {
-        const urlObj = new URL(activeTab.url);
-        const host = urlObj.hostname;
-
-        const { READER_ADAPTERS } = await import('@/lib/adapters/readers');
-        const adapter = READER_ADAPTERS.find(a => host.includes(a.hostname));
-
-        if (adapter && cfg.syncPopupWithReaderTheme !== false) {
-          let override: string | undefined;
-          if (adapter.hostname === 'reader.ttsu.app') {
-            override = cfg.ttuThemeOverride;
-          } else if (adapter.hostname === 'app.yatsu.moe') {
-            override = cfg.yatsuThemeOverride;
-          } else if (adapter.hostname === 'manga.manabe.es') {
-            override = cfg.yomiyasuThemeOverride || cfg.manabeThemeOverride;
-          }
-
-          if (override && override !== 'global') {
-            themeName = override;
-          }
-
-          if (themeName === 'match-reader') {
-            const stored = await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]);
-            customColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
-          }
-        }
-      }
-    } else {
-      themeName = getActiveThemeName(cfg);
-      if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
-        customColors = getCustomColorsForSite(cfg);
-      } else if (themeName === 'match-reader') {
-        customColors = detectReaderThemeColors();
-      }
-    }
-
+  runWithThemeLock(() => {
     const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
-    if (themeName === 'match-reader' && !isExtensionPage) {
-      const host = window.location.hostname;
-      const stored = (await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
-      const cachedColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
-
+    if (themeName === 'match-reader') {
       const detectedColors = detectReaderThemeColors();
       if (detectedColors) {
-        const parsedBg = parseColorToRgb(detectedColors.background);
-        const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
-        const isDarkBg = hslBg.l < 50;
-        const defaultAccent = isDarkBg ? '#f0b429' : '#d97706';
-
-        if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
-          detectedColors.accent = cachedColors.accent;
-          detectedColors.accentHover = cachedColors.accentHover || detectedColors.accentHover;
-        }
-
-        await browser.storage.local.set({
+        const host = window.location.hostname;
+        browser.storage.local.set({
           [`local:readerColors:${host}`]: detectedColors,
           [`readerColors:${host}`]: detectedColors
-        });
+        }).catch(() => { });
+
         applyCustomThemeToDoc(detectedColors);
         applyThemeToDocument("dark-amber", cfg.font ?? "sans", detectedColors, { useStaticInPageLogo });
         injectThemeStyles('custom', cfg.font ?? 'sans');
@@ -336,10 +271,8 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
         applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
         injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
       }
-    } else if (themeName === 'match-reader' && isExtensionPage && customColors) {
-      applyThemeToDocument("dark-amber", cfg.font ?? "sans", customColors, { useStaticInPageLogo });
     } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
-      const colors = isExtensionPage ? customColors : getCustomColorsForSite(cfg);
+      const colors = getCustomColorsForSite(cfg);
       if (colors) {
         applyCustomThemeToDoc(colors);
         applyThemeToDocument("dark-amber", cfg.font ?? "sans", colors, { useStaticInPageLogo });
@@ -354,17 +287,126 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
       applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
       injectThemeStyles(themeName, cfg.font ?? 'sans');
     }
-  } catch (e) { }
+  });
+}
+
+export async function applyActiveTheme(cfg: any): Promise<void> {
+  return runWithThemeLock(async () => {
+    try {
+      let themeName = cfg.theme ?? 'dark-amber';
+      let customColors = undefined;
+
+      const isExtensionPage = typeof window !== 'undefined' &&
+        (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+
+      if (isExtensionPage) {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const activeTab = tabs[0];
+        if (activeTab && activeTab.url) {
+          const urlObj = new URL(activeTab.url);
+          const host = urlObj.hostname;
+
+          const { READER_ADAPTERS } = await import('@/lib/adapters/readers');
+          const adapter = READER_ADAPTERS.find(a => host.includes(a.hostname));
+
+          if (adapter && cfg.syncPopupWithReaderTheme !== false) {
+            let override: string | undefined;
+            if (adapter.hostname === 'reader.ttsu.app') {
+              override = cfg.ttuThemeOverride;
+            } else if (adapter.hostname === 'app.yatsu.moe') {
+              override = cfg.yatsuThemeOverride;
+            } else if (adapter.hostname === 'manga.manabe.es') {
+              override = cfg.yomiyasuThemeOverride || cfg.manabeThemeOverride;
+            }
+
+            if (override && override !== 'global') {
+              themeName = override;
+            }
+
+            if (themeName === 'match-reader') {
+              const stored = await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]);
+              customColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
+            }
+          }
+        }
+      } else {
+        themeName = getActiveThemeName(cfg);
+        if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
+          customColors = getCustomColorsForSite(cfg);
+        } else if (themeName === 'match-reader') {
+          customColors = detectReaderThemeColors();
+        }
+      }
+
+      const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
+      if (themeName === 'match-reader' && !isExtensionPage) {
+        const host = window.location.hostname;
+        const stored = (await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
+        const cachedColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
+
+        const detectedColors = detectReaderThemeColors();
+        if (detectedColors) {
+          const parsedBg = parseColorToRgb(detectedColors.background);
+          const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
+          const isDarkBg = hslBg.l < 50;
+          const defaultAccent = isDarkBg ? '#f0b429' : '#d97706';
+
+          if (detectedColors.accent === defaultAccent && cachedColors?.accent) {
+            detectedColors.accent = cachedColors.accent;
+            detectedColors.accentHover = cachedColors.accentHover || detectedColors.accentHover;
+          }
+
+          const colorsHaveChanged = !cachedColors ||
+            cachedColors.background !== detectedColors.background ||
+            cachedColors.text !== detectedColors.text ||
+            cachedColors.accent !== detectedColors.accent;
+
+          if (colorsHaveChanged) {
+            await browser.storage.local.set({
+              [`local:readerColors:${host}`]: detectedColors,
+              [`readerColors:${host}`]: detectedColors
+            });
+          }
+
+          applyCustomThemeToDoc(detectedColors);
+          applyThemeToDocument("dark-amber", cfg.font ?? "sans", detectedColors, { useStaticInPageLogo });
+          injectThemeStyles('custom', cfg.font ?? 'sans');
+        } else {
+          clearCustomThemeFromDoc();
+          applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+          injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
+        }
+      } else if (themeName === 'match-reader' && isExtensionPage && customColors) {
+        applyThemeToDocument("dark-amber", cfg.font ?? "sans", customColors, { useStaticInPageLogo });
+      } else if (themeName.startsWith('custom-') || themeName.startsWith('custom_') || themeName === 'custom') {
+        const colors = isExtensionPage ? customColors : getCustomColorsForSite(cfg);
+        if (colors) {
+          applyCustomThemeToDoc(colors);
+          applyThemeToDocument("dark-amber", cfg.font ?? "sans", colors, { useStaticInPageLogo });
+          injectThemeStyles('custom', cfg.font ?? 'sans');
+        } else {
+          clearCustomThemeFromDoc();
+          applyThemeToDocument('dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+          injectThemeStyles('dark-amber', cfg.font ?? 'sans');
+        }
+      } else {
+        clearCustomThemeFromDoc();
+        applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
+        injectThemeStyles(themeName, cfg.font ?? 'sans');
+      }
+    } catch (e) { }
+  });
 }
 
 export function getReaderConfig(cfg: any) {
+  const safeCfg = cfg || {};
   const adapter = getActiveReaderAdapter();
-  const autoSave = cfg.readerAutoSave ?? cfg.ttuAutoSave ?? true;
-  const directSend = cfg.readerDirectSend ?? cfg.ttuDirectSend ?? false;
+  const autoSave = safeCfg.readerAutoSave ?? safeCfg.ttuAutoSave ?? true;
+  const directSend = safeCfg.readerDirectSend ?? safeCfg.ttuDirectSend ?? false;
 
-  let enabled = cfg.ttuEnabled ?? true;
+  let enabled = safeCfg.ttuEnabled ?? true;
   if (adapter) {
-    enabled = adapter.isEnabled(cfg);
+    enabled = adapter.isEnabled(safeCfg);
   }
   return { enabled, autoSave, directSend };
 }
