@@ -22,7 +22,7 @@ import {
   injectThemeStyles
 } from '@/lib/ui/reader-overlay';
 import { getActiveThemeName, getReaderConfig, applyActiveTheme, applyCustomThemeToDoc, clearCustomThemeFromDoc, clearThemeDetectionCache } from '@/lib/ui/text-tracker-theme-manager';
-import { extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { extractAdvancedCharCount, clearExtractorCache } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
 import { DOMMutationStabilizer } from '@/lib/utils/dom-mutation-stabilizer';
@@ -378,6 +378,7 @@ function isReadingViewActive(): boolean {
 function invalidateReadingViewCache() {
   _readingViewCache = null;
   _insertPointCache = null; // Ensure stale insert points are fully cleared on route transitions!
+  clearExtractorCache();
 }
 
 function safelySetAdapterName(adapter: any, name: string | null) {

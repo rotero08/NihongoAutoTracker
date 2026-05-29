@@ -106,13 +106,15 @@
             showSilentGraceStatus = !!e.detail?.parsing;
         };
 
+        const stopPropagation = (e: Event) => e.stopPropagation();
+
         const wrapper = document.getElementById("nt-ttu-chrono-wrapper");
         if (wrapper) {
             // Prevent standard reader actions from capturing our user inputs
-            wrapper.addEventListener("click", (e) => e.stopPropagation());
-            wrapper.addEventListener("dblclick", (e) => e.stopPropagation());
-            wrapper.addEventListener("mousedown", (e) => e.stopPropagation());
-            wrapper.addEventListener("mouseup", (e) => e.stopPropagation());
+            wrapper.addEventListener("click", stopPropagation);
+            wrapper.addEventListener("dblclick", stopPropagation);
+            wrapper.addEventListener("mousedown", stopPropagation);
+            wrapper.addEventListener("mouseup", stopPropagation);
 
             wrapper.addEventListener("nt-linker-refresh", handleLinkerRefresh);
             wrapper.addEventListener(
@@ -135,18 +137,10 @@
 
         return () => {
             if (wrapper) {
-                wrapper.removeEventListener("click", (e) =>
-                    e.stopPropagation(),
-                );
-                wrapper.removeEventListener("dblclick", (e) =>
-                    e.stopPropagation(),
-                );
-                wrapper.removeEventListener("mousedown", (e) =>
-                    e.stopPropagation(),
-                );
-                wrapper.removeEventListener("mouseup", (e) =>
-                    e.stopPropagation(),
-                );
+                wrapper.removeEventListener("click", stopPropagation);
+                wrapper.removeEventListener("dblclick", stopPropagation);
+                wrapper.removeEventListener("mousedown", stopPropagation);
+                wrapper.removeEventListener("mouseup", stopPropagation);
 
                 wrapper.removeEventListener(
                     "nt-linker-refresh",
@@ -1374,7 +1368,7 @@
         height: 15px !important;
     }
 
-    /* Make the resume/pause toggler change color dynamically */
+    /* Outer focus ring reset */
     :global(#nt-ttu-btn-toggle) {
         color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }

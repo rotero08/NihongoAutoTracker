@@ -14,6 +14,11 @@ if (typeof document !== 'undefined') {
       const pingDetail = { handled: false };
       el.dispatchEvent(new CustomEvent('nt-toast-ping', { detail: pingDetail }));
       if (!pingDetail.handled) {
+        const keyAttr = el.getAttribute('data-key');
+        if (keyAttr) {
+          const key = decodeURIComponent(keyAttr);
+          delete activeToasts[key];
+        }
         el.remove();
       }
     });

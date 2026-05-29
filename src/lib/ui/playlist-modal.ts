@@ -264,6 +264,11 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   });
 
   const clickOutsideHandler = (e: MouseEvent) => {
+    if (!modal.isConnected) {
+      document.removeEventListener('click', clickOutsideHandler);
+      cleanupActiveObservers();
+      return;
+    }
     if (!modal.contains(e.target as Node) && !btn.contains(e.target as Node)) {
       cleanupActiveObservers();
       modal.remove();

@@ -16,7 +16,7 @@
   import { toLocalDT } from "@/lib/utils/time";
   import SearchDropdown from "@/components/popup/SearchDropdown.svelte";
   import { storage } from "wxt/utils/storage";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { addDebugLog } from "@/lib/storage/debug";
 
@@ -82,6 +82,11 @@
   onMount(async () => {
     const val = await storage.getItem(`local:sess-closed-${item.id}`);
     isSessionsOpen = val !== "1";
+  });
+
+  onDestroy(() => {
+    clearTimeout(debounceTimer);
+    clearTimeout(blurTimeout);
   });
 
   async function toggleSessionsOpen() {

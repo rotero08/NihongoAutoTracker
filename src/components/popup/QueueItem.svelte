@@ -18,6 +18,7 @@
   import SearchDropdown from "./SearchDropdown.svelte";
   import { configStorage } from "@/lib/storage/config";
   import { addDebugLog } from "@/lib/storage/debug";
+  import { onDestroy } from "svelte";
 
   interface Props {
     item: any;
@@ -117,6 +118,11 @@
       searchDropdown?.search(titleValue.trim());
     }
   }
+
+  onDestroy(() => {
+    clearTimeout(debounceTimer);
+    clearTimeout(blurTimeout);
+  });
 
   async function handleUnlink(e: Event) {
     e.preventDefault();
@@ -351,7 +357,7 @@
 
     if (import.meta.env.DEV) {
       console.log(
-        `[NAT DEV - QueueItem] Initiating manual send from popup for: ${current.description || current.contentTitleNative}`,
+        `[NAT DEV - Queue] Initiating manual send from popup for: ${current.description || current.contentTitleNative}`,
       );
     }
 
