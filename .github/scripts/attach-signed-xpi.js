@@ -58,8 +58,18 @@ async function run() {
         const versionNum = amoVersionEntry.version; // e.g., "4.0.2"
         const expectedTag = `v${versionNum}`; // e.g., "v4.0.2"
 
+        // Safely extract the signed file object (handling both singular and plural API formats)
+        let file = null;
+        if (amoVersionEntry.files && Array.isArray(amoVersionEntry.files)) {
+            file = amoVersionEntry.files.find(f => f.status === 'public' || f.status === 'approved');
+        } else if (amoVersionEntry.file) {
+            const f = amoVersionEntry.file;
+            if (f.status === 'public' || f.status === 'approved') {
+                file = f;
+            }
+        }
+
         // Check if the version has an approved, public file ready for download
-        const file = amoVersionEntry.files.find(f => f.status === 'public' || f.status === 'approved');
         if (!file || !file.url) {
             log(`Version ${versionNum} on AMO is not signed or approved yet. Skipping.`);
             continue;
