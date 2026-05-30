@@ -14,8 +14,12 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const AMO_ADDON_ID = process.env.AMO_ADDON_ID;
 const REPO = process.env.GITHUB_REPOSITORY;
 
+// Pinpoint the exact missing variable
 if (!GITHUB_TOKEN || !AMO_ADDON_ID || !REPO) {
-    error("Missing required environment variables.");
+    error("Missing required environment variables:");
+    if (!GITHUB_TOKEN) error("  ❌ GITHUB_TOKEN is missing from process environment.");
+    if (!AMO_ADDON_ID) error("  ❌ AMO_ADDON_ID is missing from process environment.");
+    if (!REPO) error("  ❌ GITHUB_REPOSITORY is missing from process environment.");
     process.exit(1);
 }
 

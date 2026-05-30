@@ -1,7 +1,7 @@
 name: Poll AMO and Attach Signed XPI
 
 on:
-  workflow_dispatch: # Allows you to trigger it manually with one click from the GitHub UI
+  workflow_dispatch: # Allows manual trigger
 
 permissions:
   contents: write
