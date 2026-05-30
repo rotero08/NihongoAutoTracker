@@ -243,6 +243,7 @@ export class PlayerTrackerEngine {
                 item.time = Math.max(1, Math.round(completedSecs / 60));
                 item.description = finalTitle;
                 item.contentTitleNative = channelName;
+                item.channelTitle = channelName;
                 if (channelId && channelId !== "web-video" && (!item.channelId || item.channelId === "web-video")) {
                     item.channelId = channelId;
                 }
@@ -263,6 +264,7 @@ export class PlayerTrackerEngine {
                     description: finalTitle,
                     sessions: [{ id: this.currentSessionId, secs, date: new Date().toISOString() }],
                     channelId: (channelId && channelId !== "web-video") ? channelId : null,
+                    channelTitle: channelName,
                     mediaId: (mediaData?.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
                     mediaData,
                 } as any);

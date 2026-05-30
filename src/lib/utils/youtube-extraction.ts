@@ -11,7 +11,7 @@ const fetchCache = new Map<string, any>();
  * Scrapes ytInitialPlayerResponse JSON embedded in page HTML to extract details.
  */
 export async function fetchYouTubeVideoData(url: string): Promise<{
-    video: { episodeDuration: number; title?: { contentTitleNative?: string; contentTitleEnglish?: string } };
+    video: { videoId?: string; episodeDuration: number; title?: { contentTitleNative?: string; contentTitleEnglish?: string } };
     channel: {
         contentId?: string;
         title?: { contentTitleNative?: string; contentTitleEnglish?: string };
@@ -24,6 +24,7 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
     }
 
     try {
+        const requestedVideoId = getYouTubeVideoIdFromUrl(url);
         const res = await fetch(url);
         if (!res.ok) return null;
 
@@ -34,6 +35,10 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
         const data = JSON.parse(match[1]);
 
         const videoDetails = data.videoDetails || {};
+        const responseVideoId = videoDetails.videoId || '';
+        if (requestedVideoId && responseVideoId && requestedVideoId !== responseVideoId) {
+            return null;
+        }
         const durationSecs = parseInt(videoDetails.lengthSeconds, 10) || 0;
         const channelId = videoDetails.channelId || '';
         const channelTitle = videoDetails.author || '';
@@ -48,6 +53,7 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
 
         const parsedResult = {
             video: {
+                videoId: responseVideoId || requestedVideoId || undefined,
                 episodeDuration: Math.max(1, Math.round(durationSecs / 60)),
                 title: {
                     contentTitleNative: videoTitle || undefined,
@@ -77,6 +83,7 @@ export async function fetchYouTubeVideoData(url: string): Promise<{
  */
 export async function getYouTubeChannelId(): Promise<string | null> {
     const isWatchPage = window.location.pathname.startsWith('/watch') || window.location.href.includes('watch?v=');
+    const currentVideoId = getYouTubeVideoIdFromUrl(window.location.href);
 
     if (isWatchPage) {
         try {
@@ -85,6 +92,16 @@ export async function getYouTubeChannelId(): Promise<string | null> {
                 return data.channel.contentId;
             }
         } catch (e) { }
+
+        try {
+            const playerResponse = (window as any).ytInitialPlayerResponse;
+            const responseVideoId = playerResponse?.videoDetails?.videoId;
+            if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.channelId) {
+                return playerResponse.videoDetails.channelId;
+            }
+        } catch {
+            /* Not available */
+        }
     }
 
     /* Try the dynamic channel link in the active player owner info section first */
@@ -140,7 +157,8 @@ export async function getYouTubeChannelId(): Promise<string | null> {
     /* Fallback 1: check dynamic ytInitialPlayerResponse state (updates on SPA routing) */
     try {
         const playerResponse = (window as any).ytInitialPlayerResponse;
-        if (playerResponse?.videoDetails?.channelId) {
+        const responseVideoId = playerResponse?.videoDetails?.videoId;
+        if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.channelId) {
             return playerResponse.videoDetails.channelId;
         }
     } catch {
@@ -161,6 +179,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
  */
 export async function getChannelNameFallback(): Promise<string> {
     const isWatchPage = window.location.pathname.startsWith('/watch') || window.location.href.includes('watch?v=');
+    const currentVideoId = getYouTubeVideoIdFromUrl(window.location.href);
 
     if (isWatchPage) {
         try {
@@ -169,6 +188,16 @@ export async function getChannelNameFallback(): Promise<string> {
                 return data.channel.title.contentTitleNative;
             }
         } catch (e) { }
+
+        try {
+            const playerResponse = (window as any).ytInitialPlayerResponse;
+            const responseVideoId = playerResponse?.videoDetails?.videoId;
+            if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.author) {
+                return playerResponse.videoDetails.author;
+            }
+        } catch {
+            /* Not available */
+        }
     }
 
     const channelNameEl = document.querySelector<HTMLElement>(
@@ -183,7 +212,10 @@ export async function getChannelNameFallback(): Promise<string> {
 
     try {
         const playerResponse = (window as any).ytInitialPlayerResponse;
-        if (playerResponse?.videoDetails?.author) return playerResponse.videoDetails.author;
+        const responseVideoId = playerResponse?.videoDetails?.videoId;
+        if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.author) {
+            return playerResponse.videoDetails.author;
+        }
     } catch {
         /* Not available */
     }
@@ -197,6 +229,18 @@ export async function getChannelNameFallback(): Promise<string> {
 export function clearExtractionCaches() {
     activeHandleFetches.clear();
     fetchCache.clear();
+}
+
+function getYouTubeVideoIdFromUrl(url: string): string | null {
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname.includes('youtu.be')) {
+            return parsed.pathname.split('/').filter(Boolean)[0] || null;
+        }
+        return parsed.searchParams.get('v');
+    } catch {
+        return null;
+    }
 }
 
 /**
