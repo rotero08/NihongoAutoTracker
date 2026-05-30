@@ -10,10 +10,11 @@
 
 import { defineBackground } from '#imports';
 import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
+import { importStremioFromTrakt } from '@/lib/api/trakt';
 import { JP_ALL_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
-import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
+import { readingQueueStorage, stremioQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 import { notify } from '@/lib/utils/toast';
 import { storage } from 'wxt/utils/storage';
@@ -21,6 +22,7 @@ import { storage } from 'wxt/utils/storage';
 export default defineBackground(() => {
   // Use WXT's normalized action API which unifies Manifest V2 and Manifest V3 environments
   const actionAPI = browser.action || (browser as any).browserAction;
+  let stremioPollInFlight = false;
 
   // Register the background-specific global RAM logger hook
   (globalThis as any).__NT_APPEND_RAM_LOG__ = (entry: any) => {
@@ -99,9 +101,13 @@ export default defineBackground(() => {
       }
 
       if (msg.action === 'GET_QUEUE_COUNT') {
-        videoQueueStorage.getValue().then((q) => {
+        Promise.all([
+          videoQueueStorage.getValue(),
+          readingQueueStorage.getValue(),
+          stremioQueueStorage.getValue(),
+        ]).then(([video, reading, stremio]) => {
           try {
-            sendResponse({ count: q.length });
+            sendResponse({ count: (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0) });
           } catch { }
         }).catch(() => null);
         return true;
@@ -265,8 +271,21 @@ export default defineBackground(() => {
   if (browser.alarms) {
     // Set check period to 1 minute to guarantee we hit the 23:59 local time window deterministically
     browser.alarms.create('flushDaily', { periodInMinutes: 1 });
+    browser.alarms.create('stremioTraktPoll', { periodInMinutes: 1 });
+    setTimeout(() => pollStremioTrakt(true), 1000);
+    browser.runtime.onStartup?.addListener(() => {
+      pollStremioTrakt(true);
+    });
+    browser.runtime.onInstalled?.addListener(() => {
+      pollStremioTrakt(true);
+    });
 
     browser.alarms.onAlarm.addListener(async (alarm) => {
+      if (alarm.name === 'stremioTraktPoll') {
+        await pollStremioTrakt(false);
+        return;
+      }
+
       if (alarm.name !== 'flushDaily') return;
 
       const cfg = await configStorage.getValue();
@@ -287,6 +306,7 @@ export default defineBackground(() => {
         await addDebugLog('INFO', 'Background', 'Starting EOD Queue Flush...');
         await flushTodayQueue('reading', readingQueueStorage);
         await flushTodayQueue('video', videoQueueStorage);
+        await flushTodayQueue('stremio', stremioQueueStorage);
         await storage.setItem('local:lastFlushDate', todayStr);
       }
     });
@@ -296,7 +316,7 @@ export default defineBackground(() => {
     }
   }
 
-  async function flushTodayQueue(type: 'reading' | 'video', qStorage: any) {
+  async function flushTodayQueue(type: 'reading' | 'video' | 'stremio', qStorage: any) {
     const q = await qStorage.getValue();
     const todayStr = new Date().toLocaleDateString();
     const remaining: any[] = [];
@@ -319,14 +339,16 @@ export default defineBackground(() => {
       }
 
       const base: any = {
-        type,
+        type: type === 'stremio' ? item.logType : type,
         mediaId:
           item.mediaId ||
           (type === 'reading'
             ? 'web-reading'
-            : item.channelId || 'web-video'),
+            : type === 'stremio'
+              ? item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+              : item.channelId || 'web-video'),
         description: item.description || item.contentTitleNative,
-        episodes: 0,
+        episodes: type === 'stremio' ? item.episodes || 0 : 0,
         pages: 0,
         unknownDate: false,
         volume: item.volume || 1,
@@ -337,7 +359,9 @@ export default defineBackground(() => {
               contentId: 'web-reading',
               contentTitleNative: item.contentTitleNative,
             }
-            : {
+            : type === 'stremio'
+              ? item.mediaData || {}
+              : {
               channelId: item.channelId || 'web-video',
               channelTitle: item.contentTitleNative,
             }),
@@ -405,17 +429,46 @@ export default defineBackground(() => {
     refreshBadge();
   }
 
+  async function pollStremioTrakt(force: boolean) {
+    if (stremioPollInFlight) return;
+    stremioPollInFlight = true;
+
+    try {
+      const cfg = await configStorage.getValue();
+      if (!cfg.stremioEnabled || !cfg.traktAccessToken) return;
+
+      const pollMinutes = Math.max(1, Number(cfg.stremioPollMinutes ?? 5));
+      const lastPoll = Number((await storage.getItem('local:stremioLastPollAt')) || 0);
+      if (!force && Date.now() - lastPoll < pollMinutes * 60 * 1000) return;
+
+      await storage.setItem('local:stremioLastPollAt', Date.now());
+      const historyResult = await importStremioFromTrakt();
+      const imported = historyResult.imported;
+      if (imported > 0) {
+        await addDebugLog('INFO', 'Stremio', `Imported ${imported} Stremio item(s) into queue`, {
+          history: historyResult,
+        });
+        refreshBadge();
+      }
+    } catch (err) {
+      await addDebugLog('ERROR', 'Stremio', 'Failed to poll Trakt history', err);
+    } finally {
+      stremioPollInFlight = false;
+    }
+  }
+
   /* ── Badge Management ───────────────────────────────────────────────────── */
 
   const refreshBadge = () => {
     Promise.all([
       configStorage.getValue(),
       videoQueueStorage.getValue(),
-      readingQueueStorage.getValue()
-    ]).then(([cfg, videoQueue, readingQueue]) => {
+      readingQueueStorage.getValue(),
+      stremioQueueStorage.getValue()
+    ]).then(([cfg, videoQueue, readingQueue, stremioQueue]) => {
       const showBadge = cfg?.showTotalInBadge !== false;
       if (showBadge) {
-        const count = (videoQueue?.length || 0) + (readingQueue?.length || 0);
+        const count = (videoQueue?.length || 0) + (readingQueue?.length || 0) + (stremioQueue?.length || 0);
         actionAPI.setBadgeText({ text: count > 0 ? String(count) : '' });
         actionAPI.setBadgeBackgroundColor({ color: '#f38ba8' });
       } else {
@@ -584,4 +637,5 @@ export default defineBackground(() => {
   // Dynamic real-time watchers updating badge counts instantly on queue updates
   videoQueueStorage.watch(() => refreshBadge());
   readingQueueStorage.watch(() => refreshBadge());
+  stremioQueueStorage.watch(() => refreshBadge());
 });

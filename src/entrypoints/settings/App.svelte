@@ -2,13 +2,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { configStorage } from "@/lib/storage/config";
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
   import Sidebar from "@/components/settings/Sidebar.svelte";
   import QueueTab from "@/components/settings/tabs/QueueTab.svelte";
   import ApiKeyTab from "@/components/settings/tabs/ApiKeyTab.svelte";
   import ThemeTab from "@/components/settings/tabs/ThemeTab.svelte";
   import VideoTab from "@/components/settings/tabs/VideoTab.svelte";
   import OverlayTab from "@/components/settings/tabs/OverlayTab.svelte";
+  import StremioTab from "@/components/settings/tabs/StremioTab.svelte";
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
   import { notify } from "@/lib/utils/toast";
@@ -120,11 +121,12 @@
   }
 
   async function updateQueueCount() {
-    const [video, reading] = await Promise.all([
+    const [video, reading, stremio] = await Promise.all([
       videoQueueStorage.getValue(),
       readingQueueStorage.getValue(),
+      stremioQueueStorage.getValue(),
     ]);
-    queueCount = (video?.length || 0) + (reading?.length || 0);
+    queueCount = (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0);
   }
 
   onMount(() => {
@@ -145,14 +147,15 @@
     loadSavedTab();
 
     const loadConfigAndTheme = async () => {
-      const [cfg, video, reading] = await Promise.all([
+      const [cfg, video, reading, stremio] = await Promise.all([
         configStorage.getValue() as Promise<any>,
         videoQueueStorage.getValue(),
         readingQueueStorage.getValue(),
+        stremioQueueStorage.getValue(),
       ]);
 
       debugMode = cfg.debugMode ?? false;
-      queueCount = (video?.length || 0) + (reading?.length || 0);
+      queueCount = (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0);
 
       const applyTheme = (c: any) => {
         const theme = c?.theme ?? "nihongo";
@@ -196,7 +199,7 @@
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
-        (changes["videoQueue"] || changes["readingQueue"])
+        (changes["videoQueue"] || changes["readingQueue"] || changes["stremioQueue"])
       ) {
         updateQueueCount();
       }
@@ -281,6 +284,8 @@
       <VideoTab onStatus={showStatus} />
     {:else if activeTab === "overlay"}
       <OverlayTab onStatus={showStatus} />
+    {:else if activeTab === "stremio"}
+      <StremioTab onStatus={showStatus} />
     {:else if activeTab === "readers"}
       <ReadersTab onStatus={showStatus} />
     {:else if activeTab === "debug"}

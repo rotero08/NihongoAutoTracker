@@ -4,8 +4,11 @@
   import {
     videoQueueStorage,
     readingQueueStorage,
+    stremioQueueStorage,
+    stremioProcessedStorage,
     updateVideoQueueAtomic,
     updateReadingQueueAtomic,
+    updateStremioQueueAtomic,
   } from "@/lib/storage/queues";
   import {
     resolveVideoChannelMedia,
@@ -22,7 +25,7 @@
 
   interface Props {
     item: any;
-    type: "video" | "reading";
+    type: "video" | "reading" | "stremio";
     onStatusMessage: (msg: string, err?: boolean) => void;
     onConfirm: (
       title: string,
@@ -35,6 +38,7 @@
   let { item, type, onStatusMessage, onConfirm, onRefresh }: Props = $props();
 
   const isRead = $derived(type === "reading");
+  const isStremio = $derived(type === "stremio");
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
@@ -44,7 +48,7 @@
     item.description || item.contentTitleNative || "Unknown Title",
   );
   const displayTitle = $derived(
-    type === "video" ? stripVideoTitle(rawTitle) : rawTitle,
+    type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, ""),
   );
   const displayMins = $derived(
     isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
@@ -54,12 +58,14 @@
   );
 
   let channelName = $derived(
-    isRead
+    isStremio
+      ? `Stremio • ${item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
   );
   let urlDisplay = $derived(
-    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || ""}`,
+    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || item.traktType || ""}`,
   );
 
   const sessions = $derived(item.sessions ?? []);
@@ -141,6 +147,20 @@
         }
         return q;
       });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = {
+            ...newQ[idx],
+            mediaId: undefined,
+            mediaData: undefined,
+          };
+          return newQ;
+        }
+        return q;
+      });
     } else {
       await updateVideoQueueAtomic((q) => {
         const idx = q.findIndex((x) => x.id === item.id);
@@ -162,6 +182,16 @@
   async function persistField(field: string, value: any) {
     if (isRead) {
       await updateReadingQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const newQ = [...q];
+          newQ[idx] = { ...newQ[idx], [field]: value };
+          return newQ;
+        }
+        return q;
+      });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((q) => {
         const idx = q.findIndex((x) => x.id === item.id);
         if (idx > -1) {
           const newQ = [...q];
@@ -308,6 +338,38 @@
 
         return newQ;
       });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return q;
+
+        const session = entry.sessions[sessionIdx];
+        if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumSecs = item.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
+
+        const isTimeOverridden = displayMins > previousSumMins;
+        entry.time = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
+
+        return newQ;
+      });
     } else {
       await updateVideoQueueAtomic((q) => {
         const idx = q.findIndex((x) => x.id === item.id);
@@ -347,7 +409,7 @@
   /* ── Actions ─────────────────────────────────────────────────── */
   async function handleSend() {
     sending = true;
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const qStorage = isRead ? readingQueueStorage : isStremio ? stremioQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     const current = q.find((x: any) => x.id === item.id);
     if (!current) {
@@ -411,6 +473,10 @@
         await updateReadingQueueAtomic((currentQ) =>
           currentQ.filter((x) => x.id !== item.id),
         );
+      } else if (isStremio) {
+        await updateStremioQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
       } else {
         await updateVideoQueueAtomic((currentQ) =>
           currentQ.filter((x) => x.id !== item.id),
@@ -437,6 +503,11 @@
       await updateReadingQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
       );
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+      await markStremioProcessed(item.traktHistoryId);
     } else {
       await updateVideoQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
@@ -444,6 +515,13 @@
     }
     onStatusMessage("✓ Log removed");
     onRefresh();
+  }
+
+  async function markStremioProcessed(historyId?: string) {
+    if (!historyId) return;
+    const processed = new Set(await stremioProcessedStorage.getValue());
+    processed.add(String(historyId));
+    await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
 
   async function handleRemoveSession(sessionId: string) {
@@ -525,9 +603,9 @@
         : item.contentTitleNative);
     const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
     const base: any = {
-      type,
+      type: isStremio ? item.logType || "anime" : type,
       description: apiTitle,
-      episodes: 0,
+      episodes: isStremio ? item.episodes || 1 : 0,
       pages: 0,
       unknownDate: false,
     };
@@ -537,6 +615,15 @@
       base.mediaData = item.mediaData || {
         contentId: "web-reading",
         contentTitleNative: item.contentTitleNative,
+      };
+    } else if (isStremio) {
+      base.mediaId = item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`;
+      base.mediaData = item.mediaData || {
+        contentId: base.mediaId,
+        contentTitleNative: item.contentTitleNative,
+        contentTitleEnglish: item.contentTitleEnglish,
+        contentTitleRomaji: item.contentTitleRomaji,
+        type: item.logType || "anime",
       };
     } else {
       base.mediaId = item.mediaData?.channelId || item.channelId || "web-video";
@@ -550,7 +637,7 @@
         ...base,
         time: displayMins,
         date: new Date(defaultDateStr).toISOString(),
-        chars: item.chars || 0,
+        chars: isRead ? item.chars || 0 : 0,
       },
     ];
   }

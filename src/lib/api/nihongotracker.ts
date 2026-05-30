@@ -68,6 +68,15 @@ export async function submitLog(
     });
 
     if (response.ok) {
+      let createdLog: any = null;
+      try {
+        createdLog = await response.clone().json();
+      } catch {}
+
+      if (createdLog?._id && !createdLog.mediaId && hasAssignableMediaData(payload.mediaData)) {
+        await assignMediaToLog(createdLog._id, payload.mediaData as any, apiKey);
+      }
+
       if (import.meta.env.DEV) {
         console.log(`[NAT DEV - API] Log sent successfully`);
       }
@@ -213,6 +222,58 @@ function normalizeMediaSearchResult(raw: any): {
   };
 }
 
+function hasAssignableMediaData(mediaData: any): boolean {
+  return Boolean(
+    mediaData?.contentId &&
+      (mediaData?.contentTitleNative ||
+        mediaData?.contentTitleRomaji ||
+        mediaData?.contentTitleEnglish),
+  );
+}
+
+async function assignMediaToLog(logId: string, mediaData: any, apiKey: string) {
+  try {
+    const contentMedia = pruneUndefined({
+      contentId: mediaData.contentId,
+      contentImage: mediaData.contentImage,
+      coverImage: mediaData.coverImage,
+      description: mediaData.description,
+      type: mediaData.type,
+      title: {
+        contentTitleNative: mediaData.contentTitleNative,
+        contentTitleEnglish: mediaData.contentTitleEnglish,
+        contentTitleRomaji: mediaData.contentTitleRomaji,
+      },
+      isAdult: mediaData.isAdult,
+      episodes: mediaData.episodes,
+      duration: mediaData.episodeDuration,
+      chapters: mediaData.chapters,
+      volumes: mediaData.volumes,
+    });
+
+    await fetch(`${API_BASE}/logs/assign-media`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify([{ logsId: [logId], contentMedia }]),
+    });
+  } catch (err) {
+    await addDebugLog('WARN', 'API', 'Log created but media assignment failed', err);
+  }
+}
+
+function pruneUndefined(value: any): any {
+  if (Array.isArray(value)) return value.map(pruneUndefined);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => [key, pruneUndefined(entryValue)]),
+  );
+}
+
 /**
  * Scrape a YouTube channel's /about page for metadata (image, description).
  * This is the last-resort fallback when the NT API doesn't have the channel.
@@ -254,4 +315,27 @@ async function fetchChannelExtrasFromYouTube(channelId: string): Promise<{
   } catch {
     return {};
   }
+}
+
+export async function searchMedia(input: {
+  search: string;
+  type: 'anime' | 'movie' | 'tv_show' | 'manga' | 'reading' | 'vn' | 'game';
+  perPage?: number;
+}): Promise<any[]> {
+  const params = new URLSearchParams({
+    search: input.search,
+    type: input.type,
+    page: '1',
+    perPage: String(input.perPage ?? 5),
+  });
+  const response = await fetch(`${API_BASE}/media/search?${params}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) return [];
+  const data = await response.json();
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.media)) return data.media;
+  return [];
 }

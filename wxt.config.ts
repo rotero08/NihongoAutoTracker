@@ -98,6 +98,7 @@ export default defineConfig({
     host_permissions: [
       'https://nihongotracker.app/*',
       'https://*.nihongotracker.app/*',
+      'https://api.trakt.tv/*',
     ],
 
     icons: {

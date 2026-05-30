@@ -4,8 +4,11 @@
   import {
     videoQueueStorage,
     readingQueueStorage,
+    stremioQueueStorage,
+    stremioProcessedStorage,
     updateVideoQueueAtomic,
     updateReadingQueueAtomic,
+    updateStremioQueueAtomic,
   } from "@/lib/storage/queues";
   import {
     resolveVideoChannelMedia,
@@ -22,7 +25,7 @@
 
   interface Props {
     item: any;
-    type: "video" | "reading";
+    type: "video" | "reading" | "stremio";
     onStatus: (msg: string, err?: boolean) => void;
     onConfirm: (
       title: string,
@@ -35,6 +38,7 @@
   let { item, type, onStatus, onConfirm, onRefresh }: Props = $props();
 
   const isRead = $derived(type === "reading");
+  const isStremio = $derived(type === "stremio");
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
@@ -44,7 +48,7 @@
   $effect(() => {
     const rawTitle =
       item.description || item.contentTitleNative || "Unknown Title";
-    titleValue = type === "video" ? stripVideoTitle(rawTitle) : rawTitle;
+    titleValue = type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, "");
   });
 
   let volumeVal = $derived(Math.max(1, Number(item.volume || 1)));
@@ -68,13 +72,15 @@
   );
 
   let channelName = $derived(
-    isRead
+    isStremio
+      ? `Stremio • ${item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
   );
 
   let urlDisplay = $derived(
-    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || ""}`,
+    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || item.traktType || ""}`,
   );
 
   let isSessionsOpen = $state(true);
@@ -116,6 +122,51 @@
           return newQueue;
         }
         return currentQueue;
+      });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx > -1) {
+          const updatedItem = { ...currentQueue[idx], ...updatedFields };
+          const plainObj = JSON.parse(JSON.stringify(updatedItem));
+          if (
+            "mediaData" in updatedFields &&
+            updatedFields.mediaData === undefined
+          ) {
+            delete plainObj.mediaData;
+          }
+          const newQueue = [...currentQueue];
+          newQueue[idx] = plainObj;
+          return newQueue;
+        }
+        return currentQueue;
+      });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
+
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
+
+        const session = entry.sessions[sessionIdx];
+        if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.max(1, Math.round(sumSecs / 60));
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
       });
     } else {
       await updateVideoQueueAtomic((currentQueue) => {
@@ -358,6 +409,26 @@
         newQueue[idx] = entry;
         return newQueue;
       });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
+
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.max(1, Math.round(totalSecs / 60));
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
     } else {
       await updateVideoQueueAtomic((currentQueue) => {
         const idx = currentQueue.findIndex((x) => x.id === item.id);
@@ -453,8 +524,9 @@
     onRefresh();
   }
 
-  function getItemPayloads(current: any, type: "reading" | "video") {
+  function getItemPayloads(current: any, type: "reading" | "video" | "stremio") {
     const isRead = type === "reading";
+    const isStremio = type === "stremio";
     const s = current.sessions ?? [];
     const displayM = isRead
       ? Math.max(1, Math.round((current.time || 0) / 60))
@@ -478,17 +550,19 @@
       return s.map((sess: any) => {
         const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
         const payload: any = {
-          type,
+          type: isStremio ? current.logType || "anime" : type,
           description: type === "video" ? stripVideoTitle(desc) : desc,
           time: sessMins,
           date: new Date(sess.date).toISOString(),
           chars: isRead ? sess.chars || 0 : 0,
-          episodes: 0,
+          episodes: isStremio ? current.episodes || 1 : 0,
           pages: 0,
           unknownDate: false,
           mediaId: isRead
             ? current.mediaId || "web-reading"
-            : current.mediaData?.channelId || current.channelId || "web-video",
+            : isStremio
+              ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
+              : current.mediaData?.channelId || current.channelId || "web-video",
           mediaData: current.mediaData || {},
         };
         if (isRead) {
@@ -498,17 +572,19 @@
       });
     } else {
       const payload: any = {
-        type,
+        type: isStremio ? current.logType || "anime" : type,
         description: type === "video" ? stripVideoTitle(desc) : desc,
         time: displayM,
         date: new Date(defaultDateStr).toISOString(),
         chars: isRead ? current.chars || 0 : 0,
-        episodes: 0,
+        episodes: isStremio ? current.episodes || 1 : 0,
         pages: 0,
         unknownDate: false,
         mediaId: isRead
           ? current.mediaId || "web-reading"
-          : current.mediaData?.channelId || current.channelId || "web-video",
+          : isStremio
+            ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
+            : current.mediaData?.channelId || current.channelId || "web-video",
         mediaData: current.mediaData || {},
       };
       if (isRead) {
@@ -521,7 +597,7 @@
   /* ── Log Send / Delete Actions ──────────────────────────────── */
   async function handleSend() {
     sending = true;
-    const qStorage = isRead ? readingQueueStorage : videoQueueStorage;
+    const qStorage = isRead ? readingQueueStorage : isStremio ? stremioQueueStorage : videoQueueStorage;
     const q = await qStorage.getValue();
     const current = q.find((x: any) => x.id === item.id) as any;
     if (!current) {
@@ -593,6 +669,10 @@
         await updateReadingQueueAtomic((currentQ) =>
           currentQ.filter((x) => x.id !== item.id),
         );
+      } else if (isStremio) {
+        await updateStremioQueueAtomic((currentQ) =>
+          currentQ.filter((x) => x.id !== item.id),
+        );
       } else {
         await updateVideoQueueAtomic((currentQ) =>
           currentQ.filter((x) => x.id !== item.id),
@@ -622,6 +702,11 @@
       await updateReadingQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
       );
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQ) =>
+        currentQ.filter((x) => x.id !== item.id),
+      );
+      await markStremioProcessed(item.traktHistoryId);
     } else {
       await updateVideoQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
@@ -629,6 +714,13 @@
     }
     onStatus("✓ Log removed");
     onRefresh();
+  }
+
+  async function markStremioProcessed(historyId?: string) {
+    if (!historyId) return;
+    const processed = new Set(await stremioProcessedStorage.getValue());
+    processed.add(String(historyId));
+    await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
 </script>
 

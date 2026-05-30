@@ -64,6 +64,20 @@ export interface TrackerConfig {
   useStaticInPageLogo?: boolean;
   syncPopupWithReaderTheme?: boolean;
   logMusicVideos?: boolean;
+
+  /* ── Optional Stremio via Trakt integration ── */
+  stremioEnabled?: boolean;
+  traktClientId?: string;
+  traktClientSecret?: string;
+  traktAccessToken?: string;
+  traktRefreshToken?: string;
+  traktExpiresAt?: number;
+  traktUserAgent?: string;
+  stremioQueueMode?: 'queue' | 'auto';
+  stremioPollMinutes?: number;
+  stremioDaysBack?: number;
+  stremioJapaneseOnly?: boolean;
+  stremioActivatedAt?: string;
 }
 
 /* ── Custom Theme Schemas ── */
@@ -129,6 +143,28 @@ export interface QueuedReadingLog {
   readerName?: string;
 }
 
+export interface QueuedStremioLog {
+  id: string;
+  type: 'stremio';
+  logType: 'anime' | 'movie' | 'tv show';
+  contentTitleNative: string;
+  contentTitleEnglish?: string;
+  contentTitleRomaji?: string;
+  description?: string;
+  episodes: number;
+  time: number;
+  date: string;
+  private: boolean;
+  tags: string[];
+  sessions: QueueSession[];
+  mediaId?: string;
+  mediaData?: AnimeMediaData;
+  traktHistoryId: string;
+  traktType: 'episode' | 'movie';
+  season?: number;
+  episode?: number;
+}
+
 /* ── Platform Metadata ── */
 export interface VideoMediaData {
   channelId?: string;
@@ -148,12 +184,27 @@ export interface ReadingMediaData {
   volumes?: number;
 }
 
+export interface AnimeMediaData {
+  contentId?: string | number;
+  contentTitleNative?: string;
+  contentTitleEnglish?: string;
+  contentTitleRomaji?: string;
+  contentImage?: string;
+  coverImage?: string;
+  description?: unknown;
+  type?: string;
+  episodes?: number;
+  episodeDuration?: number;
+  runtime?: number;
+  isAdult?: boolean;
+}
+
 /* ── Log Submissions ── */
 export interface LogPayload {
-  type: 'video' | 'reading';
+  type: 'video' | 'reading' | 'anime' | 'movie' | 'tv show';
   mediaId: string | number;
   description: string;
-  mediaData?: VideoMediaData | ReadingMediaData;
+  mediaData?: VideoMediaData | ReadingMediaData | AnimeMediaData;
   time: number;
   date: string;
   private: boolean;
