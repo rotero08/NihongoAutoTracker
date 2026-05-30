@@ -338,6 +338,9 @@ function parseTitleWithConfig(docTitle: string) {
 }
 
 let lastLoggedPaginatedMode: boolean | null = null;
+let pendingPaginatedMode: boolean | null = null;
+let pendingPaginatedModeSince = 0;
+const PAGINATED_MODE_STABILITY_MS = 900;
 
 // Cleaned reader name lookup
 function getReaderName() {
@@ -595,8 +598,14 @@ function recalculateChars() {
     return;
   }
 
+  const charData = extractAdvancedCharCount(undefined, ttuState.running);
+  if (charData && !charData.hasText) {
+    _transitionGraceUntil = Date.now() + 600;
+    return;
+  }
+
   const adapter = getActiveReaderAdapter();
-  const current = adapter ? adapter.extractCharCount() : null;
+  const current = charData ? charData.current : (adapter ? adapter.extractCharCount() : null);
   if (current !== null) {
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
@@ -610,7 +619,12 @@ function recalculateChars() {
     let diff = current - stateRefs.globalSessionStartChar;
     if (diff < 0) diff = 0;
 
-    let calculatedChars = diff + stateRefs.globalManualCharOffset;
+    let calculatedChars = charData?.source === 'progress'
+      ? diff
+      : diff + stateRefs.globalManualCharOffset;
+    if (charData?.source !== 'progress' && calculatedChars < ttuState.chars) {
+      calculatedChars = ttuState.chars;
+    }
     ttuState.chars = calculatedChars;
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -823,7 +837,7 @@ async function setupTTUChronometer() {
           // Suspend checks
         } else if (isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
-          if (charData !== null) {
+          if (charData !== null && charData.hasText) {
             const { current } = charData;
 
             if (stateRefs.globalSessionStartChar === -1) {
@@ -834,7 +848,12 @@ async function setupTTUChronometer() {
               let diff = current - stateRefs.globalSessionStartChar;
               if (diff < 0) diff = 0;
 
-              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              const calculatedChars = charData.source === 'progress'
+                ? diff
+                : diff + stateRefs.globalManualCharOffset;
+              ttuState.chars = charData.source === 'progress'
+                ? calculatedChars
+                : Math.max(ttuState.chars, calculatedChars);
             } else {
               stateRefs.globalSessionStartChar = current;
             }
@@ -946,8 +965,8 @@ if (isRelevantFrame) {
   window.addEventListener('beforeunload', forceSyncOnExit);
 }
 
-function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
-  stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+function initSessionRefs(current: number, activeSection: number, total: number, _isPaginated: boolean) {
+  stateRefs.globalSessionStartChar = current;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
@@ -1314,23 +1333,50 @@ function handleMutations() {
       const { total, sectionIndex, isPaginated } = charData;
       const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
+      if (!charData.hasText) {
+        _transitionGraceUntil = Date.now() + 600;
+        return;
+      }
+
       if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-        stateRefs.globalSessionStartChar = -1;
-        stateRefs.globalManualCharOffset = 0;
-        stateRefs.lastSectionIndex = -1;
-        stateRefs.lastSectionTotal = 0;
-        stateRefs.visitedSections.clear();
-        ttuState.chars = 0;
-        ttuState.timeMs = 0;
+        if (pendingPaginatedMode !== isPaginated) {
+          pendingPaginatedMode = isPaginated;
+          pendingPaginatedModeSince = now;
+          _transitionGraceUntil = Date.now() + 600;
+          return;
+        }
+        if (now - pendingPaginatedModeSince < PAGINATED_MODE_STABILITY_MS) {
+          _transitionGraceUntil = Date.now() + 600;
+          return;
+        }
+
+        stateRefs.globalSessionStartChar = charData.current;
+        stateRefs.globalManualCharOffset = ttuState.chars;
+        stateRefs.lastSectionIndex = activeSection;
+        stateRefs.lastSectionTotal = total;
+        stateRefs.visitedSections.set(activeSection, ttuState.chars);
         stateRefs.globalLastTick = Date.now();
         lastLoggedPaginatedMode = isPaginated;
+        pendingPaginatedMode = null;
         if (!isPaginated) {
           _transitionGraceUntil = Date.now() + 400;
         }
         recalculateChars();
         return;
       }
+      pendingPaginatedMode = null;
       lastLoggedPaginatedMode = isPaginated;
+
+      if (charData.source === 'progress') {
+        if (stateRefs.globalSessionStartChar === -1) {
+          initSessionRefs(charData.current, activeSection, total, isPaginated);
+        }
+        stateRefs.globalManualCharOffset = 0;
+        stateRefs.lastSectionIndex = activeSection;
+        stateRefs.lastSectionTotal = total;
+        recalculateChars();
+        return;
+      }
 
       if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
         const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
@@ -1350,11 +1396,12 @@ function handleMutations() {
         } else {
           const rawTitle = getTTUTitle();
           const parsedVolume = parseTitleWithConfig(rawTitle).volume;
+          const previousSectionIndex = stateRefs.lastSectionIndex;
           ttuLinkStorage.getValue().then((links) => {
             const linkedMedia = (links || {})[rawTitle];
             const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
 
-            if (activeSection > stateRefs.lastSectionIndex) {
+            if (activeSection > previousSectionIndex) {
               if (stateRefs.visitedSections.has(activeSection)) {
                 stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
               } else {
@@ -1365,13 +1412,15 @@ function handleMutations() {
               if (stateRefs.visitedSections.has(activeSection)) {
                 stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
               } else {
-                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+                stateRefs.globalManualCharOffset = ttuState.chars;
                 stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
               }
             }
 
             if (isPaginated) {
-              stateRefs.globalSessionStartChar = 0;
+              stateRefs.globalSessionStartChar = activeSection > previousSectionIndex ? 0 : charData.current;
+            } else {
+              stateRefs.globalSessionStartChar = charData.current;
             }
 
             stateRefs.lastSectionIndex = activeSection;
