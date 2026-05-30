@@ -47,7 +47,6 @@ jobs:
             --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
             --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
             --channel=listed \
-            --id="${{ secrets.AMO_ADDON_ID }}" \
             --source-dir="$FIREFOX_DIR" \
             || echo "Submission completed, but immediate signing/download timed out or requires manual review."
 
