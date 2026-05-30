@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*' # Triggers when you push a version tag, e.g., v4.0.1
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger
 
 jobs:
   build-and-deploy:
@@ -34,23 +34,21 @@ jobs:
       - name: Build Extension (Firefox)
         run: pnpm wxt build --browser firefox
 
-      # Zip the build directory for submission
-      - name: Zip Extension Source
-        run: |
-          cd .output/firefox-mv3
-          zip -r ../../extension.zip .
-          cd ../..
-
       # Upload to AMO and attempt to sign/download the .xpi
+      # This step dynamically finds your build folder (supports firefox-mv2 or firefox-mv3)
       - name: Submit to Firefox AMO
         id: web-ext-submit
         run: |
+          # Dynamically detect the build directory starting with "firefox-"
+          FIREFOX_DIR=$(find .output -maxdepth 1 -type d -name "firefox-*" | head -n 1)
+          echo "Found build directory: $FIREFOX_DIR"
+          
           pnpm exec web-ext sign \
             --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
             --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
             --channel=listed \
             --id="${{ secrets.AMO_ADDON_ID }}" \
-            --source-dir=".output/firefox-mv3" \
+            --source-dir="$FIREFOX_DIR" \
             || echo "Submission completed, but immediate signing/download timed out or requires manual review."
 
       # Upload the signed .xpi as a GitHub Action Artifact if it was successfully downloaded
