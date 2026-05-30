@@ -8,7 +8,7 @@
 
 import { storage } from 'wxt/utils/storage';
 import { addDebugLog } from '../storage/debug';
-import type { QueuedReadingLog, QueuedVideoLog } from '../types';
+import type { QueuedReadingLog, QueuedStremioLog, QueuedVideoLog } from '../types';
 
 /**
  * Video queue — stores videos tracked by the video tracker that haven't
@@ -23,6 +23,21 @@ export const videoQueueStorage = storage.defineItem<QueuedVideoLog[]>('local:vid
  * (TTU, Yatsu, Manabe) that haven't been submitted yet.
  */
 export const readingQueueStorage = storage.defineItem<QueuedReadingLog[]>('local:readingQueue', {
+  fallback: [],
+});
+
+/**
+ * Stremio queue — stores Trakt watched-history entries imported from Stremio
+ * and waiting for manual review/submission.
+ */
+export const stremioQueueStorage = storage.defineItem<QueuedStremioLog[]>('local:stremioQueue', {
+  fallback: [],
+});
+
+/**
+ * Processed Trakt history ids — prevents duplicate imports from Trakt.
+ */
+export const stremioProcessedStorage = storage.defineItem<string[]>('local:stremioProcessedHistoryIds', {
   fallback: [],
 });
 
@@ -111,6 +126,25 @@ export async function updateReadingQueueAtomic(
       return updated;
     } catch (err) {
       await addDebugLog('ERROR', 'Queue', 'Failed to update reading queue atomically', err);
+      throw err;
+    }
+  });
+}
+
+/**
+ * Atomically updates the Stremio queue in local storage.
+ */
+export async function updateStremioQueueAtomic(
+  modifier: (currentQueue: QueuedStremioLog[]) => QueuedStremioLog[] | Promise<QueuedStremioLog[]>
+): Promise<QueuedStremioLog[]> {
+  return executeQueueTransaction(async () => {
+    try {
+      const current = await stremioQueueStorage.getValue();
+      const updated = await modifier(current);
+      await stremioQueueStorage.setValue(updated);
+      return updated;
+    } catch (err) {
+      await addDebugLog('ERROR', 'Queue', 'Failed to update Stremio queue atomically', err);
       throw err;
     }
   });

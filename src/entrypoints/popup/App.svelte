@@ -4,8 +4,10 @@
   import {
     videoQueueStorage,
     readingQueueStorage,
+    stremioQueueStorage,
     updateVideoQueueAtomic,
     updateReadingQueueAtomic,
+    updateStremioQueueAtomic,
   } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import QueueList from "@/components/popup/QueueList.svelte";
@@ -43,6 +45,7 @@
   /* ── Reactive state ── */
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
+  let stremioQueue: any[] = $state([]);
   let hasApiKey = $state(false);
   let currentFilter = $state("all");
   let isSendingAll = $state(false);
@@ -72,7 +75,7 @@
     applyInitialTheme(cfg, activeUrl, null);
   }
 
-  const total = $derived(videoQueue.length + readingQueue.length);
+  const total = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
 
   function isCustomThemeId(id: string): boolean {
     return id === "custom" || id.startsWith("custom_");
@@ -236,14 +239,16 @@
     ).catch(() => []);
     const vQueuePromise = videoQueueStorage.getValue().catch(() => []);
     const rQueuePromise = readingQueueStorage.getValue().catch(() => []);
+    const sQueuePromise = stremioQueueStorage.getValue().catch(() => []);
     const cfgPromise = (configStorage.getValue() as Promise<any>).catch(
       () => null,
     );
 
-    const [activeTabs, vQueue, rQueue, cfg] = await Promise.all([
+    const [activeTabs, vQueue, rQueue, sQueue, cfg] = await Promise.all([
       tabPromise,
       vQueuePromise,
       rQueuePromise,
+      sQueuePromise,
       cfgPromise,
     ]);
 
@@ -271,6 +276,7 @@
 
     videoQueue = vQueue;
     readingQueue = rQueue;
+    stremioQueue = sQueue;
     hasApiKey = !!cfg?.apiKey;
     customThemes = cfg?.customThemes ?? [];
 
@@ -366,7 +372,7 @@
     const storageListener = (changes: any, area: string) => {
       if (
         area === "local" &&
-        (changes["videoQueue"] || changes["readingQueue"])
+        (changes["videoQueue"] || changes["readingQueue"] || changes["stremioQueue"])
       ) {
         const focusedTag = document.activeElement?.tagName;
         if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
@@ -678,8 +684,9 @@
 
     isSendingAll = true;
 
-    function getItemPayloads(item: any, type: "reading" | "video") {
+    function getItemPayloads(item: any, type: "reading" | "video" | "stremio") {
       const isRead = type === "reading";
+      const isStremio = type === "stremio";
       const sessions = item.sessions ?? [];
       const displayMins = isRead
         ? Math.max(1, Math.round((item.time || 0) / 60))
@@ -708,17 +715,19 @@
         return sessions.map((sess: any) => {
           const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
           const payload: any = {
-            type,
+            type: isStremio ? item.logType || "anime" : type,
             description: type === "video" ? stripVideoTitle(desc) : desc,
             time: sessMins,
             date: new Date(sess.date).toISOString(),
             chars: isRead ? sess.chars || 0 : 0,
-            episodes: 0,
+            episodes: isStremio ? item.episodes || 1 : 0,
             pages: 0,
             unknownDate: false,
             mediaId: isRead
               ? item.mediaId || "web-reading"
-              : item.mediaData?.channelId || item.channelId || "web-video",
+              : isStremio
+                ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+                : item.mediaData?.channelId || item.channelId || "web-video",
             mediaData: item.mediaData || {},
           };
           if (isRead) {
@@ -728,17 +737,19 @@
         });
       } else {
         const payload: any = {
-          type,
+          type: isStremio ? item.logType || "anime" : type,
           description: type === "video" ? stripVideoTitle(desc) : desc,
           time: displayMins,
           date: new Date(defaultDateStr).toISOString(),
           chars: isRead ? item.chars || 0 : 0,
-          episodes: 0,
+          episodes: isStremio ? item.episodes || 1 : 0,
           pages: 0,
           unknownDate: false,
           mediaId: isRead
             ? item.mediaId || "web-reading"
-            : item.mediaData?.channelId || item.channelId || "web-video",
+            : isStremio
+              ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+              : item.mediaData?.channelId || item.channelId || "web-video",
           mediaData: item.mediaData || {},
           volume: isRead ? Math.max(1, Number(item.volume || 1)) : undefined,
         };
@@ -748,9 +759,11 @@
 
     const rItems = [...readingQueue];
     const vItems = [...videoQueue];
+    const sItems = [...stremioQueue];
 
     const failedReadingIds = new Set<string>();
     const failedVideoIds = new Set<string>();
+    const failedStremioIds = new Set<string>();
     let totalSent = 0;
     let totalFailed = 0;
 
@@ -824,6 +837,28 @@
       }
     }
 
+    for (const item of sItems) {
+      try {
+        const payloads = getItemPayloads(item, "stremio");
+        let itemSucceeded = true;
+        for (const p of payloads) {
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
+        }
+        if (!itemSucceeded) {
+          failedStremioIds.add(item.id);
+        }
+      } catch {
+        failedStremioIds.add(item.id);
+        totalFailed++;
+      }
+    }
+
     await updateReadingQueueAtomic((freshReadingQueue) => [
       ...freshReadingQueue.filter(
         (item: any) => !rItems.some((sent: any) => sent.id === item.id),
@@ -836,6 +871,13 @@
         (item: any) => !vItems.some((sent: any) => sent.id === item.id),
       ),
       ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
+    ]);
+
+    await updateStremioQueueAtomic((freshStremioQueue) => [
+      ...freshStremioQueue.filter(
+        (item: any) => !sItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...sItems.filter((item: any) => failedStremioIds.has(item.id)),
     ]);
 
     if (totalFailed > 0) {
@@ -863,6 +905,9 @@
     }
     if (currentFilter === "all" || currentFilter === "reading") {
       await updateReadingQueueAtomic(() => []);
+    }
+    if (currentFilter === "all" || currentFilter === "stremio") {
+      await updateStremioQueueAtomic(() => []);
     }
     await loadData();
   }
@@ -1060,7 +1105,7 @@
 
 <!-- ── Filter tabs ── -->
 <div class="queue-tabs">
-  {#each ["all", "video", "reading"] as filter}
+  {#each ["all", "video", "reading", "stremio"] as filter}
     <button
       class="q-tab"
       class:active={currentFilter === filter}
@@ -1076,6 +1121,7 @@
   <QueueList
     {videoQueue}
     {readingQueue}
+    {stremioQueue}
     {currentFilter}
     onStatusMessage={showStatus}
     onConfirm={handleConfirm}

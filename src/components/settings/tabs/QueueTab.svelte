@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { videoQueueStorage, readingQueueStorage } from "@/lib/storage/queues";
+  import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import SettingsQueueItem from "./SettingsQueueItem.svelte";
   import {
@@ -30,6 +30,7 @@
 
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
+  let stremioQueue: any[] = $state([]);
   let currentFilter = $state("all");
   let autoSendEOD = $state(false);
   let showTotalInBadge = $state(true); // Control setting for combined dynamic toolbar badge count
@@ -42,17 +43,22 @@
   const filteredVideo = $derived(
     currentFilter === "all" || currentFilter === "video" ? videoQueue : [],
   );
-  const total = $derived(videoQueue.length + readingQueue.length);
+  const filteredStremio = $derived(
+    currentFilter === "all" || currentFilter === "stremio" ? stremioQueue : [],
+  );
+  const total = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
 
   export async function load() {
-    const [video, reading, cfg] = await Promise.all([
+    const [video, reading, stremio, cfg] = await Promise.all([
       videoQueueStorage.getValue(),
       readingQueueStorage.getValue(),
+      stremioQueueStorage.getValue(),
       configStorage.getValue() as Promise<any>,
     ]);
 
     videoQueue = video;
     readingQueue = reading;
+    stremioQueue = stremio;
     autoSendEOD = cfg.autoSendEndOfDay ?? false;
     showTotalInBadge = cfg.showTotalInBadge !== false;
     onQueueCountChange(total);
@@ -100,8 +106,9 @@
 
     isSendingAll = true;
 
-    function getItemPayloads(item: any, type: "reading" | "video") {
+    function getItemPayloads(item: any, type: "reading" | "video" | "stremio") {
       const isRead = type === "reading";
+      const isStremio = type === "stremio";
       const sessions = item.sessions ?? [];
       const displayMins = isRead
         ? Math.max(1, Math.round((item.time || 0) / 60))
@@ -130,17 +137,19 @@
         return sessions.map((sess: any) => {
           const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
           const payload: any = {
-            type,
+            type: isStremio ? item.logType || "anime" : type,
             description: type === "video" ? stripVideoTitle(desc) : desc,
             time: sessMins,
             date: new Date(sess.date).toISOString(),
             chars: isRead ? sess.chars || 0 : 0,
-            episodes: 0,
+            episodes: isStremio ? item.episodes || 1 : 0,
             pages: 0,
             unknownDate: false,
             mediaId: isRead
               ? item.mediaId || "web-reading"
-              : item.mediaData?.channelId || item.channelId || "web-video",
+              : isStremio
+                ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+                : item.mediaData?.channelId || item.channelId || "web-video",
             mediaData: item.mediaData || {},
           };
           if (isRead) {
@@ -150,17 +159,19 @@
         });
       } else {
         const payload: any = {
-          type,
+          type: isStremio ? item.logType || "anime" : type,
           description: type === "video" ? stripVideoTitle(desc) : desc,
           time: displayMins,
           date: new Date(defaultDateStr).toISOString(),
           chars: isRead ? item.chars || 0 : 0,
-          episodes: 0,
+          episodes: isStremio ? item.episodes || 1 : 0,
           pages: 0,
           unknownDate: false,
           mediaId: isRead
             ? item.mediaId || "web-reading"
-            : item.mediaData?.channelId || item.channelId || "web-video",
+            : isStremio
+              ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+              : item.mediaData?.channelId || item.channelId || "web-video",
           mediaData: item.mediaData || {},
         };
         if (isRead) {
@@ -172,9 +183,11 @@
 
     const rItems = [...readingQueue];
     const vItems = [...videoQueue];
+    const sItems = [...stremioQueue];
 
     const failedReadingIds = new Set<string>();
     const failedVideoIds = new Set<string>();
+    const failedStremioIds = new Set<string>();
     let totalSent = 0;
     let totalFailed = 0;
 
@@ -250,6 +263,28 @@
       }
     }
 
+    for (const item of sItems) {
+      try {
+        const payloads = getItemPayloads(item, "stremio");
+        let itemSucceeded = true;
+        for (const p of payloads) {
+          const res = await submitLog(p, true);
+          if (res?.success) {
+            totalSent++;
+          } else {
+            itemSucceeded = false;
+            totalFailed++;
+          }
+        }
+        if (!itemSucceeded) {
+          failedStremioIds.add(item.id);
+        }
+      } catch {
+        failedStremioIds.add(item.id);
+        totalFailed++;
+      }
+    }
+
     const freshReadingQueue = await readingQueueStorage.getValue();
     const freshVideoQueue = await videoQueueStorage.getValue();
 
@@ -268,6 +303,12 @@
 
     await readingQueueStorage.setValue(nextReadingQueue);
     await videoQueueStorage.setValue(nextVideoQueue);
+    await stremioQueueStorage.setValue([
+      ...(await stremioQueueStorage.getValue()).filter(
+        (item: any) => !sItems.some((sent: any) => sent.id === item.id),
+      ),
+      ...sItems.filter((item: any) => failedStremioIds.has(item.id)),
+    ]);
 
     if (totalFailed > 0) {
       if (totalSent > 0) {
@@ -293,6 +334,8 @@
       await videoQueueStorage.setValue([]);
     if (currentFilter === "all" || currentFilter === "reading")
       await readingQueueStorage.setValue([]);
+    if (currentFilter === "all" || currentFilter === "stremio")
+      await stremioQueueStorage.setValue([]);
     onStatus("✓ Pending logs cleared successfully");
     await load();
   }
@@ -318,6 +361,11 @@
       load();
     });
     videoQueueStorage.watch(() => {
+      const focusedTag = document.activeElement?.tagName;
+      if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
+      load();
+    });
+    stremioQueueStorage.watch(() => {
       const focusedTag = document.activeElement?.tagName;
       if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
       load();
@@ -390,7 +438,7 @@
 
 <!-- Filter tabs -->
 <div class="queue-tabs">
-  {#each ["all", "video", "reading"] as filter}
+  {#each ["all", "video", "reading", "stremio"] as filter}
     <button
       class="q-tab"
       class:active={currentFilter === filter}
@@ -456,6 +504,16 @@
       <SettingsQueueItem
         {item}
         type="video"
+        {onStatus}
+        {onConfirm}
+        onRefresh={load}
+      />
+    {/each}
+
+    {#each filteredStremio as item (item.id)}
+      <SettingsQueueItem
+        {item}
+        type="stremio"
         {onStatus}
         {onConfirm}
         onRefresh={load}

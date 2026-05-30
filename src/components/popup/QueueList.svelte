@@ -9,6 +9,7 @@
   interface Props {
     videoQueue: any[];
     readingQueue: any[];
+    stremioQueue: any[];
     currentFilter: string;
     onStatusMessage: (msg: string, err?: boolean) => void;
     onConfirm: (title: string, msg: string) => Promise<boolean>;
@@ -18,6 +19,7 @@
   let {
     videoQueue,
     readingQueue,
+    stremioQueue,
     currentFilter,
     onStatusMessage,
     onConfirm,
@@ -31,8 +33,11 @@
   const filteredVideo = $derived(
     currentFilter === "all" || currentFilter === "video" ? videoQueue : [],
   );
-  const totalFiltered = $derived(filteredReading.length + filteredVideo.length);
-  const totalAll = $derived(videoQueue.length + readingQueue.length);
+  const filteredStremio = $derived(
+    currentFilter === "all" || currentFilter === "stremio" ? stremioQueue : [],
+  );
+  const totalFiltered = $derived(filteredReading.length + filteredVideo.length + filteredStremio.length);
+  const totalAll = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
 </script>
 
 <div class="queue-list">
@@ -54,6 +59,15 @@
       <QueueItem
         {item}
         type="video"
+        {onStatusMessage}
+        {onConfirm}
+        {onRefresh}
+      />
+    {/each}
+    {#each filteredStremio as item (item.id)}
+      <QueueItem
+        {item}
+        type="stremio"
         {onStatusMessage}
         {onConfirm}
         {onRefresh}

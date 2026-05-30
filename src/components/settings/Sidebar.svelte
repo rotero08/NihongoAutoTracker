@@ -152,6 +152,25 @@
       Overlay
     </a>
 
+    <!-- Stremio -->
+    <a
+      class="nav-item"
+      class:active={activeTab === "stremio"}
+      data-tab="stremio"
+      href="#stremio"
+      onclick={(e) => {
+        e.preventDefault();
+        onTabChange("stremio");
+      }}
+    >
+      <span class="nav-icon"
+        ><svg viewBox="0 0 16 16"
+          ><path d="M4 3l9 5-9 5z" fill="currentColor" stroke="none" /></svg
+        ></span
+      >
+      Stremio
+    </a>
+
     <!-- Readers -->
     <a
       class="nav-item"
