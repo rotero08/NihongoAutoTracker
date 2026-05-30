@@ -12,17 +12,26 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # Install pnpm package manager
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9 # Adjust to 8 if you are using pnpm v8 locally
+
+      # Setup Node.js with pnpm caching
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: 'pnpm'
 
+      # Install dependencies cleanly using pnpm-lock.yaml
       - name: Install Dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
+      # Build the WebExtension using pnpm
       - name: Build Extension (Firefox)
-        run: npx wxt build --browser firefox
+        run: pnpm wxt build --browser firefox
 
       # Zip the build directory for submission
       - name: Zip Extension Source
@@ -35,7 +44,7 @@ jobs:
       - name: Submit to Firefox AMO
         id: web-ext-submit
         run: |
-          npx web-ext sign \
+          pnpm exec web-ext sign \
             --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
             --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
             --channel=listed \
@@ -58,5 +67,5 @@ jobs:
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
           AMO_ADDON_ID: ${{ secrets.AMO_ADDON_ID }}
         run: |
-          npm install jsonwebtoken
+          pnpm add jsonwebtoken
           node .github/scripts/sync-description.js
