@@ -1,6 +1,15 @@
-const fs = require('fs');
-const path = require('path');
-const jwt = require('jsonwebtoken');
+import fs from 'fs';
+import path from 'path';
+import jwt from 'jsonwebtoken';
+import { fileURLToPath } from 'url';
+
+// Manually define __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Helper definitions for logging
+const log = (...args) => console.log(...args);
+const error = (...args) => console.error(...args);
 
 // Generate JWT for authentication with Firefox AMO API
 function generateToken(issuer, secret) {
@@ -25,7 +34,7 @@ async function run() {
     }
 
     // Read the store-specific description file instead of the main README.md
-    // to ensure formatting (like HTML tables or images) remains clean on the store page.
+    // to ensure formatting remains clean on the store page.
     const descriptionPath = path.resolve(__dirname, '../../STORE_DESCRIPTION.md');
 
     if (!fs.existsSync(descriptionPath)) {

@@ -1,5 +1,14 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Manually define __dirname for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Helper definitions for logging
+const log = (...args) => console.log(...args);
+const error = (...args) => console.error(...args);
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const AMO_ADDON_ID = process.env.AMO_ADDON_ID;
