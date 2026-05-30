@@ -37,7 +37,7 @@ async function run() {
 
     // AMO store page description limit is 3000 characters. 
     if (content.length > 3000) {
-        "Description is longer than 3000 characters. Truncating to fit AMO guidelines...");
+        log("Description is longer than 3000 characters. Truncating to fit AMO guidelines...");
         content = content.substring(0, 2995) + '...';
     }
 
