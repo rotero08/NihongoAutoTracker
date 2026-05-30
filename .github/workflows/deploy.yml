@@ -43,7 +43,7 @@ jobs:
           FIREFOX_DIR=$(find .output -maxdepth 1 -type d -name "firefox-*" | head -n 1)
           echo "Found build directory: $FIREFOX_DIR"
           
-          pnpm exec web-ext sign \
+          pnpm dlx web-ext sign \
             --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
             --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
             --channel=listed \
