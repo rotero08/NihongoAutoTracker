@@ -1,12 +1,10 @@
 name: Poll AMO and Attach Signed XPI
 
 on:
-  schedule:
-    - cron: '0 */3 * * *' # Runs every 3 hours
-  workflow_dispatch: # Allows you to trigger it manually from the GitHub UI
+  workflow_dispatch: # Allows you to trigger it manually with one click from the GitHub UI
 
 permissions:
-  contents: write # Allows the script to create Draft Releases and attach files
+  contents: write
 
 jobs:
   poll-and-attach:
