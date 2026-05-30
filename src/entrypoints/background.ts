@@ -10,13 +10,13 @@
 
 import { defineBackground } from '#imports';
 import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
-import { notify } from '@/lib/utils/toast';
 import { JP_ALL_RE } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
-import { addDebugLog, pushRamLog, clearRamLogs, getRamLogs } from '@/lib/storage/debug';
+import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
 import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
-import { storage } from 'wxt/utils/storage';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
+import { notify } from '@/lib/utils/toast';
+import { storage } from 'wxt/utils/storage';
 
 export default defineBackground(() => {
   // Use WXT's normalized action API which unifies Manifest V2 and Manifest V3 environments

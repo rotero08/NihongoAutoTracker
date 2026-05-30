@@ -6,14 +6,14 @@
  */
 
 import {
-    isWebsiteOverlaySkipped,
-    runOverlaySetup,
-    getOverlayDismissed,
-    applyOverlayPosition,
-    injectOverlayCustomOverrides,
-    enforceOverlayLayout,
-    updatePauseIconState,
-    injectThemeStyles
+  applyOverlayPosition,
+  enforceOverlayLayout,
+  getOverlayDismissed,
+  injectOverlayCustomOverrides,
+  injectThemeStyles,
+  isWebsiteOverlaySkipped,
+  runOverlaySetup,
+  updatePauseIconState
 } from '@/lib/ui/reader-overlay';
 import { getActiveThemeName } from '@/lib/ui/text-tracker-theme-manager';
 

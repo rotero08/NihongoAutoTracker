@@ -3,31 +3,30 @@
  */
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
+import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
 import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
-import { ttuLinkStorage, ttuHistoryStorage } from '@/lib/storage/ttu';
-import { TimerEngine } from '@/lib/utils/timer'; // Class unified
+import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
+import type { QueuedReadingLog, ReadingMediaData } from '@/lib/types';
 import {
-  getOverlayDismissed,
   applyOverlayPosition,
+  getOverlayDismissed,
   injectOverlayCustomOverrides,
-  enforceOverlayLayout,
-  updatePauseIconState,
+  injectThemeStyles,
   isWebsiteOverlaySkipped,
-  injectThemeStyles
+  updatePauseIconState
 } from '@/lib/ui/reader-overlay';
-import { getActiveThemeName, getReaderConfig, applyActiveTheme, applyCustomThemeToDoc, clearCustomThemeFromDoc, clearThemeDetectionCache } from '@/lib/ui/text-tracker-theme-manager';
-import { extractAdvancedCharCount, clearExtractorCache } from '@/lib/utils/reader-char-extractor';
-import { parseTitle } from '@/lib/utils/text-parsing';
-import { showToast } from '@/lib/utils/toast';
+import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
 import { DOMMutationStabilizer } from '@/lib/utils/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/utils/overlay-controller';
+import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { parseTitle } from '@/lib/utils/text-parsing';
+import { TimerEngine } from '@/lib/utils/timer'; // Class unified
+import { showToast } from '@/lib/utils/toast';
 import { mount, unmount } from 'svelte';
-import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
-import type { QueuedReadingLog, ReadingMediaData } from '@/lib/types';
 
 const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && !!window.location.hostname && (
   window.self === window.top ||

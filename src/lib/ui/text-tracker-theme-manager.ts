@@ -1,6 +1,6 @@
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
-import { applyThemeToDocument, applyCustomThemeToDoc, clearCustomThemeFromDoc, parseColorToRgb, rgbToHsl, hslToRgb } from '@/lib/ui/themes';
+import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;

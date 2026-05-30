@@ -3,25 +3,25 @@
  */
 import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
-import { configStorage } from '@/lib/storage/config';
-import { addDebugLog } from '@/lib/storage/debug';
-import { videoQueueStorage, updateVideoQueueAtomic } from '@/lib/storage/queues';
-import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
-import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
-import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
-import { stripVideoTitle } from '@/lib/utils/text-parsing';
-import { cleanUrl } from '@/lib/utils/url';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
 import { submitLog } from '@/lib/api/nihongotracker';
+import { configStorage } from '@/lib/storage/config';
+import { addDebugLog } from '@/lib/storage/debug';
+import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
+import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
+import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
 import { shouldHideBadge } from '@/lib/ui/video-badge';
+import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
+import { BadgeRenderer } from '@/lib/utils/badge-renderer';
+import { setSafeHTML } from '@/lib/utils/dom';
+import { PlayerTrackerEngine } from '@/lib/utils/player-tracker-engine';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
+import { cleanUrl } from '@/lib/utils/url';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,
   getChannelMediaData
 } from '@/lib/utils/youtube-extraction';
-import { PlayerTrackerEngine } from '@/lib/utils/player-tracker-engine';
-import { BadgeRenderer } from '@/lib/utils/badge-renderer';
-import { setSafeHTML } from '@/lib/utils/dom';
 
 let cachedConfig: any = {};
 

@@ -3,7 +3,6 @@
  * Takes whisper ttsu sync and Jiten into account for its calculations
  */
 
-import { addDebugLog } from '@/lib/storage/debug';
 
 export interface AdvancedCharData {
     current: number;

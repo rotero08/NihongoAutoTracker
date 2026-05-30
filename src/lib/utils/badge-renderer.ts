@@ -6,9 +6,9 @@
  */
 
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
+import { shouldHideBadge } from '@/lib/ui/video-badge';
 import { setSafeHTML } from '@/lib/utils/dom';
 import { fmtSecs } from '@/lib/utils/time';
-import { shouldHideBadge } from '@/lib/ui/video-badge';
 
 export class BadgeRenderer {
     private lastCounterPaint = 0;

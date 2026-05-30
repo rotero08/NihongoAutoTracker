@@ -5,9 +5,9 @@
 import type { UITheme } from '@/lib/types';
 import { DEFAULT_THEME } from '@/lib/types';
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
-import { getTheme } from './themes';
-import { localTodayISODate, dateInputToISO } from '@/lib/utils/time';
 import { setSafeHTML } from '@/lib/utils/dom';
+import { dateInputToISO, localTodayISODate } from '@/lib/utils/time';
+import { getTheme } from './themes';
 
 export function showNTEditModal(
   badgeEl: HTMLElement,

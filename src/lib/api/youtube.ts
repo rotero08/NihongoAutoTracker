@@ -7,9 +7,7 @@
  */
 
 export {
-  fetchYouTubeVideoData,
-  getYouTubeChannelId,
-  getChannelNameFallback,
+  fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId
 } from '@/lib/utils/youtube-extraction';
 
 export { notify } from '@/lib/utils/toast';

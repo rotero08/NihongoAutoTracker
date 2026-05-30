@@ -1,6 +1,6 @@
+import { JP_RE } from '@/lib/constants';
 import type { TrackerConfig, VideoSiteAdapter } from '@/lib/types';
 import { getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
-import { JP_RE } from '@/lib/constants';
 
 export const youtubeAdapter: VideoSiteAdapter = {
   name: 'YouTube',

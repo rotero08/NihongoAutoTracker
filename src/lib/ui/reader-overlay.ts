@@ -316,7 +316,7 @@ export function runOverlaySetup(cfg: any) {
     overlay = document.createElement('div');
     overlay.id = 'nt-overlay';
     const handle = document.createElement('div');
-    handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.innerHTML = '⠿';
+    handle.className = 'nt-handle'; handle.title = 'Drag to move'; handle.textContent = '⠿';
     const timeEl = document.createElement('span');
     timeEl.className = 'nt-time'; timeEl.textContent = '0:00'; timeEl.title = 'Click to edit';
     const pauseBtn = document.createElement('button');

@@ -5,12 +5,12 @@
  * manual logger inputs, and transaction queues integrations.
  */
 
-import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { submitLog } from '@/lib/api/nihongotracker';
-import { cleanUrl } from '@/lib/utils/url';
-import { stripVideoTitle } from '@/lib/utils/text-parsing';
-import { getChannelMediaData } from '@/lib/utils/youtube-extraction';
 import { addDebugLog } from '@/lib/storage/debug';
+import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
+import { cleanUrl } from '@/lib/utils/url';
+import { getChannelMediaData } from '@/lib/utils/youtube-extraction';
 
 export class PlayerTrackerEngine {
     private watchedSecs = 0;
