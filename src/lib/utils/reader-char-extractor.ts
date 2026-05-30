@@ -9,6 +9,8 @@ export interface AdvancedCharData {
     total: number;
     sectionIndex: number | null;
     isPaginated: boolean;
+    hasText: boolean;
+    source: 'progress' | 'layout';
 }
 
 // Module-level caches to optimize execution overhead
@@ -51,6 +53,41 @@ if (typeof window !== 'undefined') {
  * Robust regular expression that captures letters/numbers and placeholder symbols.
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
+
+function parseReaderProgressText(text: string): { current: number; total: number } | null {
+    const match = text.match(/([\d,]+)\s*\/\s*([\d,]+)\s*(?:Ch|chars?|characters?|文字|字)?(?:\s*\|\s*[\d.]+%)?/i);
+    if (!match) return null;
+
+    const current = parseInt(match[1].replace(/,/g, ''), 10);
+    const total = parseInt(match[2].replace(/,/g, ''), 10);
+    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0 || current < 0 || current > total) {
+        return null;
+    }
+    return { current, total };
+}
+
+function getNativeReaderProgress(): { current: number; total: number } | null {
+    const progressSelectors = [
+        'div[title="Click to copy Progress"]',
+        '[title*="Progress"]',
+        '#ttu-page-footer',
+        '.book-footer',
+        '[class*="progress"]',
+        '[class*="footer"]'
+    ];
+
+    for (const selector of progressSelectors) {
+        const elements = document.querySelectorAll(selector);
+        for (const element of elements) {
+            const text = (element.textContent || '').trim();
+            if (!text || text.length > 300) continue;
+            const parsed = parseReaderProgressText(text);
+            if (parsed) return parsed;
+        }
+    }
+
+    return null;
+}
 
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
@@ -233,7 +270,7 @@ export function clearExtractorCache() {
 }
 
 export function extractAdvancedCharCount(
-    containerSelector = '.book-content, [data-ref="container"], .reader-container, article',
+    containerSelector = '.book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, article',
     isTimerRunning = true
 ): AdvancedCharData | null {
     try {
@@ -258,7 +295,9 @@ export function extractAdvancedCharCount(
                 current: 0,
                 total: lastCachedTotal,
                 sectionIndex: lastCachedSectionIndex,
-                isPaginated: cachedIsPaginated
+                isPaginated: cachedIsPaginated,
+                hasText: lastCachedTotal > 0,
+                source: 'layout'
             };
         }
 
@@ -292,16 +331,30 @@ export function extractAdvancedCharCount(
         const sectionIndex = getSectionIndex(activeContainer);
         lastCachedSectionIndex = sectionIndex;
 
+        const nativeProgress = getNativeReaderProgress();
+        if (nativeProgress) {
+            cachedIsPaginated = true;
+            lastCachedTotal = nativeProgress.total;
+            return {
+                current: nativeProgress.current,
+                total: nativeProgress.total,
+                sectionIndex,
+                isPaginated: cachedIsPaginated,
+                hasText: true,
+                source: 'progress'
+            };
+        }
+
         if (pTags.length === 0) {
             lastCachedTotal = 0;
-            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, hasText: false, source: 'layout' };
         }
 
         // Layout Stability Guard: If layout is not loaded, defer transition processing
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated, hasText: lastCachedTotal > 0, source: 'layout' };
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
@@ -337,7 +390,7 @@ export function extractAdvancedCharCount(
 
         // Bypasses calculations when stopped, but still preserves cached metrics
         if (!isTimerRunning) {
-            return { current: 0, total, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total, sectionIndex, isPaginated: cachedIsPaginated, hasText: total > 0, source: 'layout' };
         }
 
         // 4. Binary Search for last explored paragraph
@@ -521,7 +574,7 @@ export function extractAdvancedCharCount(
             }
         }
 
-        return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
+        return { current, total, sectionIndex, isPaginated: cachedIsPaginated, hasText: total > 0, source: 'layout' };
     } catch (e) {
         return null;
     }
