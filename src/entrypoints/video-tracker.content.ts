@@ -280,6 +280,7 @@ const attach = (vid: HTMLVideoElement) => {
     console.log(`[NAT DEV - VideoTracker] New Video Context Detected`, { url: cleanedHref });
   }
 
+  clearExtractionCaches();
   document.getElementById('nt-playlist-modal')?.remove();
   document.getElementById('nt-modal-popup')?.remove();
 
