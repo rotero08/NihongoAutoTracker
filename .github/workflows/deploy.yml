@@ -105,26 +105,21 @@ jobs:
             # Retrieve tag annotation, stripping Git comments starting with '#'
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
 
-            # Extract first line for release type detection
-            FIRST_LINE=$(echo "$TAG_MSG" | head -n 1)
+            # Extract clean notes by filtering out any line containing RELEASE_TYPE
+            CLEAN_NOTES=$(echo "$TAG_MSG" | grep -v "RELEASE_TYPE:")
 
             # Check if release already exists (for robust re-runs)
             if gh release view "$TAG_NAME" >/dev/null 2>&1; then
               echo "Release $TAG_NAME already exists. Uploading asset..."
               gh release upload "$TAG_NAME" "$XPI_FILE" --clobber
             else
-              if [ "$FIRST_LINE" = "RELEASE_TYPE: PUBLIC" ]; then
+              if echo "$TAG_MSG" | grep -q "RELEASE_TYPE: PUBLIC"; then
                 echo "Detected PUBLIC release"
-                # Strip the first line header to get clean release notes
-                CLEAN_NOTES=$(echo "$TAG_MSG" | tail -n +2)
-                
                 gh release create "$TAG_NAME" "$XPI_FILE" \
                   --title "$TAG_NAME" \
                   --notes "$CLEAN_NOTES"
-              elif [ "$FIRST_LINE" = "RELEASE_TYPE: DRAFT" ]; then
+              elif echo "$TAG_MSG" | grep -q "RELEASE_TYPE: DRAFT"; then
                 echo "Detected DRAFT release"
-                CLEAN_NOTES=$(echo "$TAG_MSG" | tail -n +2)
-                
                 gh release create "$TAG_NAME" "$XPI_FILE" \
                   --title "$TAG_NAME" \
                   --draft \
@@ -138,7 +133,7 @@ jobs:
               fi
             fi
           else
-            echo "⚠️ No signed XPI found. Manual review may be required on AMO."
+            echo "No signed XPI file found. Skipping release attachment."
           fi
 
       # Sync listing description to Firefox AMO store page

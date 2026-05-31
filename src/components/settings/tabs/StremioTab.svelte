@@ -119,7 +119,7 @@
 <div class="tab-head">
   <h2>Stremio</h2>
   <div class="tab-actions">
-    <button class="btn btn-amber btn-sm" onclick={save}>Save</button>
+    <button class="btn btn-amber btn-sm" onclick={() => save()}>Save</button>
   </div>
 </div>
 
@@ -129,7 +129,7 @@
 
 <div class="field">
   <label class="toggle">
-    <input type="checkbox" class="toggle-chk" bind:checked={enabled} onchange={save} />
+    <input type="checkbox" class="toggle-chk" bind:checked={enabled} onchange={() => save()} />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
     Enable Stremio via Trakt
   </label>

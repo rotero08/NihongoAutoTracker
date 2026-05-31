@@ -11,7 +11,7 @@
   } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import QueueList from "@/components/popup/QueueList.svelte";
-  import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
+  import ConfirmModal from "@/components/ConfirmModal.svelte";
   import CustomSelect from "@/components/settings/CustomSelect.svelte";
   import { notify } from "@/lib/utils/toast";
   import {

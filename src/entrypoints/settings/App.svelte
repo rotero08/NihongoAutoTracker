@@ -12,7 +12,7 @@
   import StremioTab from "@/components/settings/tabs/StremioTab.svelte";
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
-  import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
+  import ConfirmModal from "@/components/ConfirmModal.svelte";
   import { notify } from "@/lib/utils/toast";
   import { showToast } from "@/lib/utils/toast";
   import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
