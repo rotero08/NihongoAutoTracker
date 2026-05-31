@@ -2,7 +2,7 @@
   "name": "wxt-starter",
   "description": "manifest.json description",
   "private": true,
-  "version": "4.0.5",
+  "version": "4.0.6",
   "_comment": "DO NOT CHANGE THE VERSION MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY",
   "type": "module",
   "scripts": {
