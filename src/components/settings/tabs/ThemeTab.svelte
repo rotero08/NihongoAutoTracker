@@ -75,6 +75,20 @@
 
     const customThemeIds = $derived(customThemes.map((theme) => theme.id));
 
+    // Custom confirm dialog state variables
+    let showCustomConfirm = $state(false);
+    let customConfirmTitle = $state("");
+    let customConfirmMessage = $state("");
+    let customConfirmResolve = $state<((value: boolean) => void) | null>(null);
+
+    function showCustomConfirmDialog(title: string, message: string): Promise<boolean> {
+        return new Promise((resolve) => {
+            customConfirmTitle = title;
+            customConfirmMessage = message;
+            customConfirmResolve = resolve;
+            showCustomConfirm = true;
+        });
+    }
 
     function isCustomThemeId(id: string): boolean {
         return id === "custom" || id.startsWith("custom_");
@@ -207,6 +221,12 @@
         delete triedSavingEmptyName[themeId];
         delete themeSessionColors[themeId];
         delete themeSessionNames[themeId];
+
+        themeDraftColors = { ...themeDraftColors };
+        themeDraftNames = { ...themeDraftNames };
+        triedSavingEmptyName = { ...triedSavingEmptyName };
+        themeSessionColors = { ...themeSessionColors };
+        themeSessionNames = { ...themeSessionNames };
     }
 
     function discardThemeDraft(themeId: string) {
@@ -221,12 +241,20 @@
             applyThemeToDocument(lastActivePresetTheme, selectedFont, undefined, {
                 useStaticInPageLogo,
             });
+            isCollapsed["global"] = true;
         }
-        if (ttuThemeOverride === themeId) ttuThemeOverride = lastActiveTtuOverride;
-        if (yatsuThemeOverride === themeId)
+        if (ttuThemeOverride === themeId) {
+            ttuThemeOverride = lastActiveTtuOverride;
+            isCollapsed["ttu"] = true;
+        }
+        if (yatsuThemeOverride === themeId) {
             yatsuThemeOverride = lastActiveYatsuOverride;
-        if (yomiyasuThemeOverride === themeId)
+            isCollapsed["yatsu"] = true;
+        }
+        if (yomiyasuThemeOverride === themeId) {
             yomiyasuThemeOverride = lastActiveYomiyasuOverride;
+            isCollapsed["yomiyasu"] = true;
+        }
 
         clearThemeDraft(themeId);
     }
@@ -313,11 +341,7 @@
 
     async function confirmDiscardUnsavedChanges(message: string): Promise<boolean> {
         if (!getHasUnsavedChanges()) return true;
-        try {
-            return await onConfirm("Unsaved Changes", message);
-        } catch {
-            return false;
-        }
+        return await showCustomConfirmDialog("Unsaved Changes", message);
     }
 
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -462,7 +486,7 @@
     async function confirmDeleteTheme(themeId: string) {
         const theme = customThemes.find((t) => t.id === themeId);
         const name = theme && theme.name ? theme.name : "this custom theme";
-        const confirmed = await onConfirm(
+        const confirmed = await showCustomConfirmDialog(
             "Delete Theme",
             `Are you sure you want to delete "${name}"? This action cannot be reverted.`,
         );
@@ -491,6 +515,7 @@
             applyThemeToDocument("dark-amber", selectedFont, undefined, {
                 useStaticInPageLogo,
             });
+            isCollapsed["global"] = true;
         }
         if (ttuThemeOverride === themeId) {
             ttuThemeOverride = "global";
@@ -498,6 +523,7 @@
             cfg.ttuThemeOverride = "global";
             cfg.ttuThemeOverrideId = undefined;
             cfg.ttuCustomColors = undefined;
+            isCollapsed["ttu"] = true;
         }
         if (yatsuThemeOverride === themeId) {
             yatsuThemeOverride = "global";
@@ -505,6 +531,7 @@
             cfg.yatsuThemeOverride = "global";
             cfg.yatsuThemeOverrideId = undefined;
             cfg.yatsuCustomColors = undefined;
+            isCollapsed["yatsu"] = true;
         }
         if (yomiyasuThemeOverride === themeId) {
             yomiyasuThemeOverride = "global";
@@ -512,6 +539,7 @@
             cfg.yomiyasuThemeOverride = "global";
             cfg.yomiyasuThemeOverrideId = undefined;
             cfg.yomiyasuCustomColors = undefined;
+            isCollapsed["yomiyasu"] = true;
         }
 
         cfg.customThemes = $state.snapshot(customThemes);
@@ -642,7 +670,7 @@
             isThemeModified(selectedTheme) &&
             selectedTheme !== themeName
         ) {
-            const confirmed = await onConfirm(
+            const confirmed = await showCustomConfirmDialog(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications. Selecting another theme will discard your current edits. Do you want to proceed?",
             );
@@ -747,7 +775,7 @@
             isThemeModified(currentOverride) &&
             currentOverride !== themeName
         ) {
-            const confirmed = await onConfirm(
+            const confirmed = await showCustomConfirmDialog(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications for this reader override. Selecting another option will discard your edits. Do you want to proceed?",
             );
@@ -802,7 +830,7 @@
     }
 
     async function confirmResetAppearance() {
-        const confirmed = await onConfirm(
+        const confirmed = await showCustomConfirmDialog(
             "Restore Defaults",
             "Are you sure you want to restore all appearance styles to factory default? Your custom themes will not be deleted.",
         );
@@ -1288,6 +1316,49 @@
     >
 </div>
 
+{#if showCustomConfirm}
+    <!-- Custom confirmation overlay modal that aligns with theme colors -->
+    <div
+        role="dialog"
+        aria-modal="true"
+        style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 999999; animation: fadeIn 0.15s ease-out; pointer-events: auto !important;"
+    >
+        <div
+            style="background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 8px; width: 420px; max-width: 90%; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px; animation: scaleUp 0.15s ease-out; text-align: left;"
+        >
+            <div style="font-size: 16px; font-weight: bold; color: var(--color-accent); font-family: var(--font-sans);">
+                {customConfirmTitle}
+            </div>
+            <div style="font-size: 13px; color: var(--color-text); line-height: 1.5; font-family: var(--font-sans);">
+                {customConfirmMessage}
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px;">
+                <button
+                    type="button"
+                    class="btn btn-ghost"
+                    style="padding: 8px 16px; font-size: 12px; font-weight: bold; cursor: pointer;"
+                    onclick={() => {
+                        showCustomConfirm = false;
+                        customConfirmResolve?.(false);
+                    }}
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    class="btn btn-amber"
+                    style="padding: 8px 16px; font-size: 12px; font-weight: bold; cursor: pointer;"
+                    onclick={() => {
+                        showCustomConfirm = false;
+                        customConfirmResolve?.(true);
+                    }}
+                >
+                    Proceed
+                </button>
+            </div>
+        </div>
+    </div>
+{/if}
 
 <style>
     :global(.select-option, .option, [class*="option"]) {
@@ -1372,5 +1443,14 @@
         ) {
         scrollbar-width: thin !important;
         scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+    @keyframes scaleUp {
+        from { transform: scale(0.96); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
     }
 </style>
