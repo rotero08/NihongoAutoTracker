@@ -1,6 +1,8 @@
-name: Poll AMO and Attach Signed XPI
+name: Poll AMO and Attach Signed XPI (Fallback)
 
 on:
+  schedule:
+    - cron: '0 */6 * * *' # Automatically runs every 6 hours (does not spam email on pending review)
   workflow_dispatch: # Allows manual trigger
 
 permissions:
