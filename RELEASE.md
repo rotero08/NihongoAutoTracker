@@ -6,51 +6,36 @@ This project uses GitHub Actions to automate building, submitting, and updating 
 
 ## How to Release a New Version
 
-Follow these steps whenever you want to publish an update:
+The release workflow is automated. You do not need to manually modify the version strings in your configuration files before running the deployment command.
 
-### Step 1: Update Version and Documentation
-1. Open `wxt.config.ts` and update the version number (e.g., change `4.0.1` to `4.0.2` inside the `manifest` block).
-2. Open `package.json` and update the version number to match (e.g., set `"version": "4.0.2"`).
-3. Update `STORE_DESCRIPTION.md` if needed. (The contents of this file will automatically sync to your Firefox store page listing description).
-
-### Step 2: Commit and Push Your Code
-Commit and push your changes to your main branch:
+### Step 1: Push your current updates to the main branch
+Before creating a release, verify that all regular code changes are committed and pushed to your branch:
 ```bash
 git add .
-git commit -m "chore: release v4.0.2"
+git commit -m "feat: add feature updates"
 git push origin main
 ```
 
-### Step 3: Trigger the Automation with a Tag
-By pushing a git tag starting with `v`, GitHub Actions builds and submits your extension. You can choose whether you want the GitHub Release to be **Public (with Release Notes)** or a **Draft (to be published manually)**:
-
-#### Option A: Create a PUBLIC Release with Release Notes (Recommended)
-Use an **Annotated Tag** by adding the `-a` flag. This opens your default command line text editor, allowing you to enter notes:
+### Step 2: Run the Release Script
+Run the built-in release helper in your project root:
 ```bash
-# 1. Create an annotated tag (this will open your terminal's editor)
-git tag -a v4.0.2
-
-# 2. Type your release notes in the editor, save, and exit.
-# 3. Push the tag to GitHub
-git push origin v4.0.2
+pnpm release
 ```
-*The workflow will extract your notes and immediately create a published, **Public** Release on GitHub with the signed `.xpi` file.*
 
-#### Option B: Create a DRAFT Release (No Notes)
-Use a **Lightweight Tag** (without the `-a` flag) to create a release with no notes:
-```bash
-# 1. Create a tag with no message
-git tag v4.0.2
-
-# 2. Push the tag to GitHub
-git push origin v4.0.2
-```
-*The workflow will see that no notes were entered and will create a **Draft** Release instead.*
+1. **Select Version Type:** Use the **Up/Down Arrow Keys** to navigate and press **Enter** to choose your semantic version bump (Patch, Minor, or Major). DO NOT MANUALLY CHANGE THE VERSION INSIDE `wxt.config.ts` or `package.json`.
+2. **Select Release Type:** Use the **Up/Down Arrow Keys** to choose the publication routing:
+   * **Public Release:** Publishes immediately once approved. Requires mandatory release notes.
+   * **Draft Release:** Saves as a draft on GitHub. Release notes are optional.
+3. **Write Release Notes (Git style):** 
+   * The script will automatically launch your terminal's default text editor (such as Vim, Nano, or VS Code) containing template comments starting with `#`.
+   * Type your notes above the commented section. Any line starting with `#` will be ignored.
+   * **Save and exit** the editor to proceed. If you chose a Public Release and close the editor without typing anything, the script will abort the release process cleanly.
 
 ---
 
 ## How the Automation Flows
 
-1. **Submission & Direct Upload:** The action builds the extension and signs it on Firefox AMO [22]. If it gets approved immediately, it downloads the signed `.xpi` file and uploads it to the GitHub Release [22].
-2. **If Manual Review is Required:** If Firefox flags the submission for manual review, the initial action finishes without creating a release. It will not fail or break the pipeline.
-3. **Automated Fallback:** A silent background job (`poll-and-attach.yml`) runs every 6 hours. It checks AMO to see if the extension version has been approved. Once the reviewers approve it, this script will download the `.xpi` and automatically attach it to the GitHub Release. This background check is designed to skip pending versions gracefully and will not send failure emails.
+1. **Safety Check:** The workflow starts by reading the pushed tag version and validating it against the version defined in `wxt.config.ts`. If they do not match, the workflow halts immediately to prevent mismatched deployments.
+2. **Submission & Direct Upload:** The action builds your extension and signs it on Firefox AMO [22]. If it gets approved immediately, it downloads the signed `.xpi` file and uploads it to your GitHub Release [22].
+3. **If Manual Review is Required:** If Firefox flags the submission for manual review, the initial action finishes without creating a release. It will not fail or break your pipeline.
+4. **Automated Fallback:** A silent background job (`sync-signed-xpi.yml`) runs every 6 hours. It checks AMO to see if your extension version has been approved. Once approved, this script will download the `.xpi` and automatically attach it to the GitHub Release. This background check is designed to skip pending versions gracefully and will not send you failure emails.

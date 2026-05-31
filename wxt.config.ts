@@ -9,7 +9,6 @@ try {
     const envContent = fs.readFileSync(envPath, 'utf-8');
     for (const line of envContent.split(/\r?\n/)) {
       const trimmedLine = line.trim();
-      // Ignore empty lines and comments
       if (!trimmedLine || trimmedLine.startsWith('#') || !trimmedLine.includes('=')) {
         continue;
       }
@@ -47,20 +46,16 @@ try {
 }
 
 export default defineConfig({
-  /* ── Source directory ───────────────────────────────────────── */
   srcDir: 'src',
 
   /* ── Target browser for development/builds ──────────────────── */
   browser: currentBrowser,
 
-  /* ── Svelte integration via WXT module ─────────────────────── */
   modules: ['@wxt-dev/module-svelte'],
 
-  /* ── Svelte Compiler Customizations ────────────────────────── */
   svelte: {
     vite: {
       compilerOptions: {
-        // Disables HMR compilation to prevent SSR/vite-node pre-rendering crashes in dev mode
         hmr: false,
       },
     },
@@ -70,7 +65,6 @@ export default defineConfig({
     // Keep profile changes across restarts for both Firefox and Chromium browsers
     keepProfileChanges: true,
 
-    // Tells the runner where to securely store your layout customizations
     ...(isFirefox && {
       firefoxProfile: firefoxProfilePath,
     }),
@@ -93,7 +87,7 @@ export default defineConfig({
     name: 'NihongoAutoTracker',
     description:
       'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
-    version: '4.0.4',
+    version: '4.0.4', // DO NOT CHANGE THIS MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs', 'alarms'],
     host_permissions: [
       'https://nihongotracker.app/*',

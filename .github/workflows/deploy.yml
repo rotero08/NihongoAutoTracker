@@ -16,34 +16,58 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches full git history to read annotated tag messages
+          fetch-depth: 0 # Fetches full tag history to read release notes
 
-      # Install pnpm package manager
+      # Safety Check: Verify that the pushed tag matches wxt.config.ts
+      - name: Validate Version Match
+        if: github.ref_type == 'tag'
+        run: |
+          TAG_VERSION="${{ github.ref_name }}"
+          CLEAN_TAG_VERSION="${TAG_VERSION#v}" # Strip 'v' prefix
+          
+          # Extract version string from wxt.config.ts
+          WXT_VERSION=$(node -e "
+            const fs = require('fs');
+            const content = fs.readFileSync('wxt.config.ts', 'utf8');
+            const match = content.match(/version:\s*['\"\`]([^'\"\`]+)['\"\`]/);
+            if (match) {
+              console.log(match[1]);
+            } else {
+              process.exit(1);
+            }
+          ")
+          
+          echo "Pushed Tag Version: $CLEAN_TAG_VERSION"
+          echo "WXT Config Version: $WXT_VERSION"
+          
+          if [ "$CLEAN_TAG_VERSION" != "$WXT_VERSION" ]; then
+            echo "❌ ERROR: The pushed git tag ($CLEAN_TAG_VERSION) does not match the version inside wxt.config.ts ($WXT_VERSION)!"
+            echo "Please use the 'pnpm release' command to automatically keep your tag and files synchronized."
+            exit 1
+          fi
+          echo "✅ Version validation passed."
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: 9
 
-      # Setup Node.js with pnpm caching
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'pnpm'
 
-      # Install dependencies cleanly using pnpm-lock.yaml (includes jsonwebtoken)
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      # Build the WebExtension using pnpm
       - name: Build Extension (Firefox)
         run: pnpm wxt build --browser firefox
 
-      # Upload to AMO and attempt to sign/download the .xpi
+      # Submit to Firefox AMO and sign/download
       - name: Submit to Firefox AMO
         id: web-ext-submit
         run: |
-          # Dynamically detect the build directory starting with "firefox-"
           FIREFOX_DIR=$(find .output -maxdepth 1 -type d -name "firefox-*" | head -n 1)
           echo "Found build directory: $FIREFOX_DIR"
           
@@ -54,7 +78,6 @@ jobs:
             --source-dir="$FIREFOX_DIR" \
             || echo "Submission completed, but immediate signing/download timed out or requires manual review."
 
-      # Upload the signed .xpi as a GitHub Action Artifact if downloaded
       - name: Upload Signed XPI Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -62,7 +85,7 @@ jobs:
           path: web-ext-artifacts/*.xpi
           if-no-files-found: warn
 
-      # Create/Update GitHub Release and upload XPI if immediately approved
+      # Create/Update GitHub Release and upload XPI matching user's selections
       - name: Attach XPI to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,7 +94,6 @@ jobs:
           if [ -n "$XPI_FILE" ]; then
             echo "Signed XPI found: $XPI_FILE"
             
-            # Use pushed tag name or fall back to version in package.json
             if [ "${{ github.ref_type }}" = "tag" ]; then
               TAG_NAME="${{ github.ref_name }}"
             else
@@ -80,39 +102,46 @@ jobs:
             fi
             echo "Target Release Tag: $TAG_NAME"
 
-            # Retrieve tag annotation, stripping Git comments starting with '#' and trimming whitespace
-            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            # Retrieve tag annotation, stripping Git comments starting with '#'
+            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
 
-            # Check if the release already exists (for robust re-runs)
+            # Extract first line for release type detection
+            FIRST_LINE=$(echo "$TAG_MSG" | head -n 1)
+
+            # Check if release already exists (for robust re-runs)
             if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-              echo "Release $TAG_NAME already exists. Uploading/overwriting asset..."
+              echo "Release $TAG_NAME already exists. Uploading asset..."
               gh release upload "$TAG_NAME" "$XPI_FILE" --clobber
             else
-              if [ -n "$TAG_MSG" ]; then
-                echo "Tag message found. Creating a PUBLIC release..."
-                echo "Release Notes:"
-                echo "$TAG_MSG"
+              if [ "$FIRST_LINE" = "RELEASE_TYPE: PUBLIC" ]; then
+                echo "Detected PUBLIC release"
+                # Strip the first line header to get clean release notes
+                CLEAN_NOTES=$(echo "$TAG_MSG" | tail -n +2)
                 
-                # Create a published (public) release using the tag message
                 gh release create "$TAG_NAME" "$XPI_FILE" \
                   --title "$TAG_NAME" \
-                  --notes "$TAG_MSG"
-              else
-                echo "No tag message found. Creating a DRAFT release..."
+                  --notes "$CLEAN_NOTES"
+              elif [ "$FIRST_LINE" = "RELEASE_TYPE: DRAFT" ]; then
+                echo "Detected DRAFT release"
+                CLEAN_NOTES=$(echo "$TAG_MSG" | tail -n +2)
                 
-                # Create a draft release
                 gh release create "$TAG_NAME" "$XPI_FILE" \
                   --title "$TAG_NAME" \
                   --draft \
-                  --notes "Automated draft release for version $TAG_NAME"
+                  --notes "$CLEAN_NOTES"
+              else
+                echo "⚠️ Untagged release type or manually pushed tag. Defaulting to DRAFT release for safety..."
+                gh release create "$TAG_NAME" "$XPI_FILE" \
+                  --title "$TAG_NAME" \
+                  --draft \
+                  --notes "$TAG_MSG"
               fi
             fi
           else
-            echo "⚠️ No signed XPI found. Skip immediate release step."
-            echo "If manual review is required, the fallback scheduler will attach the XPI once approved."
+            echo "⚠️ No signed XPI found. Manual review may be required on AMO."
           fi
 
-      # Sync your STORE_DESCRIPTION.md to the store page
+      # Sync listing description to Firefox AMO store page
       - name: Sync Store Description
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}

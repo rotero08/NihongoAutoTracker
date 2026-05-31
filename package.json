@@ -2,7 +2,8 @@
   "name": "wxt-starter",
   "description": "manifest.json description",
   "private": true,
-  "version": "0.0.0",
+  "version": "4.0.4",
+  "_comment": "DO NOT CHANGE THE VERSION MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -16,7 +17,8 @@
     "zip:firefox": "wxt zip -b firefox",
     "zip:all": "wxt zip -b chrome && wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "release": "node .github/scripts/release.js"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
