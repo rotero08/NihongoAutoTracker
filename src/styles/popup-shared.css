@@ -162,6 +162,10 @@ body {
 
 .ghost-num.num-chars { width: 40px; color: var(--color-accent); }
 .ghost-num.num-vol { width: 24px; color: var(--color-accent); }
+.ghost-num.qi-chars-num {
+  width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch);
+  color: var(--color-accent);
+}
 
 .unit-lbl {
   font-size: 10px; color: var(--color-text-dimmed); margin-left: 3px; margin-right: 5px; flex-shrink: 0;

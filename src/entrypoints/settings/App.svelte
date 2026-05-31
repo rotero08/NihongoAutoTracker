@@ -32,6 +32,8 @@
   let debugMode = $state(false);
 
   let confirmModal = $state<any>(null);
+  let themeTab = $state<any>(null);
+  let tabChangeInFlight = $state(false);
 
   function isCustomThemeId(id: string): boolean {
     return (
@@ -90,7 +92,20 @@
     return window.confirm(msg);
   }
 
-  function handleTabChange(tab: string) {
+  async function handleTabChange(tab: string) {
+    if (tab === activeTab || tabChangeInFlight) return;
+
+    if (activeTab === "theme" && themeTab?.hasUnsavedThemeChanges?.()) {
+      tabChangeInFlight = true;
+      let canLeave = false;
+      try {
+        canLeave = await themeTab.confirmLeaveThemeTab?.();
+      } finally {
+        tabChangeInFlight = false;
+      }
+      if (!canLeave) return;
+    }
+
     activeTab = tab;
     localStorage.setItem("nt-active-settings-tab", tab);
   }
@@ -263,7 +278,11 @@
     {:else if activeTab === "api"}
       <ApiKeyTab onStatus={showStatus} />
     {:else if activeTab === "theme"}
-      <ThemeTab onStatus={showStatus} onConfirm={handleConfirm} />
+      <ThemeTab
+        bind:this={themeTab}
+        onStatus={showStatus}
+        onConfirm={handleConfirm}
+      />
     {:else if activeTab === "video"}
       <VideoTab onStatus={showStatus} />
     {:else if activeTab === "overlay"}

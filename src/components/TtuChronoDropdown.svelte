@@ -51,6 +51,7 @@
     let timeInputVal = $state("");
     let charsInputVal = $state("");
     let volInputVal = $state(1);
+    let volEditStart = $state(1);
 
     // Status Overlays
     let showSilentGraceStatus = $state(false);
@@ -569,7 +570,44 @@
     function startVolEdit(e: MouseEvent) {
         e.stopPropagation();
         volInputVal = linkedMedia ? linkedMedia.volume : volInputVal;
+        volEditStart = volInputVal;
         isEditingVol = true;
+    }
+
+    function handleTimeEditKeydown(e: KeyboardEvent) {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+            e.preventDefault();
+            commitTimeEdit();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            timeInputVal = fmt(ttuState.timeMs);
+            isEditingTime = false;
+        }
+    }
+
+    function handleCharsEditKeydown(e: KeyboardEvent) {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+            e.preventDefault();
+            commitCharsEdit();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            charsInputVal = ttuState.chars.toString();
+            isEditingChars = false;
+        }
+    }
+
+    function handleVolEditKeydown(e: KeyboardEvent) {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+            e.preventDefault();
+            commitVolEdit();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            volInputVal = volEditStart;
+            isEditingVol = false;
+        }
     }
 
     async function commitVolEdit() {
@@ -699,10 +737,7 @@
                         class="nt-ttu-inline-input"
                         bind:value={timeInputVal}
                         onblur={commitTimeEdit}
-                        onkeydown={(e) => {
-                            e.stopPropagation();
-                            if (e.key === "Enter") commitTimeEdit();
-                        }}
+                        onkeydown={handleTimeEditKeydown}
                         onkeyup={(e) => e.stopPropagation()}
                         onkeypress={(e) => e.stopPropagation()}
                         use:autofocus
@@ -725,10 +760,7 @@
                         class="nt-ttu-inline-input"
                         bind:value={charsInputVal}
                         onblur={commitCharsEdit}
-                        onkeydown={(e) => {
-                            e.stopPropagation();
-                            if (e.key === "Enter") commitCharsEdit();
-                        }}
+                        onkeydown={handleCharsEditKeydown}
                         onkeyup={(e) => e.stopPropagation()}
                         onkeypress={(e) => e.stopPropagation()}
                         use:autofocus
@@ -738,6 +770,7 @@
                         type="button"
                         class="nt-ttu-btn-text nt-ttu-stat-val"
                         id="nt-ttu-val-chars"
+                        style="color: var(--color-accent, var(--nt-accent, #f0b429));"
                         onclick={startCharsEdit}
                         title="Edit">{chars}</button
                     >
@@ -893,10 +926,7 @@
                             class="nt-ttu-vol-input"
                             bind:value={volInputVal}
                             onblur={commitVolEdit}
-                            onkeydown={(e) => {
-                                e.stopPropagation();
-                                if (e.key === "Enter") commitVolEdit();
-                            }}
+                            onkeydown={handleVolEditKeydown}
                             onkeyup={(e) => e.stopPropagation()}
                             onkeypress={(e) => e.stopPropagation()}
                             use:autofocus
@@ -973,10 +1003,7 @@
                                     class="nt-ttu-vol-input"
                                     bind:value={volInputVal}
                                     onblur={commitVolEdit}
-                                    onkeydown={(e) => {
-                                        e.stopPropagation();
-                                        if (e.key === "Enter") commitVolEdit();
-                                    }}
+                                    onkeydown={handleVolEditKeydown}
                                     onkeyup={(e) => e.stopPropagation()}
                                     onkeypress={(e) => e.stopPropagation()}
                                     use:autofocus
@@ -1092,7 +1119,10 @@
                         >
                         <span>{Math.max(1, Math.round(s.timeMs / 60000))}m</span
                         >
-                        <span>{s.chars} chars</span>
+                        <span
+                            ><span class="nt-ttu-chars-value">{s.chars}</span>
+                            chars</span
+                        >
                         <button
                             class="nt-ttu-history-del"
                             onclick={(e) => deleteSession(e, s.id)}
@@ -1314,6 +1344,10 @@
             --color-border-hover,
             var(--nt-border-hover, #555)
         ) !important;
+    }
+
+    :global(.nt-ttu-chars-value) {
+        color: var(--color-accent, var(--nt-accent, #f0b429)) !important;
     }
 
     :global(.nt-ttu-stat-val.no-hover) {

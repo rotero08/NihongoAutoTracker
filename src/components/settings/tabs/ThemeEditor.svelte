@@ -128,6 +128,26 @@
         }
     }
 
+    function rememberEditStart(e: FocusEvent) {
+        const input = e.currentTarget as HTMLInputElement;
+        input.dataset.editStart = input.value;
+    }
+
+    function handleTextEditKeydown(
+        e: KeyboardEvent,
+        revert: (value: string) => void,
+    ) {
+        const input = e.currentTarget as HTMLInputElement;
+        if (e.key === "Enter") {
+            e.preventDefault();
+            input.blur();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            revert(input.dataset.editStart ?? "");
+            input.blur();
+        }
+    }
+
     onMount(() => {
         const handleGlobalClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -371,6 +391,12 @@
                 bind:value={themeName}
                 placeholder="Theme Name"
                 oninput={() => (triedSavingEmptyName = false)}
+                onfocus={rememberEditStart}
+                onkeydown={(e) =>
+                    handleTextEditKeydown(e, (value) => {
+                        themeName = value;
+                        triedSavingEmptyName = false;
+                    })}
             />
             {#if triedSavingEmptyName && !themeName.trim()}
                 <span
@@ -400,6 +426,12 @@
                 bind:value={themeName}
                 placeholder="Type theme name here..."
                 oninput={() => (triedSavingEmptyName = false)}
+                onfocus={rememberEditStart}
+                onkeydown={(e) =>
+                    handleTextEditKeydown(e, (value) => {
+                        themeName = value;
+                        triedSavingEmptyName = false;
+                    })}
             />
             {#if triedSavingEmptyName && !themeName.trim()}
                 <span
@@ -425,6 +457,12 @@
                     style="flex: 1; padding: 4px 6px; font-size: 11px;"
                     bind:value={importCode}
                     placeholder="Paste base64 theme code..."
+                    onfocus={rememberEditStart}
+                    onkeydown={(e) =>
+                        handleTextEditKeydown(
+                            e,
+                            (value) => (importCode = value),
+                        )}
                 />
                 <button
                     class="btn btn-amber btn-sm"
@@ -495,6 +533,12 @@
                             : "width: 76px; padding: 4px 6px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; text-align: center;"}
                         bind:value={themeColors[field.key]}
                         oninput={() => handleColorChange(field.key)}
+                        onfocus={rememberEditStart}
+                        onkeydown={(e) =>
+                            handleTextEditKeydown(e, (value) => {
+                                themeColors[field.key] = value;
+                                handleColorChange(field.key);
+                            })}
                     />
                 </div>
             </div>
@@ -522,7 +566,6 @@
                 ? "font-size: 9.5px; padding: 4px 8px;"
                 : "font-size: 11px; padding: 6px 10px;"}
             onclick={() => onRevert(themeId)}
-            disabled={!isThemeModified()}
         >
             Revert
         </button>

@@ -517,7 +517,7 @@ function runPlaylistInjection(): boolean {
   if (!host.includes('youtube.com') && !host.includes('youtu.be')) {
     return false;
   }
-  if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || isYouTubeShorts()) {
+  if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || cachedConfig.hidePlaylistBadgeIcon === true || isYouTubeShorts()) {
     return false;
   }
 
@@ -820,7 +820,7 @@ export default defineContentScript({
           }
         }
 
-        if (newCfg.enablePlaylistLogger === false) {
+        if (newCfg.enablePlaylistLogger === false || newCfg.hidePlaylistBadgeIcon === true) {
           document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
         } else {
           runPlaylistInjection();

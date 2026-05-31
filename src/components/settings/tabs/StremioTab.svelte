@@ -34,7 +34,7 @@
     japaneseOnly = cfg.stremioJapaneseOnly !== false;
   }
 
-  async function save() {
+  async function save(options?: { silent?: boolean }) {
     const cfg = (await configStorage.getValue()) as any;
     const wasEnabled = cfg.stremioEnabled === true;
     const activatedAt =
@@ -52,12 +52,22 @@
       stremioJapaneseOnly: japaneseOnly,
       stremioActivatedAt: activatedAt,
     });
-    onStatus("✓ Stremio settings saved");
+    if (!options?.silent) {
+      onStatus("✓ Stremio settings saved");
+    }
+  }
+
+  function spinUp(getter: () => number, setter: (v: number) => void) {
+    setter(getter() + 1);
+  }
+
+  function spinDn(getter: () => number, setter: (v: number) => void) {
+    setter(Math.max(1, getter() - 1));
   }
 
   async function startAuth() {
-    await save();
     try {
+      await save({ silent: true });
       const auth = await startTraktDeviceAuth();
       userCode = auth.userCode;
       verificationUrl = auth.verificationUrl;
@@ -92,7 +102,7 @@
   async function importNow() {
     isImporting = true;
     try {
-      await save();
+      await save({ silent: true });
       const result = await importStremioFromTrakt();
       onStatus(`✓ Checked ${result.checked}, queued ${result.imported}, filtered ${result.filteredOut}`);
     } catch (error: any) {
@@ -166,7 +176,49 @@
   <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
     <div>
       <label for="stremio-poll-minutes">Poll every minutes</label>
-      <input id="stremio-poll-minutes" class="input" type="number" min="1" bind:value={pollMinutes} />
+      <div class="thresh-spinner">
+        <input
+          id="stremio-poll-minutes"
+          class="input"
+          type="number"
+          min="1"
+          bind:value={pollMinutes}
+        />
+        <div class="thresh-spin-btns">
+          <button
+            type="button"
+            class="thresh-spin-up"
+            tabindex="-1"
+            onclick={() =>
+              spinUp(
+                () => pollMinutes,
+                (v) => (pollMinutes = v),
+              )}
+            aria-label="Increment poll minutes"
+            title="Increment"
+          >
+            <svg viewBox="0 0 10 6" aria-hidden="true"
+              ><polyline points="1,5 5,1 9,5" /></svg
+            >
+          </button>
+          <button
+            type="button"
+            class="thresh-spin-dn"
+            tabindex="-1"
+            onclick={() =>
+              spinDn(
+                () => pollMinutes,
+                (v) => (pollMinutes = v),
+              )}
+            aria-label="Decrement poll minutes"
+            title="Decrement"
+          >
+            <svg viewBox="0 0 10 6" aria-hidden="true"
+              ><polyline points="1,1 5,5 9,1" /></svg
+            >
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 

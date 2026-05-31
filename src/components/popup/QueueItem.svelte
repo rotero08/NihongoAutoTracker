@@ -125,6 +125,27 @@
     }
   }
 
+  function rememberEditableStart(e: FocusEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    input.dataset.editStart = input.value;
+  }
+
+  function handleEditableKeydown(e: KeyboardEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.value = input.dataset.editStart ?? input.defaultValue;
+      if (input.classList.contains("qi-title")) {
+        titleValue = input.value;
+        searchDropdown?.close();
+      }
+      input.blur();
+    }
+  }
+
   onDestroy(() => {
     clearTimeout(debounceTimer);
     clearTimeout(blurTimeout);
@@ -663,7 +684,11 @@
         oninput={handleTitleInput}
         onchange={handleTitleChange}
         onblur={handleBlur}
-        onfocus={handleFocus}
+        onfocus={(e) => {
+          rememberEditableStart(e);
+          handleFocus();
+        }}
+        onkeydown={handleEditableKeydown}
         aria-label="Item title"
       />
       {#if isRead}
@@ -705,7 +730,10 @@
         type="number"
         min="0"
         value={item.chars || 0}
+        style={`--chars-len: ${String(item.chars || 0).length};`}
         onchange={handleCharsChange}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
         aria-label="Character count"
       />
       <span class="unit-lbl">chars</span>
@@ -717,6 +745,8 @@
       value={displayMins}
       title="Total minutes"
       onchange={handleTimeChange}
+      onfocus={rememberEditableStart}
+      onkeydown={handleEditableKeydown}
       aria-label="Duration in minutes"
     />
     <span class="unit-lbl">min</span>
@@ -728,6 +758,8 @@
         value={Math.max(1, Number(item.volume || 1))}
         title="Volume"
         onchange={handleVolumeChange}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
         aria-label="Volume number"
       />
       <span class="unit-lbl">vol</span>
@@ -745,6 +777,8 @@
       value={toLocalDT(defaultDateStr)}
       style="text-align:left; margin-left:0;"
       onchange={handleDateChange}
+      onfocus={rememberEditableStart}
+      onkeydown={handleEditableKeydown}
       aria-label="Log date"
     />
     <button

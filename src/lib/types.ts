@@ -20,6 +20,7 @@ export interface TrackerConfig {
   hideMusic?: boolean;
   enablePlaylistLogger?: boolean;
   playlistHideNonJapanese?: boolean;
+  hidePlaylistBadgeIcon?: boolean;
   showTotalInBadge?: boolean;
   theme?: string;
   font?: string;

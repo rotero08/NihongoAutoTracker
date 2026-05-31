@@ -32,6 +32,23 @@
     isOpen = !isOpen;
     await storage.setItem(`local:sess-closed-${itemId}`, isOpen ? "0" : "1");
   }
+
+  function rememberEditableStart(e: FocusEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    input.dataset.editStart = input.value;
+  }
+
+  function handleEditableKeydown(e: KeyboardEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.value = input.dataset.editStart ?? input.defaultValue;
+      input.blur();
+    }
+  }
 </script>
 
 {#if sessions.length > 1}
@@ -52,6 +69,9 @@
                 class="ghost-num chars"
                 type="number"
                 value={session.chars || 0}
+                style={`--chars-len: ${String(session.chars || 0).length};`}
+                onfocus={rememberEditableStart}
+                onkeydown={handleEditableKeydown}
                 onchange={(e) =>
                   onSessionChange(
                     i,
@@ -67,6 +87,8 @@
               type="number"
               min="1"
               value={Math.max(1, Math.round(session.secs / 60))}
+              onfocus={rememberEditableStart}
+              onkeydown={handleEditableKeydown}
               onchange={(e) =>
                 onSessionChange(
                   i,
@@ -80,6 +102,8 @@
               class="ghost-date"
               type="datetime-local"
               value={toLocalDT(session.date)}
+              onfocus={rememberEditableStart}
+              onkeydown={handleEditableKeydown}
               onchange={(e) =>
                 onSessionChange(
                   i,
@@ -184,7 +208,7 @@
     width: 20px;
   }
   .ghost-num.chars {
-    width: 40px;
+    width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch);
     color: var(--color-accent, #f0b429);
   }
   .unit {

@@ -59,6 +59,8 @@
     let themeDraftColors = $state<Record<string, Record<string, string>>>({});
     let themeDraftNames = $state<Record<string, string>>({});
     let triedSavingEmptyName = $state<Record<string, boolean>>({});
+    let themeSessionColors = $state<Record<string, Record<string, string>>>({});
+    let themeSessionNames = $state<Record<string, string>>({});
 
     let isCollapsed = $state<Record<string, boolean>>({
         global: true,
@@ -71,12 +73,40 @@
     let yatsuThemeOverride = $state("global");
     let yomiyasuThemeOverride = $state("global");
 
-    let isProceeding = false;
-
+    const customThemeIds = $derived(customThemes.map((theme) => theme.id));
 
 
     function isCustomThemeId(id: string): boolean {
         return id === "custom" || id.startsWith("custom_");
+    }
+
+    function cloneColors(colors: Record<string, string>): Record<string, string> {
+        return { ...$state.snapshot(colors) };
+    }
+
+    function rememberThemeSession(themeId: string) {
+        if (!themeId || !isCustomThemeId(themeId) || !themeDraftColors[themeId])
+            return;
+        themeSessionColors[themeId] = cloneColors(themeDraftColors[themeId]);
+        themeSessionNames[themeId] = themeDraftNames[themeId] ?? "";
+    }
+
+    function getThemeBaseline(themeId: string) {
+        if (themeSessionColors[themeId]) {
+            return {
+                colors: themeSessionColors[themeId],
+                name: themeSessionNames[themeId] ?? "",
+            };
+        }
+
+        const theme = customThemes.find((t) => t.id === themeId);
+        if (theme) {
+            return { colors: theme.colors, name: theme.name };
+        }
+
+        const fallbackPresetId =
+            selectedTheme === themeId ? lastActivePresetTheme : selectedTheme;
+        return { colors: getThemeColors(fallbackPresetId), name: "" };
     }
 
     const globalThemeOptions = $derived([
@@ -159,32 +189,60 @@
     }
 
     function isThemeModified(themeId: string): boolean {
-        const theme = customThemes.find((t) => t.id === themeId);
         const draftColors = themeDraftColors[themeId];
         const draftName = themeDraftNames[themeId];
         if (!draftColors || draftName === undefined) return false;
 
-        if (!theme) {
-            const fallbackPresetId =
-                selectedTheme === themeId
-                    ? lastActivePresetTheme
-                    : selectedTheme;
-            const startingColors = getThemeColors(fallbackPresetId);
-            return (
-                draftName.trim() !== "" ||
-                JSON.stringify($state.snapshot(draftColors)) !==
-                    JSON.stringify(startingColors)
-            );
-        }
-
+        const baseline = getThemeBaseline(themeId);
         return (
-            draftName !== theme.name ||
+            draftName !== baseline.name ||
             JSON.stringify($state.snapshot(draftColors)) !==
-                JSON.stringify($state.snapshot(theme.colors))
+                JSON.stringify($state.snapshot(baseline.colors))
         );
     }
 
+    function clearThemeDraft(themeId: string) {
+        delete themeDraftColors[themeId];
+        delete themeDraftNames[themeId];
+        delete triedSavingEmptyName[themeId];
+        delete themeSessionColors[themeId];
+        delete themeSessionNames[themeId];
+    }
 
+    function discardThemeDraft(themeId: string) {
+        const theme = customThemes.find((t) => t.id === themeId);
+        if (theme) {
+            revertThemeDraft(themeId);
+            return;
+        }
+
+        if (selectedTheme === themeId) {
+            selectedTheme = lastActivePresetTheme;
+            applyThemeToDocument(lastActivePresetTheme, selectedFont, undefined, {
+                useStaticInPageLogo,
+            });
+        }
+        if (ttuThemeOverride === themeId) ttuThemeOverride = lastActiveTtuOverride;
+        if (yatsuThemeOverride === themeId)
+            yatsuThemeOverride = lastActiveYatsuOverride;
+        if (yomiyasuThemeOverride === themeId)
+            yomiyasuThemeOverride = lastActiveYomiyasuOverride;
+
+        clearThemeDraft(themeId);
+    }
+
+    function discardAllUnsavedChanges() {
+        const ids = new Set([
+            ...customThemes.map((t) => t.id),
+            ...Object.keys(themeDraftColors),
+        ]);
+        ids.forEach((id) => {
+            if (isThemeModified(id)) {
+                discardThemeDraft(id);
+            }
+        });
+        cleanUpUnsavedDrafts();
+    }
 
     function cleanUpUnsavedDrafts() {
         if (
@@ -219,35 +277,6 @@
         }
     }
 
-    function handleGlobalClick(e: MouseEvent) {
-        const target = e.target as HTMLElement;
-
-        const navItem = target.closest(".nav-item");
-        if (navItem && hasUnsavedChanges && !isProceeding) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            onConfirm(
-                "Unsaved Changes",
-                "You have unsaved custom theme modifications. Leaving this tab will discard all unsaved edits. Do you want to proceed?",
-            ).then((confirmed) => {
-                if (confirmed) {
-                    isProceeding = true;
-                    customThemes.forEach((t) => {
-                        if (isThemeModified(t.id)) {
-                            revertThemeDraft(t.id);
-                        }
-                    });
-                    cleanUpUnsavedDrafts();
-                    setTimeout(() => {
-                        (navItem as HTMLElement).click();
-                    }, 50);
-                }
-            });
-            return;
-        }
-    }
-
     $effect(() => {
         customThemes.forEach((theme) => {
             if (!themeDraftColors[theme.id]) {
@@ -275,12 +304,45 @@
                 isThemeModified(yomiyasuThemeOverride)),
     );
 
+    function getHasUnsavedChanges(): boolean {
+        return (
+            customThemes.some((t) => isThemeModified(t.id)) ||
+            Object.keys(themeDraftColors).some((id) => isThemeModified(id))
+        );
+    }
+
+    async function confirmDiscardUnsavedChanges(message: string): Promise<boolean> {
+        if (!getHasUnsavedChanges()) return true;
+        try {
+            return await onConfirm("Unsaved Changes", message);
+        } catch {
+            return false;
+        }
+    }
+
     function onBeforeUnload(e: BeforeUnloadEvent) {
-        if (hasUnsavedChanges) {
+        if (getHasUnsavedChanges()) {
             e.preventDefault();
             e.returnValue = "You have unsaved changes in your custom themes.";
             return e.returnValue;
         }
+    }
+
+    export function hasUnsavedThemeChanges(): boolean {
+        return getHasUnsavedChanges();
+    }
+
+    export function discardUnsavedThemeChanges() {
+        discardAllUnsavedChanges();
+    }
+
+    export async function confirmLeaveThemeTab(): Promise<boolean> {
+        const confirmed = await confirmDiscardUnsavedChanges(
+            "You have unsaved custom theme changes. Switching tabs will discard those edits. Do you want to proceed?",
+        );
+        if (!confirmed) return false;
+        discardAllUnsavedChanges();
+        return true;
     }
 
     function createNewCustomTheme(): string {
@@ -290,6 +352,8 @@
         themeDraftColors[newId] = defaultColors;
         themeDraftNames[newId] = "";
         triedSavingEmptyName[newId] = false;
+        themeSessionColors[newId] = { ...defaultColors };
+        themeSessionNames[newId] = "";
         isCollapsed["global"] = false;
 
         return newId;
@@ -355,6 +419,11 @@
 
         await configStorage.setValue(cfg);
 
+        themeDraftColors[themeId] = { ...draftColors };
+        themeDraftNames[themeId] = draftName;
+        themeSessionColors[themeId] = { ...draftColors };
+        themeSessionNames[themeId] = draftName;
+
         if (selectedTheme === themeId) {
             lastActivePresetTheme = themeId;
         }
@@ -373,42 +442,20 @@
         onStatus(`✓ Theme "${draftName}" Saved`);
     }
 
-    async function confirmRevertThemeDraft(themeId: string) {
-        const confirmed = await onConfirm(
-            "Revert Changes",
-            "Are you sure you want to discard your unsaved draft edits for this theme? The changes will be lost.",
-        );
-        if (confirmed) {
-            revertThemeDraft(themeId);
-        }
+    function confirmRevertThemeDraft(themeId: string) {
+        revertThemeDraft(themeId);
     }
 
     function revertThemeDraft(themeId: string) {
-        const theme = customThemes.find((t) => t.id === themeId);
-        if (theme) {
-            themeDraftColors[themeId] = { ...theme.colors };
-            themeDraftNames[themeId] = theme.name;
-            triedSavingEmptyName[themeId] = false;
-        } else {
-            if (selectedTheme === themeId) {
-                selectedTheme = lastActivePresetTheme;
-                applyThemeToDocument(
-                    lastActivePresetTheme,
-                    selectedFont,
-                    undefined,
-                    { useStaticInPageLogo },
-                );
-            }
-            if (ttuThemeOverride === themeId)
-                ttuThemeOverride = lastActiveTtuOverride;
-            if (yatsuThemeOverride === themeId)
-                yatsuThemeOverride = lastActiveYatsuOverride;
-            if (yomiyasuThemeOverride === themeId)
-                yomiyasuThemeOverride = lastActiveYomiyasuOverride;
+        const baseline = getThemeBaseline(themeId);
+        themeDraftColors[themeId] = { ...baseline.colors };
+        themeDraftNames[themeId] = baseline.name;
+        triedSavingEmptyName[themeId] = false;
 
-            delete themeDraftColors[themeId];
-            delete themeDraftNames[themeId];
-            delete triedSavingEmptyName[themeId];
+        if (selectedTheme === themeId) {
+            applyThemeToDocument("dark-amber", selectedFont, baseline.colors, {
+                useStaticInPageLogo,
+            });
         }
     }
 
@@ -470,9 +517,7 @@
         cfg.customThemes = $state.snapshot(customThemes);
         await configStorage.setValue(cfg);
 
-        delete themeDraftColors[themeId];
-        delete themeDraftNames[themeId];
-        delete triedSavingEmptyName[themeId];
+        clearThemeDraft(themeId);
 
         onStatus(`✓ Deleted "${themeName}"`);
     }
@@ -557,6 +602,8 @@
         customThemes.forEach((theme) => {
             themeDraftColors[theme.id] = { ...theme.colors };
             themeDraftNames[theme.id] = theme.name;
+            themeSessionColors[theme.id] = { ...theme.colors };
+            themeSessionNames[theme.id] = theme.name;
         });
 
         if (isCustomThemeId(selectedTheme)) {
@@ -804,7 +851,7 @@
         onStatus("✓ Appearance Defaults Restored");
     }
 
-    function handleCollapse(context: string) {
+    async function handleCollapse(context: string) {
         const currentActiveTheme =
             context === "global"
                 ? selectedTheme
@@ -818,25 +865,58 @@
             isCustomThemeId(currentActiveTheme) &&
             isThemeModified(currentActiveTheme)
         ) {
-            onConfirm(
-                "Unsaved Changes",
+            const confirmed = await confirmDiscardUnsavedChanges(
                 "You have unsaved changes. Collapsing will discard your current edits. Do you want to proceed?",
-            ).then((confirmed) => {
-                if (confirmed) {
-                    revertThemeDraft(currentActiveTheme);
-                    isCollapsed[context] = true;
-                }
-            });
+            );
+            if (confirmed) {
+                revertThemeDraft(currentActiveTheme);
+                isCollapsed[context] = true;
+            }
             return;
         }
         isCollapsed[context] = true;
     }
 
-    function handleUncollapse(context: string) {
-        Object.keys(isCollapsed).forEach((k) => {
-            isCollapsed[k] = true;
-        });
-        isCollapsed[context] = false;
+    async function handleUncollapse(context: string) {
+        const openThemeId = activeEditingThemeId;
+        const openContext = Object.keys(isCollapsed).find(
+            (key) => !isCollapsed[key],
+        );
+
+        const openNext = () => {
+            Object.keys(isCollapsed).forEach((k) => {
+                isCollapsed[k] = true;
+            });
+            isCollapsed[context] = false;
+
+            const nextTheme =
+                context === "global"
+                    ? selectedTheme
+                    : context === "ttu"
+                      ? ttuThemeOverride
+                      : context === "yatsu"
+                        ? yatsuThemeOverride
+                        : yomiyasuThemeOverride;
+            rememberThemeSession(nextTheme);
+        };
+
+        if (
+            openContext &&
+            openContext !== context &&
+            isCustomThemeId(openThemeId) &&
+            isThemeModified(openThemeId)
+        ) {
+            const confirmed = await confirmDiscardUnsavedChanges(
+                "You have unsaved changes. Opening another editor will discard your current edits. Do you want to proceed?",
+            );
+            if (confirmed) {
+                revertThemeDraft(openThemeId);
+                openNext();
+            }
+            return;
+        }
+
+        openNext();
     }
 
     async function toggleSyncPopupTheme() {
@@ -886,7 +966,6 @@
     onMount(() => {
         load();
         window.addEventListener("beforeunload", onBeforeUnload);
-        window.addEventListener("click", handleGlobalClick, true);
 
         const storageListener = (changes: any, area: string) => {
             if (area === "local" && changes["config"]) {
@@ -1038,7 +1117,6 @@
 
         return () => {
             window.removeEventListener("beforeunload", onBeforeUnload);
-            window.removeEventListener("click", handleGlobalClick, true);
             browser.storage.onChanged.removeListener(storageListener);
             if (mainContainer) {
                 mainContainer.style.removeProperty("max-width");
@@ -1072,6 +1150,8 @@
                 options={globalThemeOptions}
                 value={selectedThemeToShow}
                 onChange={saveTheme}
+                onDelete={confirmDeleteTheme}
+                deletableValues={customThemeIds}
                 label="Select Color Theme"
             />
         </div>
@@ -1177,6 +1257,7 @@
             bind:themeDraftNames
             bind:triedSavingEmptyName
             {customThemes}
+            deletableValues={customThemeIds}
             onSaveOverride={saveReaderOverride}
             onSaveCustomThemeChanges={saveCustomThemeChanges}
             {confirmRevertThemeDraft}

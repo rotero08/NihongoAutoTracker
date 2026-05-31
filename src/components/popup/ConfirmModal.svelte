@@ -84,7 +84,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 9999;
+    z-index: 1000000;
   }
   .modal-box {
     background: var(--color-surface, #0f0f1a);

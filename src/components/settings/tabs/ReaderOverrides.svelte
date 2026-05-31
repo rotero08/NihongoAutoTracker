@@ -20,6 +20,7 @@
             name: string;
             colors: Record<string, string>;
         }>;
+        deletableValues?: string[];
         onSaveOverride: (reader: string, themeName: string) => void;
         onSaveCustomThemeChanges: (themeId: string) => void;
         confirmRevertThemeDraft: (themeId: string) => void;
@@ -41,6 +42,7 @@
         themeDraftNames = $bindable(),
         triedSavingEmptyName = $bindable(),
         customThemes,
+        deletableValues = [],
         onSaveOverride,
         onSaveCustomThemeChanges,
         confirmRevertThemeDraft,
@@ -78,6 +80,8 @@
                     options={readerThemeOptionsDerived}
                     value={ttuThemeOverrideToShow}
                     onChange={(v) => onSaveOverride("ttu", v)}
+                    onDelete={confirmDeleteTheme}
+                    {deletableValues}
                     label="Override Theme"
                     compact={false}
                 />
@@ -154,6 +158,8 @@
                     options={readerThemeOptionsDerived}
                     value={yatsuThemeOverrideToShow}
                     onChange={(v) => onSaveOverride("yatsu", v)}
+                    onDelete={confirmDeleteTheme}
+                    {deletableValues}
                     label="Override Theme"
                     compact={false}
                 />
@@ -225,6 +231,8 @@
                     options={readerThemeOptionsDerived}
                     value={yomiyasuThemeOverrideToShow}
                     onChange={(v) => onSaveOverride("yomiyasu", v)}
+                    onDelete={confirmDeleteTheme}
+                    {deletableValues}
                     label="Override Theme"
                     compact={false}
                 />

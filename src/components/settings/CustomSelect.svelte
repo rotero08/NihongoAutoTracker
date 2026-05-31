@@ -8,11 +8,21 @@
         options: Option[];
         value: string;
         onChange: (val: string) => void;
+        onDelete?: (val: string) => void;
+        deletableValues?: string[];
         label?: string;
         compact?: boolean;
     }
 
-    let { options, value, onChange, label, compact = false }: Props = $props();
+    let {
+        options,
+        value,
+        onChange,
+        onDelete,
+        deletableValues = [],
+        label,
+        compact = false,
+    }: Props = $props();
     let isOpen = $state(false);
     let activeOption = $derived(
         options.find((o) => o.value === value) || options[0],
@@ -21,6 +31,10 @@
     function selectOption(val: string) {
         onChange(val);
         isOpen = false;
+    }
+
+    function isDeletable(val: string): boolean {
+        return deletableValues.includes(val);
     }
 
     let container: HTMLDivElement;
@@ -57,14 +71,42 @@
         {#if isOpen}
             <div class="select-dropdown">
                 {#each options as opt}
-                    <button
-                        type="button"
-                        class="select-option"
-                        class:selected={opt.value === value}
-                        onclick={() => selectOption(opt.value)}
-                    >
-                        {opt.label}
-                    </button>
+                    {#if onDelete && isDeletable(opt.value)}
+                        <div
+                            class="select-option-row"
+                            class:selected={opt.value === value}
+                        >
+                            <button
+                                type="button"
+                                class="select-option"
+                                onclick={() => selectOption(opt.value)}
+                            >
+                                {opt.label}
+                            </button>
+                            <button
+                                type="button"
+                                class="select-delete"
+                                title="Delete theme"
+                                aria-label={`Delete ${opt.label}`}
+                                onclick={(e) => {
+                                    e.stopPropagation();
+                                    isOpen = false;
+                                    onDelete?.(opt.value);
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    {:else}
+                        <button
+                            type="button"
+                            class="select-option"
+                            class:selected={opt.value === value}
+                            onclick={() => selectOption(opt.value)}
+                        >
+                            {opt.label}
+                        </button>
+                    {/if}
                 {/each}
             </div>
         {/if}
@@ -136,6 +178,11 @@
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.6);
         overflow: hidden;
     }
+    .select-option-row {
+        display: flex;
+        align-items: center;
+        width: 100%;
+    }
     .select-option {
         background: none;
         border: none;
@@ -150,14 +197,54 @@
             color 0.15s;
         width: 100%;
     }
+    .select-option-row .select-option {
+        flex: 1;
+        min-width: 0;
+        width: auto;
+    }
     .select-option:hover {
         background: rgba(255, 255, 255, 0.05);
+    }
+    .select-option-row:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .select-option-row:hover .select-option {
+        background: transparent;
+    }
+    .select-option:hover {
         color: var(--color-accent);
     }
-    .select-option.selected {
+    .select-option-row:hover .select-option {
+        color: var(--color-accent);
+    }
+    .select-option.selected,
+    .select-option-row.selected {
         background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    }
+    .select-option.selected,
+    .select-option-row.selected .select-option {
         color: var(--color-accent);
         font-weight: bold;
+    }
+    .select-delete {
+        width: 28px;
+        min-height: 34px;
+        align-self: stretch;
+        background: transparent;
+        border: none;
+        color: var(--color-text-muted);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: bold;
+        line-height: 1;
+        transition: color 0.15s;
+    }
+    .select-delete:hover {
+        color: var(--color-error, #ef4444);
     }
 
     /* --- COMPACT SWITCHER OVERRIDES (Popup Settings Dropdown List styling) --- */

@@ -94,7 +94,7 @@ body { font-family: var(--font-sans); font-size: 14px; line-height: 1.55; }
 
 .qi-spin-group { display: flex; align-items: center; background: rgba(255,255,255,.03); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px 6px; gap: 4px; }
 .qi-spin-group input { width: 44px; background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); text-align: right; outline: none; appearance: textfield; -webkit-appearance: textfield; -moz-appearance: textfield; font-size: 13px; font-weight: 600; padding: 0; }
-.qi-spin-group input.qi-chars { width: 56px; color: var(--color-accent); }
+.qi-spin-group input.qi-chars { width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch); color: var(--color-accent); }
 .qi-spin-group input.qi-vol { width: 28px; color: var(--color-text); }
 .qi-vol-group { background: rgba(255,255,255,.02); }
 .qi-spin-group input::-webkit-inner-spin-button, .qi-spin-group input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -119,7 +119,7 @@ body { font-family: var(--font-sans); font-size: 14px; line-height: 1.55; }
 .qi-session-num { font-family: var(--font-mono); font-size: 10px; color: color-mix(in srgb, var(--color-accent) 60%, transparent); font-weight: 700; flex-shrink: 0; min-width: 20px; }
 .qi-session-mins { background: transparent; border: none; border-bottom: 1px solid var(--color-border-hover); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 2px 0; outline: none; width: 28px; text-align: center; appearance: textfield; -moz-appearance: textfield; transition: border-color .15s; }
 .qi-session-mins:focus { border-color: var(--color-accent); }
-.qi-session-chars { background: transparent; border: none; border-bottom: 1px solid var(--color-border-hover); color: var(--color-accent); font-family: var(--font-mono); font-size: 11px; padding: 2px 0; outline: none; width: 55px; text-align: center; appearance: textfield; -moz-appearance: textfield; transition: border-color .15s; }
+.qi-session-chars { background: transparent; border: none; border-bottom: 1px solid var(--color-border-hover); color: var(--color-accent); font-family: var(--font-mono); font-size: 11px; padding: 2px 0; outline: none; width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch); text-align: center; appearance: textfield; -moz-appearance: textfield; transition: border-color .15s; }
 .qi-session-chars:focus { border-color: var(--color-accent); }
 .qi-session-date-input { background: transparent; border: 1px solid transparent; color: var(--color-text-muted); font-family: var(--font-mono); font-size: 10px; outline: none; cursor: pointer; border-radius: 3px; padding: 2px 4px; transition: color .15s; color-scheme: var(--nt-color-scheme, dark); flex: 1; text-align: right; }
 .qi-session-date-input:hover, .qi-session-date-input:focus { color: var(--color-text); }

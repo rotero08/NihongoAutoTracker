@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
+  import CustomSelect from "@/components/settings/CustomSelect.svelte";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -25,7 +26,13 @@
   let logMusicVideos = $state(false); // Music logging toggle state
   let enablePlaylist = $state(true);
   let playlistHideNonJp = $state(true);
+  let hidePlaylistBadgeIcon = $state(false);
   let showTotal = $state("total");
+
+  const badgeDisplayOptions = [
+    { value: "session", label: "Show Active Session Time Only" },
+    { value: "total", label: "Show Active Session / Local Queued Time" },
+  ];
 
   export async function load() {
     const cfg = (await configStorage.getValue()) as any;
@@ -50,6 +57,7 @@
     logMusicVideos = cfg.logMusicVideos ?? false;
     enablePlaylist = cfg.enablePlaylistLogger ?? true;
     playlistHideNonJp = cfg.playlistHideNonJapanese ?? true;
+    hidePlaylistBadgeIcon = cfg.hidePlaylistBadgeIcon ?? false;
     showTotal = (cfg.showTotalInBadge ?? true) ? "total" : "session";
   }
 
@@ -73,6 +81,7 @@
       logMusicVideos,
       enablePlaylistLogger: enablePlaylist,
       playlistHideNonJapanese: playlistHideNonJp,
+      hidePlaylistBadgeIcon,
       showTotalInBadge: showTotal === "total",
     });
     onStatus("✓ Settings Auto-Saved");
@@ -94,6 +103,7 @@
       logMusicVideos: false,
       enablePlaylistLogger: true,
       playlistHideNonJapanese: true,
+      hidePlaylistBadgeIcon: false,
       showTotalInBadge: true,
     });
     await load();
@@ -428,6 +438,18 @@
     <input
       type="checkbox"
       class="toggle-chk"
+      bind:checked={hidePlaylistBadgeIcon}
+      onchange={persist}
+    />
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    Hide playlist badge icon
+  </label>
+</div>
+<div class="field">
+  <label class="toggle">
+    <input
+      type="checkbox"
+      class="toggle-chk"
       bind:checked={playlistHideNonJp}
       onchange={persist}
     />
@@ -438,18 +460,15 @@
 
 <!-- Badge display mode -->
 <div class="field" id="show-total-field" style="margin-top: 24px;">
-  <label class="label" for="show-total-badge"
-    >Player Status Badge Display Mode</label
-  >
-  <select
-    id="show-total-badge"
-    class="input"
-    bind:value={showTotal}
-    onchange={persist}
-  >
-    <option value="session">Show Active Session Time Only</option>
-    <option value="total">Show Active Session / Local Queued Time</option>
-  </select>
+  <CustomSelect
+    label="Player Status Badge Display Mode"
+    options={badgeDisplayOptions}
+    value={showTotal}
+    onChange={(val) => {
+      showTotal = val;
+      persist();
+    }}
+  />
 </div>
 
 <div style="display:flex; gap:10px; margin-top: 28px;">

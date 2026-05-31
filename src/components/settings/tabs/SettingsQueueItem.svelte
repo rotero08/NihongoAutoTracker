@@ -54,6 +54,7 @@
   let volumeVal = $derived(Math.max(1, Number(item.volume || 1)));
   let isEditingVol = $state(false);
   let volInputValue = $state(1);
+  let volEditStart = $state(1);
 
   /* ── Derived display values ──────────────────────────────────── */
   const displayMins = $derived(
@@ -203,6 +204,27 @@
     }
   }
 
+  function rememberEditableStart(e: FocusEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    input.dataset.editStart = input.value;
+  }
+
+  function handleEditableKeydown(e: KeyboardEvent) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      input.value = input.dataset.editStart ?? input.defaultValue;
+      if (input.classList.contains("qi-desc")) {
+        titleValue = input.value;
+        searchDropdown?.close();
+      }
+      input.blur();
+    }
+  }
+
   async function handleTitleChange(e: Event) {
     const val = (e.target as HTMLInputElement).value;
     await saveItem({ description: val });
@@ -252,6 +274,7 @@
   /* Volume editing */
   function startEditVolume() {
     volInputValue = volumeVal;
+    volEditStart = volumeVal;
     isEditingVol = true;
   }
 
@@ -263,8 +286,11 @@
 
   function handleVolumeKey(e: KeyboardEvent) {
     if (e.key === "Enter") {
+      e.preventDefault();
       commitVolume();
     } else if (e.key === "Escape") {
+      e.preventDefault();
+      volInputValue = volEditStart;
       isEditingVol = false;
     }
   }
@@ -744,7 +770,11 @@
         oninput={handleTitleInput}
         onchange={handleTitleChange}
         onblur={handleBlur}
-        onfocus={handleFocus}
+        onfocus={(e) => {
+          rememberEditableStart(e);
+          handleFocus();
+        }}
+        onkeydown={handleEditableKeydown}
         aria-label="Item title"
       />
       {#if isLinked}
@@ -812,7 +842,10 @@
             type="number"
             value={item.chars || 0}
             min="0"
+            style={`--chars-len: ${String(item.chars || 0).length};`}
             onchange={handleCharsChange}
+            onfocus={rememberEditableStart}
+            onkeydown={handleEditableKeydown}
             aria-label="Character count"
           />
           <span
@@ -852,6 +885,8 @@
           value={displayMins}
           min="1"
           onchange={handleMinsChange}
+          onfocus={rememberEditableStart}
+          onkeydown={handleEditableKeydown}
           aria-label="Minutes duration"
         />
         <span
@@ -896,10 +931,12 @@
     <input
       type="datetime-local"
       class="qi-date-input"
-      value={toLocalDT(defaultDateStr)}
-      onchange={handleDateChange}
-      aria-label="Log date"
-    />
+          value={toLocalDT(defaultDateStr)}
+          onchange={handleDateChange}
+          onfocus={rememberEditableStart}
+          onkeydown={handleEditableKeydown}
+          aria-label="Log date"
+        />
   </div>
 
   <!-- Collapsible Sessions list -->
@@ -926,6 +963,9 @@
                   class="qi-session-chars"
                   type="number"
                   value={session.chars || 0}
+                  style={`--chars-len: ${String(session.chars || 0).length};`}
+                  onfocus={rememberEditableStart}
+                  onkeydown={handleEditableKeydown}
                   onchange={(e) =>
                     handleSessionChange(
                       i,
@@ -944,6 +984,8 @@
                 type="number"
                 value={Math.max(1, Math.round(session.secs / 60))}
                 min="1"
+                onfocus={rememberEditableStart}
+                onkeydown={handleEditableKeydown}
                 onchange={(e) =>
                   handleSessionChange(
                     i,
@@ -960,6 +1002,8 @@
                 type="datetime-local"
                 class="qi-session-date-input"
                 value={toLocalDT(session.date)}
+                onfocus={rememberEditableStart}
+                onkeydown={handleEditableKeydown}
                 onchange={(e) =>
                   handleSessionChange(
                     i,
