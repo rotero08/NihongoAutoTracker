@@ -4,6 +4,13 @@
   import type { DebugLogEntry } from "@/lib/types";
   import { onMount } from "svelte";
 
+  const browser: any =
+    typeof (globalThis as any).browser !== "undefined"
+      ? (globalThis as any).browser
+      : typeof (globalThis as any).chrome !== "undefined"
+        ? (globalThis as any).chrome
+        : undefined;
+
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
   }
@@ -213,7 +220,7 @@
       <span style="background: #252a34"></span>
       <span style="background: #252a34"></span>
     </div>
-    <span class="console-tab-name">immersion-daemon.log</span>
+    <span class="console-tab-name">daemon.log</span>
   </div>
   <div class="console-body" id="debug-logs-list">
     {#if logs.length === 0}

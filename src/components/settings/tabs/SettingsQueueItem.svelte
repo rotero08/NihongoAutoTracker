@@ -141,33 +141,7 @@
         }
         return currentQueue;
       });
-    } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
 
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
-
-        const session = entry.sessions[sessionIdx];
-        if (field === "mins") {
-          session.secs = Math.max(1, Number(val) || 1) * 60;
-        } else if (field === "date") {
-          try {
-            session.date = new Date(val).toISOString();
-          } catch {}
-        }
-
-        const sumSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        entry.time = Math.max(1, Math.round(sumSecs / 60));
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
     } else {
       await updateVideoQueueAtomic((currentQueue) => {
         const idx = currentQueue.findIndex((x) => x.id === item.id);
@@ -415,15 +389,22 @@
         if (idx === -1) return currentQueue;
 
         const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        entry.sessions = (entry.sessions ?? []).filter(
-          (s: any) => s.id !== sessionId,
-        );
+        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
 
-        const totalSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
+        const session = entry.sessions[sessionIdx];
+        if (field === "mins") {
+          session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "date") {
+          try {
+            session.date = new Date(val).toISOString();
+          } catch {}
+        }
+
+        const sumSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + (b.secs || 0),
           0,
         );
-        entry.time = Math.max(1, Math.round(totalSecs / 60));
+        entry.time = Math.max(1, Math.round(sumSecs / 60));
 
         const newQueue = [...currentQueue];
         newQueue[idx] = entry;
@@ -493,6 +474,26 @@
           (a: number, b: any) => a + (b.chars || 0),
           0,
         );
+
+        const newQueue = [...currentQueue];
+        newQueue[idx] = entry;
+        return newQueue;
+      });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((currentQueue) => {
+        const idx = currentQueue.findIndex((x) => x.id === item.id);
+        if (idx === -1) return currentQueue;
+
+        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.max(1, Math.round(totalSecs / 60));
 
         const newQueue = [...currentQueue];
         newQueue[idx] = entry;

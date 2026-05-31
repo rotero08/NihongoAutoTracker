@@ -6,6 +6,7 @@ import '@/assets/text-tracker.css';
 import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
+import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
 import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
@@ -218,39 +219,7 @@ const stabilizer = new DOMMutationStabilizer(
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
   if (cachedIsJapanese !== null) return cachedIsJapanese;
-
-  const host = window.location.hostname;
-  const allowSites: string[] = cfg.allowSites ?? [...JP_DOMAINS_DEFAULT];
-  const allowListOnly: boolean = cfg.allowListOnly ?? false;
-
-  if (allowSites.some((d: string) => host.includes(d))) {
-    cachedIsJapanese = true;
-    return true;
-  }
-  if (allowListOnly) {
-    cachedIsJapanese = false;
-    return false;
-  }
-
-  const lang = document.documentElement.lang;
-  if (lang.startsWith('ja')) {
-    cachedIsJapanese = true;
-    return true;
-  }
-
-  await new Promise(r => setTimeout(r, 1500));
-  const sample = (document.body?.textContent ?? '').slice(0, 8000);
-  const jpCount = (sample.match(/[\u3040-\u30ff\u4e00-\u9fff]/g) ?? []).length;
-  const result = jpCount >= 40;
-
-  if (import.meta.env.DEV) {
-    console.log(`[NAT DEV - TextTracker] Analyzed Host Language Context`, {
-      host,
-      japaneseCharsFound: jpCount,
-      isJapanese: result
-    });
-  }
-
+  const result = await detectJapanesePage(cfg, JP_DOMAINS_DEFAULT);
   cachedIsJapanese = result;
   return result;
 }

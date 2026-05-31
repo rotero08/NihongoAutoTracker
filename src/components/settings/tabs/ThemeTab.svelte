@@ -18,8 +18,9 @@
 
     interface Props {
         onStatus: (msg: string, err?: boolean) => void;
+        onConfirm: (title: string, msg: string) => Promise<boolean>;
     }
-    let { onStatus }: Props = $props();
+    let { onStatus, onConfirm }: Props = $props();
 
     const DEFAULT_CUSTOM_COLORS: Record<string, string> = {
         background: "#07070e",
@@ -72,10 +73,7 @@
 
     let isProceeding = false;
 
-    let modalOpen = $state(false);
-    let modalTitle = $state("");
-    let modalMsg = $state("");
-    let modalResolve = $state<((value: boolean) => void) | null>(null);
+
 
     function isCustomThemeId(id: string): boolean {
         return id === "custom" || id.startsWith("custom_");
@@ -186,17 +184,7 @@
         );
     }
 
-    function askConfirmation(title: string, msg: string): Promise<boolean> {
-        modalOpen = true;
-        modalTitle = title;
-        modalMsg = msg;
-        return new Promise<boolean>((resolve) => {
-            modalResolve = (val: boolean) => {
-                modalOpen = false;
-                resolve(val);
-            };
-        });
-    }
+
 
     function cleanUpUnsavedDrafts() {
         if (
@@ -239,7 +227,7 @@
             e.preventDefault();
             e.stopPropagation();
 
-            askConfirmation(
+            onConfirm(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications. Leaving this tab will discard all unsaved edits. Do you want to proceed?",
             ).then((confirmed) => {
@@ -386,7 +374,7 @@
     }
 
     async function confirmRevertThemeDraft(themeId: string) {
-        const confirmed = await askConfirmation(
+        const confirmed = await onConfirm(
             "Revert Changes",
             "Are you sure you want to discard your unsaved draft edits for this theme? The changes will be lost.",
         );
@@ -427,7 +415,7 @@
     async function confirmDeleteTheme(themeId: string) {
         const theme = customThemes.find((t) => t.id === themeId);
         const name = theme && theme.name ? theme.name : "this custom theme";
-        const confirmed = await askConfirmation(
+        const confirmed = await onConfirm(
             "Delete Theme",
             `Are you sure you want to delete "${name}"? This action cannot be reverted.`,
         );
@@ -607,7 +595,7 @@
             isThemeModified(selectedTheme) &&
             selectedTheme !== themeName
         ) {
-            const confirmed = await askConfirmation(
+            const confirmed = await onConfirm(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications. Selecting another theme will discard your current edits. Do you want to proceed?",
             );
@@ -712,7 +700,7 @@
             isThemeModified(currentOverride) &&
             currentOverride !== themeName
         ) {
-            const confirmed = await askConfirmation(
+            const confirmed = await onConfirm(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications for this reader override. Selecting another option will discard your edits. Do you want to proceed?",
             );
@@ -767,7 +755,7 @@
     }
 
     async function confirmResetAppearance() {
-        const confirmed = await askConfirmation(
+        const confirmed = await onConfirm(
             "Restore Defaults",
             "Are you sure you want to restore all appearance styles to factory default? Your custom themes will not be deleted.",
         );
@@ -830,7 +818,7 @@
             isCustomThemeId(currentActiveTheme) &&
             isThemeModified(currentActiveTheme)
         ) {
-            askConfirmation(
+            onConfirm(
                 "Unsaved Changes",
                 "You have unsaved changes. Collapsing will discard your current edits. Do you want to proceed?",
             ).then((confirmed) => {
@@ -1219,27 +1207,6 @@
     >
 </div>
 
-{#if modalOpen}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="modal-overlay open" onclick={() => modalResolve?.(false)}>
-        <div class="modal-box" onclick={(e) => e.stopPropagation()}>
-            <h3>{modalTitle}</h3>
-            <p>{modalMsg}</p>
-
-            <div class="modal-actions">
-                <button
-                    class="btn btn-ghost btn-sm"
-                    onclick={() => modalResolve?.(false)}>Cancel</button
-                >
-                <button
-                    class="btn btn-amber btn-sm"
-                    onclick={() => modalResolve?.(true)}>Proceed</button
-                >
-            </div>
-        </div>
-    </div>
-{/if}
 
 <style>
     :global(.select-option, .option, [class*="option"]) {

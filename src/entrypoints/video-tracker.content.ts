@@ -10,7 +10,7 @@ import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
 import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
-import { shouldHideBadge } from '@/lib/ui/video-badge';
+import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
 import { setSafeHTML } from '@/lib/utils/dom';
@@ -151,7 +151,7 @@ const resetSession = () => {
   lastRenderedCurrentSecs = -1;
   lastRenderedTotalSecs = -1;
   lastRenderedUrl = '';
-  const badgeLabel = document.querySelector('#nt-status-badge .nt-time-label');
+  const badgeLabel = document.querySelector(`#${BADGE_ID} .${BADGE_TIME_CLASS}`);
   if (badgeLabel) badgeLabel.textContent = "0:00";
 };
 
@@ -187,7 +187,7 @@ async function handleBadgeClick() {
     }
   }
 
-  const badgeEl = document.getElementById('nt-status-badge');
+  const badgeEl = document.getElementById(BADGE_ID);
   if (!badgeEl || !trackedVideo) {
     state.isManualLogging = false;
     return;
@@ -263,7 +263,7 @@ function unbindActiveVideoListeners() {
 const attach = (vid: HTMLVideoElement) => {
   if (isYouTubeShorts()) {
     engine.flushPlayClock();
-    document.getElementById('nt-status-badge')?.remove();
+    document.getElementById(BADGE_ID)?.remove();
     unbindActiveVideoListeners();
     trackedVideo = null;
     return;
@@ -300,7 +300,7 @@ const attach = (vid: HTMLVideoElement) => {
   channelId = null;
   cachedChannelName = '';
   metadataResolved = false;
-  document.getElementById('nt-status-badge')?.remove();
+  document.getElementById(BADGE_ID)?.remove();
 
   engine.initSession(currentUrl, 0, vid);
 
@@ -340,7 +340,7 @@ const attach = (vid: HTMLVideoElement) => {
 
     if (isAdPlaying()) {
       engine.flushPlayClock(true);
-      document.getElementById('nt-status-badge')?.remove();
+      document.getElementById(BADGE_ID)?.remove();
       return;
     }
 
@@ -371,7 +371,7 @@ const attach = (vid: HTMLVideoElement) => {
         await engine.finalizeSession(currentUrl);
       }
       resetSession();
-      document.getElementById('nt-status-badge')?.remove();
+      document.getElementById(BADGE_ID)?.remove();
     }
   };
 
@@ -596,7 +596,7 @@ function runPlaylistInjection(): boolean {
 
 function runVideoInjection() {
   if (isYouTubeShorts()) {
-    document.getElementById('nt-status-badge')?.remove();
+    document.getElementById(BADGE_ID)?.remove();
     return;
   }
   const vid = document.querySelector<HTMLVideoElement>('video');
@@ -711,7 +711,7 @@ export default defineContentScript({
 
     const startTargetedObserver = () => {
       if (isYouTubeShorts()) {
-        document.getElementById('nt-status-badge')?.remove();
+        document.getElementById(BADGE_ID)?.remove();
         return;
       }
       if (pageObserver) {
@@ -799,7 +799,7 @@ export default defineContentScript({
         cachedConfig = newCfg;
         applyCachedTheme(newCfg);
 
-        const badge = document.getElementById('nt-status-badge');
+        const badge = document.getElementById(BADGE_ID);
         if (badge && trackedVideo) {
           resolvePageLanguageAndType();
           const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();

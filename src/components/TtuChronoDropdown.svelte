@@ -10,6 +10,13 @@
     import { showToast } from "@/lib/utils/toast";
     import { addDebugLog } from "@/lib/storage/debug";
 
+    const browser: any =
+      typeof (globalThis as any).browser !== "undefined"
+        ? (globalThis as any).browser
+        : typeof (globalThis as any).chrome !== "undefined"
+          ? (globalThis as any).chrome
+          : undefined;
+
     // Svelte 5 Runes Properties
     let {
         ttuState = $bindable(),

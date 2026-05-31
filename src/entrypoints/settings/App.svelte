@@ -12,6 +12,7 @@
   import StremioTab from "@/components/settings/tabs/StremioTab.svelte";
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
+  import ConfirmModal from "@/components/popup/ConfirmModal.svelte";
   import { notify } from "@/lib/utils/toast";
   import { showToast } from "@/lib/utils/toast";
   import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
@@ -19,16 +20,18 @@
 
   import "@/styles/settings-shared.css";
 
+  const browser: any =
+    typeof (globalThis as any).browser !== "undefined"
+      ? (globalThis as any).browser
+      : typeof (globalThis as any).chrome !== "undefined"
+        ? (globalThis as any).chrome
+        : undefined;
+
   let activeTab = $state("queue");
   let queueCount = $state(0);
   let debugMode = $state(false);
 
-  let modalOpen = $state(false);
-  let modalTitle = $state("");
-  let modalMsg = $state("");
-  let currentWarnKey = $state<string | undefined>(undefined);
-  let dontWarnValue = $state(false);
-  let modalResolve = $state<((value: boolean) => void) | null>(null);
+  let confirmModal = $state<any>(null);
 
   function isCustomThemeId(id: string): boolean {
     return (
@@ -81,29 +84,10 @@
     msg: string,
     warnKey?: string,
   ): Promise<boolean> {
-    if (warnKey) {
-      const cfg = (await configStorage.getValue()) as any;
-      if (cfg && cfg[warnKey] === false) {
-        return true;
-      }
+    if (confirmModal) {
+      return await confirmModal.confirm(title, msg, warnKey);
     }
-
-    modalTitle = title;
-    modalMsg = msg;
-    currentWarnKey = warnKey;
-    dontWarnValue = false;
-    modalOpen = true;
-
-    return new Promise<boolean>((resolve) => {
-      modalResolve = async (val: boolean) => {
-        if (val && currentWarnKey && dontWarnValue) {
-          const cfg = (await configStorage.getValue()) as any;
-          await configStorage.setValue({ ...cfg, [currentWarnKey]: false });
-        }
-        modalOpen = false;
-        resolve(val);
-      };
-    });
+    return window.confirm(msg);
   }
 
   function handleTabChange(tab: string) {
@@ -279,7 +263,7 @@
     {:else if activeTab === "api"}
       <ApiKeyTab onStatus={showStatus} />
     {:else if activeTab === "theme"}
-      <ThemeTab onStatus={showStatus} />
+      <ThemeTab onStatus={showStatus} onConfirm={handleConfirm} />
     {:else if activeTab === "video"}
       <VideoTab onStatus={showStatus} />
     {:else if activeTab === "overlay"}
@@ -294,46 +278,7 @@
   </main>
 </div>
 
-{#if modalOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-overlay open" onclick={() => modalResolve?.(false)}>
-    <div class="modal-box" onclick={(e) => e.stopPropagation()}>
-      <h3>{modalTitle}</h3>
-      <p>{modalMsg}</p>
-
-      {#if currentWarnKey}
-        <div
-          style="margin-top: 16px; display: flex; align-items: center; gap: 8px;"
-        >
-          <input
-            type="checkbox"
-            id="dont-warn-checkbox"
-            bind:checked={dontWarnValue}
-            style="width: 14px; height: 14px; cursor: pointer; accent-color: var(--color-accent);"
-          />
-          <label
-            for="dont-warn-checkbox"
-            style="font-size: 12px; color: var(--color-text-muted); cursor: pointer; user-select: none;"
-          >
-            Don't warn me again
-          </label>
-        </div>
-      {/if}
-
-      <div class="modal-actions">
-        <button
-          class="btn btn-ghost btn-sm"
-          onclick={() => modalResolve?.(false)}>Cancel</button
-        >
-        <button
-          class="btn btn-amber btn-sm"
-          onclick={() => modalResolve?.(true)}>Proceed</button
-        >
-      </div>
-    </div>
-  </div>
-{/if}
+<ConfirmModal bind:this={confirmModal} />
 
 <style>
   :global(html),

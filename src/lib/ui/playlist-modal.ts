@@ -7,18 +7,10 @@ import { configStorage } from '@/lib/storage/config';
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
+import { setSafeHTML } from '@/lib/utils/dom';
 import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 import { getTheme } from './themes';
 import { injectModalStyles } from './video-modal';
-
-function setSafeHTML(el: HTMLElement, html: string) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  el.textContent = '';
-  while (doc.body.firstChild) {
-    el.appendChild(doc.body.firstChild);
-  }
-}
 
 const inlineLogo = DYNAMIC_LOGO_SVG;
 

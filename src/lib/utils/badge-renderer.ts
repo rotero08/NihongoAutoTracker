@@ -6,7 +6,7 @@
  */
 
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
-import { shouldHideBadge } from '@/lib/ui/video-badge';
+import { BADGE_ID, BADGE_LOGO_CLASS, BADGE_TIME_CLASS, createBadgeInnerHTML, shouldHideBadge } from '@/lib/ui/video-badge';
 import { setSafeHTML } from '@/lib/utils/dom';
 import { fmtSecs } from '@/lib/utils/time';
 
@@ -30,11 +30,11 @@ export class BadgeRenderer {
         state: { hasTriggered: boolean; isManualLogging: boolean },
         onBadgeClick: () => void
     ): void {
-        let el = document.getElementById('nt-status-badge') as HTMLElement | null;
+        let el = document.getElementById(BADGE_ID) as HTMLElement | null;
 
         const now = performance.now();
         if (el && now - this.lastCounterPaint < 500) {
-            const timeLabel = el.querySelector<HTMLElement>('.nt-time-label');
+            const timeLabel = el.querySelector<HTMLElement>(`.${BADGE_TIME_CLASS}`);
             if (timeLabel) {
                 const multiSession = totalSecs > currentSecs + 2;
                 const showTotal = cfg.showTotalInBadge ?? true;
@@ -61,7 +61,7 @@ export class BadgeRenderer {
             if (!container) return;
 
             el = document.createElement('div');
-            el.id = 'nt-status-badge';
+            el.id = BADGE_ID;
             el.style.position = 'relative';
             el.style.cursor = 'pointer';
             el.style.display = 'inline-flex';
@@ -79,10 +79,10 @@ export class BadgeRenderer {
             // Embedded inline style specifications to dynamically strip dropshadows/filters on icon & badge layers
             setSafeHTML(el, `
         <div class="nt-pill-visual-wrapper" style="display:flex; align-items:center; gap:6px; box-shadow:none !important; filter:none !important; text-shadow:none !important;">
-          <div class="nt-badge-logo" style="width:18px; height:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; box-shadow:none !important; filter:none !important;">
+          <div class="${BADGE_LOGO_CLASS}" style="width:18px; height:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; box-shadow:none !important; filter:none !important;">
             ${DYNAMIC_LOGO_SVG}
           </div>
-          <span class="nt-time-label" style="box-shadow:none !important; text-shadow:none !important;">0:00</span>
+          <span class="${BADGE_TIME_CLASS}" style="box-shadow:none !important; text-shadow:none !important;">0:00</span>
         </div>
       `);
 
@@ -96,7 +96,7 @@ export class BadgeRenderer {
 
         this.lastCounterPaint = now;
 
-        const timeLabel = el.querySelector<HTMLElement>('.nt-time-label')!;
+        const timeLabel = el.querySelector<HTMLElement>(`.${BADGE_TIME_CLASS}`)!;
         const currentStr = fmtSecs(currentSecs);
         timeLabel.textContent = (multiSession && showTotal)
             ? `${currentStr} / ${fmtSecs(totalSecs)}`
