@@ -93,7 +93,7 @@ export default defineConfig({
     name: 'NihongoAutoTracker',
     description:
       'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
-    version: '4.0.3',
+    version: '4.0.4',
     permissions: ['storage', 'contextMenus', 'notifications', 'tabs', 'alarms'],
     host_permissions: [
       'https://nihongotracker.app/*',
