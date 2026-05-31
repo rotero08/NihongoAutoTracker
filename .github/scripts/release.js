@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import readline from 'readline';
 
 // 1. Read current version from wxt.config.ts
@@ -189,15 +189,14 @@ function proceedWithRelease(nextVersion, releaseType, releaseNotes) {
     const tagName = `v${nextVersion}`;
 
     // 1. Safeguard: Check clean working directory
-    try {
-        const status = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
-        if (status) {
-            console.warn("\n⚠️ Warning: Your git working directory has uncommitted changes.");
-            console.warn("Please commit or stash your changes before tagging a release.");
-            process.exit(1);
-        }
-    } catch (err) {
-        console.error("❌ Failed to check git status:", err.message);
+    const statusResult = spawnSync('git', ['status', '--porcelain'], { encoding: 'utf8' });
+    if (statusResult.status !== 0) {
+        console.error("❌ Failed to check git status.");
+        process.exit(1);
+    }
+    if (statusResult.stdout.trim()) {
+        console.warn("\n⚠️ Warning: Your git working directory has uncommitted changes.");
+        console.warn("Please commit or stash your changes before tagging a release.");
         process.exit(1);
     }
 
@@ -214,37 +213,51 @@ function proceedWithRelease(nextVersion, releaseType, releaseNotes) {
     console.log(`📝 Updated version in package.json to: ${nextVersion}`);
 
     // 4. Commit version changes
-    try {
-        console.log(`Git: Staging and committing updates...`);
-        execSync(`git add wxt.config.ts package.json`);
-        execSync(`git commit -m "chore: release ${tagName}"`);
-    } catch (err) {
-        console.error("❌ Git commit failed:", err.message);
+    console.log(`Git: Staging updates...`);
+    const addResult = spawnSync('git', ['add', 'wxt.config.ts', 'package.json']);
+    if (addResult.status !== 0) {
+        console.error("❌ Git add failed.");
+        process.exit(1);
+    }
+
+    console.log(`Git: Committing updates...`);
+    const commitResult = spawnSync('git', ['commit', '-m', `chore: release ${tagName}`]);
+    if (commitResult.status !== 0) {
+        console.error("❌ Git commit failed.");
         process.exit(1);
     }
 
     // 5. Build Tag Message with metadata headers
     const tagMessage = `RELEASE_TYPE: ${releaseType}\n${releaseNotes}`;
 
-    // 6. Tag and Push
-    try {
-        const escapedMessage = tagMessage.replace(/"/g, '\\"');
-        execSync(`git tag -a ${tagName} -m "${escapedMessage}"`);
-
-        const currentBranch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
-
-        console.log(`Pushing updates to origin ${currentBranch}...`);
-        execSync(`git push origin ${currentBranch}`);
-
-        console.log(`Pushing tag ${tagName} to GitHub...`);
-        execSync(`git push origin ${tagName}`);
-
-        console.log(`\n✅ Success! Files updated, tag pushed. GitHub Actions will process the ${releaseType} release.`);
-        process.exit(0); // <--- Terminate the process cleanly and free the terminal
-    } catch (err) {
-        console.error("❌ Git operations failed:", err.message);
+    // 6. Tag and Push (Using spawnSync arrays to completely protect against shell-escaping bugs)
+    console.log(`Git: Tagging ${tagName}...`);
+    const tagResult = spawnSync('git', ['tag', '-a', tagName, '-m', tagMessage]);
+    if (tagResult.status !== 0) {
+        console.error("❌ Git tag failed:", tagResult.stderr ? tagResult.stderr.toString() : '');
         process.exit(1);
     }
+
+    // Get current working branch dynamically
+    const branchResult = spawnSync('git', ['branch', '--show-current'], { encoding: 'utf8' });
+    const currentBranch = branchResult.stdout.trim() || 'main';
+
+    console.log(`Pushing updates to origin ${currentBranch}...`);
+    const pushBranchResult = spawnSync('git', ['push', 'origin', currentBranch], { stdio: 'inherit' });
+    if (pushBranchResult.status !== 0) {
+        console.error("❌ Git push branch failed.");
+        process.exit(1);
+    }
+
+    console.log(`Pushing tag ${tagName} to GitHub...`);
+    const pushTagResult = spawnSync('git', ['push', 'origin', tagName], { stdio: 'inherit' });
+    if (pushTagResult.status !== 0) {
+        console.error("❌ Git push tag failed.");
+        process.exit(1);
+    }
+
+    console.log(`\n✅ Success! Files updated, tag pushed. GitHub Actions will process the ${releaseType} release.`);
+    process.exit(0);
 }
 
 run().catch(err => {
