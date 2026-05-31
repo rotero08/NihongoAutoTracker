@@ -592,9 +592,11 @@ function recalculateChars() {
   _lastRecalculateTime = now;
 
   if (!isReadingViewActive()) {
+    // Reset time/chars BEFORE setting running=false to prevent the Proxy setter from
+    // triggering liveSyncQueue with a wrong page title (e.g. settings page).
+    ttuState.timeMs = 0;
+    ttuState.chars = 0;
     ttuState.running = false;
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
     return;
   }
 
@@ -796,10 +798,12 @@ async function setupTTUChronometer() {
       }
 
       if (!isReadingViewActive()) {
-        if (ttuState.running) {
+        if (ttuState.running || ttuState.timeMs > 0 || ttuState.chars > 0) {
+          // Reset time/chars BEFORE setting running=false to prevent the Proxy setter from
+          // triggering liveSyncQueue with a wrong page title (e.g. settings page).
+          ttuState.timeMs = 0;
+          ttuState.chars = 0;
           ttuState.running = false;
-          const wr = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
         return;
       }
@@ -1303,6 +1307,31 @@ function handleMutations() {
       }
     }
   } else {
+    // Fully stop and reset the reader overlay when leaving the reading view (e.g. navigating to /settings).
+    // Reset timeMs and chars BEFORE setting running=false so the Proxy setter's liveSyncQueue call
+    // early-returns (it bails when both are 0), preventing a bogus queue entry with the settings page title.
+    if (ttuState.running || ttuState.timeMs > 0 || ttuState.chars > 0) {
+      ttuState.timeMs = 0;
+      ttuState.chars = 0;
+      ttuState.running = false;
+
+      stateRefs.globalSessionStartChar = -1;
+      stateRefs.globalManualCharOffset = 0;
+      stateRefs.lastSectionIndex = -1;
+      stateRefs.lastSectionTotal = 0;
+      stateRefs.visitedSections.clear();
+      stateRefs.globalLastTick = Date.now();
+      hasSyncedThisSession = false;
+
+      _wasTimerRunningBeforeYatsuSidebar = false;
+      _isYatsuSidebarCurrentlyOpen = false;
+    }
+
+    if ((window as any).ntChronoInterval) {
+      clearInterval((window as any).ntChronoInterval);
+      (window as any).ntChronoInterval = null;
+    }
+
     if (wrapper) {
       if (mountedChronoComponent) {
         unmount(mountedChronoComponent);
