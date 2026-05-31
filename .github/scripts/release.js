@@ -240,6 +240,7 @@ function proceedWithRelease(nextVersion, releaseType, releaseNotes) {
         execSync(`git push origin ${tagName}`);
 
         console.log(`\n✅ Success! Files updated, tag pushed. GitHub Actions will process the ${releaseType} release.`);
+        process.exit(0); // <--- Terminate the process cleanly and free the terminal
     } catch (err) {
         console.error("❌ Git operations failed:", err.message);
         process.exit(1);
