@@ -16,9 +16,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches full tag history to read release notes
+          fetch-depth: 0 # Fetches full git history to read annotated tag messages
 
-      # Safety Check: Verify that the pushed tag matches wxt.config.ts
+      # Safety Step: Automatically verify that your pushed tag matches wxt.config.ts
       - name: Validate Version Match
         if: github.ref_type == 'tag'
         run: |
@@ -102,8 +102,16 @@ jobs:
             fi
             echo "Target Release Tag: $TAG_NAME"
 
+            # Force fetch tags to ensure annotated tag metadata is downloaded
+            git fetch --tags --force
+
             # Retrieve tag annotation, stripping Git comments starting with '#'
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
+            
+            echo "--- DEBUG START ---"
+            echo "Captured TAG_MSG value:"
+            echo "$TAG_MSG"
+            echo "--- DEBUG END ---"
 
             # Extract clean notes by filtering out any line containing RELEASE_TYPE
             CLEAN_NOTES=$(echo "$TAG_MSG" | grep -v "RELEASE_TYPE:")
