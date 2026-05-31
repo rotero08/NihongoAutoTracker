@@ -48,7 +48,9 @@
   $effect(() => {
     const rawTitle =
       item.description || item.contentTitleNative || "Unknown Title";
-    titleValue = type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, "");
+    titleValue = isStremio
+      ? item.contentTitleNative || item.contentTitleRomaji || item.contentTitleEnglish || rawTitle.replace(/^(Trakt|Stremio):\s*/, "")
+      : type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, "");
   });
 
   let volumeVal = $derived(Math.max(1, Number(item.volume || 1)));
@@ -69,12 +71,16 @@
   );
 
   let isLinked = $derived(
-    isRead ? !!(item.mediaId && item.mediaId !== "web-reading") : true,
+    isRead
+      ? !!(item.mediaId && item.mediaId !== "web-reading")
+      : isStremio
+        ? !!(item.mediaId || item.mediaData?.contentId)
+        : true,
   );
 
   let channelName = $derived(
     isStremio
-      ? `Stremio • ${item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      ? `Stremio • ${((item.sessions?.length || item.episodes || 1) > 1) ? `${item.sessions?.length || item.episodes} episodes` : item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
       : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
@@ -172,9 +178,9 @@
     const val = (e.target as HTMLInputElement).value;
     titleValue = val;
 
-    if (isRead) {
+    if (isRead || isStremio) {
       if (item.mediaId && item.mediaId !== "web-reading") {
-        saveItem({ mediaId: "web-reading", mediaData: undefined });
+        saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
       }
       clearTimeout(debounceTimer);
       if (val.trim().length < 2) {
@@ -199,7 +205,7 @@
 
   function handleFocus() {
     clearTimeout(blurTimeout);
-    if (isRead && titleValue.trim().length >= 2) {
+    if ((isRead || isStremio) && titleValue.trim().length >= 2) {
       searchDropdown?.search(titleValue.trim());
     }
   }
@@ -227,7 +233,7 @@
 
   async function handleTitleChange(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    await saveItem({ description: val });
+    await saveItem(isStremio ? { description: val, contentTitleNative: val } : { description: val });
   }
 
   async function handleSearchSelect(result: AniListSearchResult) {
@@ -242,6 +248,15 @@
 
     await saveItem({
       description: native,
+      contentTitleNative: native,
+      contentTitleEnglish:
+        result.title?.contentTitleEnglish ||
+        result.contentTitleEnglish ||
+        item.contentTitleEnglish,
+      contentTitleRomaji:
+        result.title?.contentTitleRomaji ||
+        result.contentTitleRomaji ||
+        item.contentTitleRomaji,
       mediaId: String(result.contentId),
       mediaData: {
         contentId: result.contentId,
@@ -258,8 +273,9 @@
         coverImage: result.coverImage || result.contentImage || undefined,
         chapters: result.chapters || undefined,
         volumes: result.volumes || undefined,
+        type: isStremio ? item.logType || "anime" : undefined,
       },
-      volume: finalVolume,
+      ...(isRead ? { volume: finalVolume } : {}),
     });
     searchDropdown?.close();
   }
@@ -267,7 +283,7 @@
   async function handleUnlink(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    await saveItem({ mediaId: "web-reading", mediaData: undefined });
+    await saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
     onStatus("✓ AniList match unlinked");
   }
 
@@ -420,6 +436,10 @@
         const session = entry.sessions[sessionIdx];
         if (field === "mins") {
           session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "season") {
+          session.season = Math.max(1, Number(val) || 1);
+        } else if (field === "episode") {
+          session.episode = Math.max(1, Number(val) || 1);
         } else if (field === "date") {
           try {
             session.date = new Date(val).toISOString();
@@ -520,6 +540,7 @@
           0,
         );
         entry.time = Math.max(1, Math.round(totalSecs / 60));
+        entry.episodes = entry.sessions.length || 1;
 
         const newQueue = [...currentQueue];
         newQueue[idx] = entry;
@@ -571,7 +592,9 @@
     const defaultDateStr =
       s.length > 0 ? s[0].date : current.date || new Date().toISOString();
     const desc =
-      current.description || current.contentTitleNative || "Unknown Title";
+      isStremio
+        ? current.mediaData?.contentTitleNative || current.contentTitleNative || current.description || "Unknown Title"
+        : current.description || current.contentTitleNative || "Unknown Title";
 
     if (s.length > 1 && !hasOverride) {
       return s.map((sess: any) => {
@@ -582,7 +605,7 @@
           time: sessMins,
           date: new Date(sess.date).toISOString(),
           chars: isRead ? sess.chars || 0 : 0,
-          episodes: isStremio ? current.episodes || 1 : 0,
+          episodes: isStremio ? 1 : 0,
           pages: 0,
           unknownDate: false,
           mediaId: isRead
@@ -733,7 +756,7 @@
       await updateStremioQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
       );
-      await markStremioProcessed(item.traktHistoryId);
+      await markStremioProcessed(item);
     } else {
       await updateVideoQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
@@ -743,10 +766,12 @@
     onRefresh();
   }
 
-  async function markStremioProcessed(historyId?: string) {
-    if (!historyId) return;
+  async function markStremioProcessed(stremioItem?: any) {
+    if (!stremioItem) return;
     const processed = new Set(await stremioProcessedStorage.getValue());
-    processed.add(String(historyId));
+    for (const historyId of [stremioItem.traktHistoryId, ...(stremioItem.traktHistoryIds ?? [])]) {
+      if (historyId) processed.add(String(historyId));
+    }
     await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
 </script>
@@ -755,7 +780,7 @@
   <!-- Top row (title + spinners/volume) -->
   <div class="qi-row top-row">
     <div class="qi-search-wrap">
-      {#if isRead}
+      {#if isRead || isStremio}
         <svg class="qi-search-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
@@ -763,10 +788,10 @@
       {/if}
       <input
         class="qi-desc"
-        class:searchable={isRead}
+        class:searchable={isRead || isStremio}
         type="text"
         value={titleValue}
-        placeholder={isRead ? "Search AniList..." : "Video Title"}
+        placeholder={isRead || isStremio ? "Search AniList..." : "Video Title"}
         oninput={handleTitleInput}
         onchange={handleTitleChange}
         onblur={handleBlur}
@@ -778,11 +803,11 @@
         aria-label="Item title"
       />
       {#if isLinked}
-        {#if isRead}
+        {#if isRead || isStremio}
           <button
             type="button"
             class="qi-link-status"
-            title="Unlink AniList"
+            title="Unlink AniList match"
             onclick={handleUnlink}
             onmouseenter={() => (isUnlinkHovered = true)}
             onmouseleave={() => (isUnlinkHovered = false)}
@@ -802,7 +827,7 @@
         {/if}
       {/if}
 
-      {#if isRead}
+      {#if isRead || isStremio}
         <SearchDropdown
           bind:this={searchDropdown}
           onSelect={handleSearchSelect}
@@ -874,6 +899,35 @@
               >
             </button>
           </div>
+        </div>
+      {/if}
+
+      {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
+        <div class="qi-spin-group">
+          <input
+            class="qi-mins"
+            type="number"
+            value={Math.max(1, Number(item.season || 1))}
+            min="1"
+            onchange={(e) => saveItem({ season: Math.max(1, Number((e.target as HTMLInputElement).value) || 1) })}
+            onfocus={rememberEditableStart}
+            onkeydown={handleEditableKeydown}
+            aria-label="Season number"
+          />
+          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;">season</span>
+        </div>
+        <div class="qi-spin-group">
+          <input
+            class="qi-mins"
+            type="number"
+            value={Math.max(1, Number(item.episode || 1))}
+            min="1"
+            onchange={(e) => saveItem({ episode: Math.max(1, Number((e.target as HTMLInputElement).value) || 1) })}
+            onfocus={rememberEditableStart}
+            onkeydown={handleEditableKeydown}
+            aria-label="Episode number"
+          />
+          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;">ep</span>
         </div>
       {/if}
 
@@ -957,6 +1011,41 @@
           {#each sessions as session, i}
             <div class="qi-session">
               <span class="qi-session-num">S{i + 1}</span>
+
+              {#if isStremio}
+                <input
+                  class="qi-session-mins"
+                  type="number"
+                  value={Math.max(1, Number(session.season || 1))}
+                  min="1"
+                  onfocus={rememberEditableStart}
+                  onkeydown={handleEditableKeydown}
+                  onchange={(e) =>
+                    handleSessionChange(
+                      i,
+                      "season",
+                      (e.target as HTMLInputElement).value,
+                    )}
+                  aria-label={`Session ${i + 1} season`}
+                />
+                <span style="font-size:10px; color:var(--color-text-muted);">s</span>
+                <input
+                  class="qi-session-mins"
+                  type="number"
+                  value={Math.max(1, Number(session.episode || 1))}
+                  min="1"
+                  onfocus={rememberEditableStart}
+                  onkeydown={handleEditableKeydown}
+                  onchange={(e) =>
+                    handleSessionChange(
+                      i,
+                      "episode",
+                      (e.target as HTMLInputElement).value,
+                    )}
+                  aria-label={`Session ${i + 1} episode`}
+                />
+                <span style="font-size:10px; color:var(--color-text-muted);">e</span>
+              {/if}
 
               {#if isRead}
                 <input

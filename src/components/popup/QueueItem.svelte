@@ -48,18 +48,24 @@
     item.description || item.contentTitleNative || "Unknown Title",
   );
   const displayTitle = $derived(
-    type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, ""),
+    isStremio
+      ? item.contentTitleNative || item.contentTitleRomaji || item.contentTitleEnglish || rawTitle.replace(/^(Trakt|Stremio):\s*/, "")
+      : type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, ""),
   );
   const displayMins = $derived(
     isRead ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
   );
   let isLinked = $derived(
-    isRead ? !!(item.mediaId && item.mediaId !== "web-reading") : true,
+    isRead
+      ? !!(item.mediaId && item.mediaId !== "web-reading")
+      : isStremio
+        ? !!(item.mediaId || item.mediaData?.contentId)
+        : true,
   );
 
   let channelName = $derived(
     isStremio
-      ? `Stremio • ${item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      ? `Stremio • ${((item.sessions?.length || item.episodes || 1) > 1) ? `${item.sessions?.length || item.episodes} episodes` : item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
       : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
@@ -86,15 +92,16 @@
     const val = (e.target as HTMLInputElement).value;
     titleValue = val;
 
-    if (isRead) {
+    if (isRead || isStremio) {
       if (item.mediaId && item.mediaId !== "web-reading") {
-        updateReadingQueueAtomic((q) => {
+        const updater = isRead ? updateReadingQueueAtomic : updateStremioQueueAtomic;
+        updater((q: any[]) => {
           const idx = q.findIndex((x) => x.id === item.id);
           if (idx > -1) {
             const newQ = [...q];
             newQ[idx] = {
               ...newQ[idx],
-              mediaId: "web-reading",
+              mediaId: isRead ? "web-reading" : undefined,
               mediaData: undefined,
             };
             return newQ;
@@ -120,7 +127,7 @@
 
   function handleFocus() {
     clearTimeout(blurTimeout);
-    if (isRead && titleValue.trim().length >= 2) {
+    if ((isRead || isStremio) && titleValue.trim().length >= 2) {
       searchDropdown?.search(titleValue.trim());
     }
   }
@@ -237,6 +244,17 @@
 
   async function handleTitleChange(e: Event) {
     const val = (e.target as HTMLInputElement).value;
+    if (isStremio) {
+      await updateStremioQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = [...q];
+        newQ[idx] = { ...newQ[idx], description: val, contentTitleNative: val };
+        return newQ;
+      });
+      onRefresh();
+      return;
+    }
     await persistField("description", val);
   }
 
@@ -250,13 +268,23 @@
     const { volume: parsedVolume } = parseTitleForUI(native);
     const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
 
-    await updateReadingQueueAtomic((q) => {
+    const updater = isRead ? updateReadingQueueAtomic : updateStremioQueueAtomic;
+    await updater((q: any[]) => {
       const idx = q.findIndex((x) => x.id === item.id);
       if (idx > -1) {
         const newQ = [...q];
         newQ[idx] = {
           ...newQ[idx],
           description: native,
+          contentTitleNative: native,
+          contentTitleEnglish:
+            result.title?.contentTitleEnglish ||
+            result.contentTitleEnglish ||
+            newQ[idx].contentTitleEnglish,
+          contentTitleRomaji:
+            result.title?.contentTitleRomaji ||
+            result.contentTitleRomaji ||
+            newQ[idx].contentTitleRomaji,
           mediaId: String(result.contentId),
           mediaData: {
             contentId: result.contentId,
@@ -273,8 +301,9 @@
             coverImage: result.coverImage || result.contentImage || undefined,
             chapters: result.chapters || undefined,
             volumes: result.volumes || undefined,
+            type: isStremio ? newQ[idx].logType || "anime" : undefined,
           },
-          volume: finalVolume,
+          ...(isRead ? { volume: finalVolume } : {}),
         };
         return newQ;
       }
@@ -370,6 +399,10 @@
         const session = entry.sessions[sessionIdx];
         if (field === "mins") {
           session.secs = Math.max(1, Number(val) || 1) * 60;
+        } else if (field === "season") {
+          session.season = Math.max(1, Number(val) || 1);
+        } else if (field === "episode") {
+          session.episode = Math.max(1, Number(val) || 1);
         } else if (field === "date") {
           try {
             session.date = new Date(val).toISOString();
@@ -528,7 +561,7 @@
       await updateStremioQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
       );
-      await markStremioProcessed(item.traktHistoryId);
+      await markStremioProcessed(item);
     } else {
       await updateVideoQueueAtomic((currentQ) =>
         currentQ.filter((x) => x.id !== item.id),
@@ -538,10 +571,12 @@
     onRefresh();
   }
 
-  async function markStremioProcessed(historyId?: string) {
-    if (!historyId) return;
+  async function markStremioProcessed(stremioItem?: any) {
+    if (!stremioItem) return;
     const processed = new Set(await stremioProcessedStorage.getValue());
-    processed.add(String(historyId));
+    for (const historyId of [stremioItem.traktHistoryId, ...(stremioItem.traktHistoryIds ?? [])]) {
+      if (historyId) processed.add(String(historyId));
+    }
     await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
 
@@ -586,6 +621,7 @@
           0,
         );
         entry.time = Math.round(totalSecs / 60);
+        entry.episodes = entry.sessions.length || 1;
         return newQ;
       });
     } else {
@@ -634,15 +670,17 @@
 
   function buildPayloads(item: any) {
     const desc =
-      titleValue ||
-      (isRead
-        ? item.mediaData?.contentTitleNative || item.contentTitleNative
-        : item.contentTitleNative);
+      isStremio
+        ? item.mediaData?.contentTitleNative || item.contentTitleNative || titleValue
+        : titleValue ||
+          (isRead
+            ? item.mediaData?.contentTitleNative || item.contentTitleNative
+            : item.contentTitleNative);
     const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
     const base: any = {
       type: isStremio ? item.logType || "anime" : type,
       description: apiTitle,
-      episodes: isStremio ? item.episodes || 1 : 0,
+      episodes: isStremio ? 1 : 0,
       pages: 0,
       unknownDate: false,
     };
@@ -669,6 +707,15 @@
         channelTitle: item.contentTitleNative,
       };
     }
+    const stremioSessions = isStremio ? item.sessions ?? [] : [];
+    if (isStremio && stremioSessions.length > 1) {
+      return stremioSessions.map((session: any) => ({
+        ...base,
+        time: Math.max(1, Math.round((session.secs || 0) / 60)),
+        date: new Date(session.date).toISOString(),
+        chars: 0,
+      }));
+    }
     return [
       {
         ...base,
@@ -685,7 +732,7 @@
   <!-- Title row -->
   <div class="qi-title-row">
     <div class="qi-search-wrap">
-      {#if isRead}
+      {#if isRead || isStremio}
         <svg class="qi-search-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
@@ -693,7 +740,7 @@
       {/if}
       <input
         class="ghost-input qi-title"
-        class:searchable={isRead}
+        class:searchable={isRead || isStremio}
         type="text"
         value={titleValue}
         title={displayTitle}
@@ -707,7 +754,7 @@
         onkeydown={handleEditableKeydown}
         aria-label="Item title"
       />
-      {#if isRead}
+      {#if isRead || isStremio}
         <SearchDropdown
           bind:this={searchDropdown}
           onSelect={handleSearchSelect}
@@ -715,11 +762,11 @@
       {/if}
     </div>
     {#if isLinked}
-      {#if isRead}
+      {#if isRead || isStremio}
         <button
           type="button"
           class="qi-link-status"
-          title="Unlink AniList"
+          title="Unlink AniList match"
           onclick={handleUnlink}
           onmouseenter={() => (isUnlinkHovered = true)}
           onmouseleave={() => (isUnlinkHovered = false)}
@@ -780,6 +827,32 @@
       />
       <span class="unit-lbl">vol</span>
     {/if}
+    {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
+      <input
+        class="ghost-num num-vol qi-vol"
+        type="number"
+        min="1"
+        value={Math.max(1, Number(item.season || 1))}
+        title="Season"
+        onchange={(e) => persistField("season", Math.max(1, Number((e.target as HTMLInputElement).value) || 1))}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
+        aria-label="Season number"
+      />
+      <span class="unit-lbl">season</span>
+      <input
+        class="ghost-num num-vol qi-vol"
+        type="number"
+        min="1"
+        value={Math.max(1, Number(item.episode || 1))}
+        title="Episode"
+        onchange={(e) => persistField("episode", Math.max(1, Number((e.target as HTMLInputElement).value) || 1))}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
+        aria-label="Episode number"
+      />
+      <span class="unit-lbl">ep</span>
+    {/if}
     <span class="qi-meta-sep">·</span>
     <div class="qi-mid">
       <span class="qi-channel" title="{channelName} {urlDisplay}"
@@ -810,6 +883,7 @@
     {sessions}
     itemId={item.id}
     isReading={isRead}
+    isStremio={isStremio}
     onRemoveSession={handleRemoveSession}
     onSessionChange={handleSessionChange}
   />

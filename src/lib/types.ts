@@ -94,6 +94,10 @@ export interface QueueSession {
   secs: number;
   date: string;
   chars?: number;
+  season?: number;
+  episode?: number;
+  traktHistoryId?: string;
+  episodeTitle?: string;
 }
 
 export interface TTUHistorySession {
@@ -161,6 +165,7 @@ export interface QueuedStremioLog {
   mediaId?: string;
   mediaData?: AnimeMediaData;
   traktHistoryId: string;
+  traktHistoryIds?: string[];
   traktType: 'episode' | 'movie';
   season?: number;
   episode?: number;

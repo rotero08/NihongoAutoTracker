@@ -347,8 +347,10 @@ export default defineBackground(() => {
             : type === 'stremio'
               ? item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
               : item.channelId || 'web-video'),
-        description: item.description || item.contentTitleNative,
-        episodes: type === 'stremio' ? item.episodes || 0 : 0,
+        description: type === 'stremio'
+          ? item.mediaData?.contentTitleNative || item.contentTitleNative || item.description
+          : item.description || item.contentTitleNative,
+        episodes: type === 'stremio' ? 1 : 0,
         pages: 0,
         unknownDate: false,
         volume: item.volume || 1,
