@@ -87,7 +87,7 @@
     warnKey?: string,
   ): Promise<boolean> {
     if (confirmModal) {
-      return await confirmModal.confirm(title, msg, warnKey);
+      return await confirmModal.confirm(title, msg, warnKey || null);
     }
     return window.confirm(msg);
   }
@@ -174,12 +174,12 @@
           if (targetTheme) {
             syncThemeCache(theme, font, targetTheme.colors);
             applyThemeToDocument("dark-amber", font, targetTheme.colors, {
-              useStaticInPageLogo,
+              useStaticInPageLogo: false,
             });
           } else {
             syncThemeCache(theme, font, null);
             applyThemeToDocument("dark-amber", font, undefined, {
-              useStaticInPageLogo,
+              useStaticInPageLogo: false,
             });
           }
         } else {

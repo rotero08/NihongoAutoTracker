@@ -28,12 +28,24 @@
     msg: string,
     key: string | null = null,
   ): Promise<boolean> {
+    if (key) {
+      return configStorage.getValue().then((cfg: any) => {
+        if (cfg && cfg[key] === false) {
+          return true;
+        }
+        return showModal(t, msg, key);
+      });
+    }
+    return showModal(t, msg, key);
+  }
+
+  function showModal(t: string, msg: string, key: string | null): Promise<boolean> {
     title = t;
     desc = msg;
     warnKey = key;
     dontWarn = false;
     open = true;
-    return new Promise((resolve) => {
+    return new Promise<boolean>((resolve) => {
       resolver = resolve;
     });
   }
@@ -52,7 +64,7 @@
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={() => close(false)}>
+  <div class="modal-overlay open" onclick={() => close(false)}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="modal-box" onclick={(e) => e.stopPropagation()}>
       <h3>{title}</h3>
@@ -66,8 +78,8 @@
       {/if}
 
       <div class="modal-actions">
-        <button class="btn-ghost" onclick={() => close(false)}>Cancel</button>
-        <button class="btn-amber" onclick={() => close(true)}>Proceed</button>
+        <button class="btn btn-ghost btn-sm" onclick={() => close(false)}>Cancel</button>
+        <button class="btn btn-amber btn-sm" onclick={() => close(true)}>Proceed</button>
       </div>
     </div>
   </div>

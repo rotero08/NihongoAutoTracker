@@ -572,6 +572,22 @@
         );
         return newQ;
       });
+    } else if (isStremio) {
+      await updateStremioQueueAtomic((q) => {
+        const idx = q.findIndex((x) => x.id === item.id);
+        if (idx === -1) return q;
+        const newQ = JSON.parse(JSON.stringify(q));
+        const entry = newQ[idx];
+        entry.sessions = (entry.sessions ?? []).filter(
+          (s: any) => s.id !== sessionId,
+        );
+        const totalSecs = entry.sessions.reduce(
+          (a: number, b: any) => a + b.secs,
+          0,
+        );
+        entry.time = Math.round(totalSecs / 60);
+        return newQ;
+      });
     } else {
       await updateVideoQueueAtomic((q) => {
         const idx = q.findIndex((x) => x.id === item.id);
