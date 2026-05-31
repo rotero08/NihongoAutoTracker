@@ -44,6 +44,7 @@
     let selectedTheme = $state("dark-amber");
     let selectedFont = $state("sans");
     let lastActivePresetTheme = $state("dark-amber");
+    let previousTheme = $state("dark-amber");
 
     let useStaticToolbarIcon = $state(false);
     let useStaticInPageLogo = $state(false);
@@ -237,10 +238,35 @@
         }
 
         if (selectedTheme === themeId) {
-            selectedTheme = lastActivePresetTheme;
-            applyThemeToDocument(lastActivePresetTheme, selectedFont, undefined, {
-                useStaticInPageLogo,
-            });
+            let fallbackTheme = previousTheme;
+            if (isCustomThemeId(fallbackTheme)) {
+                const exists = customThemes.some((t) => t.id === fallbackTheme);
+                if (!exists) {
+                    fallbackTheme = "dark-amber";
+                }
+            }
+            if (fallbackTheme === themeId || !fallbackTheme) {
+                fallbackTheme = "dark-amber";
+            }
+
+            selectedTheme = fallbackTheme;
+            if (!isCustomThemeId(fallbackTheme)) {
+                lastActivePresetTheme = fallbackTheme;
+            }
+
+            if (isCustomThemeId(fallbackTheme)) {
+                const fallbackCustom = customThemes.find((t) => t.id === fallbackTheme);
+                applyThemeToDocument(
+                    "dark-amber",
+                    selectedFont,
+                    fallbackCustom ? fallbackCustom.colors : undefined,
+                    { useStaticInPageLogo },
+                );
+            } else {
+                applyThemeToDocument(fallbackTheme, selectedFont, undefined, {
+                    useStaticInPageLogo,
+                });
+            }
             isCollapsed["global"] = true;
         }
         if (ttuThemeOverride === themeId) {
@@ -507,14 +533,40 @@
         const cfg = (await configStorage.getValue()) as any;
 
         if (selectedTheme === themeId) {
-            selectedTheme = "dark-amber";
-            lastActivePresetTheme = "dark-amber";
-            cfg.theme = "dark-amber";
-            cfg.selectedThemeId = undefined;
-            cfg.customColors = undefined;
-            applyThemeToDocument("dark-amber", selectedFont, undefined, {
-                useStaticInPageLogo,
-            });
+            let fallbackTheme = previousTheme;
+            if (isCustomThemeId(fallbackTheme)) {
+                const exists = customThemes.some((t) => t.id === fallbackTheme);
+                if (!exists) {
+                    fallbackTheme = "dark-amber";
+                }
+            }
+            if (fallbackTheme === themeId || !fallbackTheme) {
+                fallbackTheme = "dark-amber";
+            }
+
+            selectedTheme = fallbackTheme;
+            if (!isCustomThemeId(fallbackTheme)) {
+                lastActivePresetTheme = fallbackTheme;
+            }
+
+            cfg.theme = fallbackTheme;
+            if (isCustomThemeId(fallbackTheme)) {
+                cfg.selectedThemeId = fallbackTheme;
+                const fallbackCustom = customThemes.find((t) => t.id === fallbackTheme);
+                cfg.customColors = fallbackCustom ? { ...fallbackCustom.colors } : undefined;
+                applyThemeToDocument(
+                    "dark-amber",
+                    selectedFont,
+                    fallbackCustom ? fallbackCustom.colors : undefined,
+                    { useStaticInPageLogo },
+                );
+            } else {
+                cfg.selectedThemeId = undefined;
+                cfg.customColors = undefined;
+                applyThemeToDocument(fallbackTheme, selectedFont, undefined, {
+                    useStaticInPageLogo,
+                });
+            }
             isCollapsed["global"] = true;
         }
         if (ttuThemeOverride === themeId) {
@@ -568,6 +620,7 @@
             cfg.yomiyasuThemeOverride ??
             "global";
         selectedTheme = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
+        previousTheme = selectedTheme;
         selectedFont = cfg.font ?? "sans";
 
         useStaticToolbarIcon = cfg.useStaticToolbarIcon === true;
@@ -646,12 +699,22 @@
                     { useStaticInPageLogo },
                 );
             } else {
-                applyThemeToDocument(
-                    lastActivePresetTheme,
-                    selectedFont,
-                    undefined,
-                    { useStaticInPageLogo },
-                );
+                const draftColors = themeDraftColors[selectedTheme];
+                if (draftColors) {
+                    applyThemeToDocument(
+                        "dark-amber",
+                        selectedFont,
+                        draftColors,
+                        { useStaticInPageLogo },
+                    );
+                } else {
+                    applyThemeToDocument(
+                        lastActivePresetTheme,
+                        selectedFont,
+                        undefined,
+                        { useStaticInPageLogo },
+                    );
+                }
             }
         } else {
             applyThemeToDocument(selectedTheme, selectedFont, undefined, {
@@ -682,8 +745,11 @@
         }
 
         if (themeName === "add-custom") {
+            previousTheme = selectedTheme;
             const newId = createNewCustomTheme();
             themeName = newId;
+        } else if (themeName !== selectedTheme) {
+            previousTheme = selectedTheme;
         }
         selectedTheme = themeName;
 
@@ -703,10 +769,11 @@
                     { useStaticInPageLogo },
                 );
             } else {
+                const draftColors = themeDraftColors[themeName];
                 applyThemeToDocument(
-                    lastActivePresetTheme,
+                    "dark-amber",
                     selectedFont,
-                    undefined,
+                    draftColors,
                     { useStaticInPageLogo },
                 );
                 onStatus("Custom draft active. Save inside preview to apply.");
@@ -743,12 +810,22 @@
                     { useStaticInPageLogo },
                 );
             } else {
-                applyThemeToDocument(
-                    lastActivePresetTheme,
-                    fontName,
-                    undefined,
-                    { useStaticInPageLogo },
-                );
+                const draftColors = themeDraftColors[selectedTheme];
+                if (draftColors) {
+                    applyThemeToDocument(
+                        "dark-amber",
+                        fontName,
+                        draftColors,
+                        { useStaticInPageLogo },
+                    );
+                } else {
+                    applyThemeToDocument(
+                        lastActivePresetTheme,
+                        fontName,
+                        undefined,
+                        { useStaticInPageLogo },
+                    );
+                }
             }
         } else {
             applyThemeToDocument(selectedTheme, fontName, undefined, {
@@ -1030,7 +1107,10 @@
                         });
                     }
 
-                    selectedTheme = nextTheme;
+                    if (nextTheme !== selectedTheme) {
+                        previousTheme = selectedTheme;
+                        selectedTheme = nextTheme;
+                    }
                     ttuThemeOverride = nextTtu;
                     yatsuThemeOverride = nextYatsu;
                     yomiyasuThemeOverride = nextYomiyasu;
@@ -1112,15 +1192,28 @@
                                 },
                             );
                         } else {
-                            applyThemeToDocument(
-                                lastActivePresetTheme,
-                                selectedFont,
-                                undefined,
-                                {
-                                    useStaticInPageLogo:
-                                        val.useStaticInPageLogo === true,
-                                },
-                            );
+                            const draftColors = themeDraftColors[nextTheme];
+                            if (draftColors) {
+                                applyThemeToDocument(
+                                    "dark-amber",
+                                    selectedFont,
+                                    draftColors,
+                                    {
+                                        useStaticInPageLogo:
+                                            val.useStaticInPageLogo === true,
+                                    },
+                                );
+                            } else {
+                                applyThemeToDocument(
+                                    lastActivePresetTheme,
+                                    selectedFont,
+                                    undefined,
+                                    {
+                                        useStaticInPageLogo:
+                                            val.useStaticInPageLogo === true,
+                                    },
+                                );
+                            }
                         }
                     } else {
                         applyThemeToDocument(
