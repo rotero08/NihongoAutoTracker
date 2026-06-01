@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
+  import { searchMedia } from "@/lib/api/nihongotracker";
 
   /** Whether the dropdown is open */
   let open = $state(false);
@@ -21,8 +22,9 @@
   /** Callback when a result is selected */
   interface Props {
     onSelect: (result: AniListSearchResult) => void;
+    searchType?: "reading" | "anime" | "movie" | "tv_show";
   }
-  let { onSelect }: Props = $props();
+  let { onSelect, searchType = "reading" }: Props = $props();
 
   /** Execute a search query */
   export async function search(query: string) {
@@ -39,7 +41,10 @@
     open = true;
 
     try {
-      const searchResults = await searchAniList(query, 5);
+      const searchResults =
+        searchType !== "reading"
+          ? normalizeMediaResults(await searchMedia({ search: query, type: searchType, perPage: 5 }))
+          : await searchAniList(query, 5);
 
       // Guard clause: Discard if a newer search query has already been executed
       if (currentToken !== activeQueryToken) return;
@@ -69,6 +74,36 @@
     e.preventDefault();
     onSelect(r);
     close();
+  }
+
+  function normalizeMediaResults(results: any[]): AniListSearchResult[] {
+    return results.map((media) => ({
+      contentId: media.contentId ?? media.id ?? media._id,
+      title: {
+        contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
+        contentTitleEnglish:
+          media.title?.contentTitleEnglish ??
+          media.contentTitleEnglish ??
+          (typeof media.title === "string" ? media.title : undefined),
+        contentTitleRomaji:
+          media.title?.contentTitleRomaji ??
+          media.contentTitleRomaji ??
+          (typeof media.title === "string" ? media.title : undefined),
+      },
+      contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
+      contentTitleEnglish:
+        media.title?.contentTitleEnglish ??
+        media.contentTitleEnglish ??
+        (typeof media.title === "string" ? media.title : undefined),
+      contentTitleRomaji:
+        media.title?.contentTitleRomaji ??
+        media.contentTitleRomaji ??
+        (typeof media.title === "string" ? media.title : undefined),
+      coverImage: media.coverImage ?? media.contentImage ?? media.poster,
+      contentImage: media.contentImage ?? media.coverImage ?? media.poster,
+      chapters: media.chapters,
+      volumes: media.volumes,
+    }));
   }
 </script>
 

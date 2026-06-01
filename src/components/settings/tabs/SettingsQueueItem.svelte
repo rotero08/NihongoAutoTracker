@@ -64,6 +64,9 @@
   );
 
   const sessions = $derived(item.sessions ?? []);
+  const stremioSearchType = $derived(
+    item.logType === "movie" ? "movie" : item.logType === "tv show" ? "tv_show" : "anime",
+  );
   const defaultDateStr = $derived(
     sessions.length > 0
       ? sessions[0].date
@@ -830,6 +833,7 @@
       {#if isRead || isStremio}
         <SearchDropdown
           bind:this={searchDropdown}
+          searchType={isStremio ? stremioSearchType : "reading"}
           onSelect={handleSearchSelect}
         />
       {/if}
