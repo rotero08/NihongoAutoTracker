@@ -13,11 +13,12 @@
     sessions: QueueSession[];
     itemId: string;
     isReading: boolean;
+    isStremio?: boolean;
     onRemoveSession: (sessionId: string) => void;
     onSessionChange: (sessionIdx: number, field: string, val: any) => void;
   }
 
-  let { sessions, itemId, isReading, onRemoveSession, onSessionChange }: Props =
+  let { sessions, itemId, isReading, isStremio = false, onRemoveSession, onSessionChange }: Props =
     $props();
 
   /* Track collapsed state in localStorage, reactive to itemId changes */
@@ -62,7 +63,7 @@
         {#each sessions as session, i}
           <div class="session-row" data-session-id={session.id}>
             <span class="session-dot"></span>
-            <span class="session-label">S{i + 1}</span>
+            <span class="session-label">{isStremio && session.season && session.episode ? `S${session.season}E${session.episode}` : `S${i + 1}`}</span>
 
             {#if isReading}
               <input
@@ -80,6 +81,41 @@
                   )}
               />
               <span class="unit">chars</span>
+            {/if}
+
+            {#if isStremio}
+              <input
+                class="ghost-num stremio-part"
+                type="number"
+                min="1"
+                value={Math.max(1, Number(session.season || 1))}
+                title="Season"
+                onfocus={rememberEditableStart}
+                onkeydown={handleEditableKeydown}
+                onchange={(e) =>
+                  onSessionChange(
+                    i,
+                    "season",
+                    (e.target as HTMLInputElement).value,
+                  )}
+              />
+              <span class="unit">s</span>
+              <input
+                class="ghost-num stremio-part"
+                type="number"
+                min="1"
+                value={Math.max(1, Number(session.episode || 1))}
+                title="Episode"
+                onfocus={rememberEditableStart}
+                onkeydown={handleEditableKeydown}
+                onchange={(e) =>
+                  onSessionChange(
+                    i,
+                    "episode",
+                    (e.target as HTMLInputElement).value,
+                  )}
+              />
+              <span class="unit">e</span>
             {/if}
 
             <input
@@ -210,6 +246,9 @@
   .ghost-num.chars {
     width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch);
     color: var(--color-accent, #f0b429);
+  }
+  .ghost-num.stremio-part {
+    width: 18px;
   }
   .unit {
     font-size: 10px;

@@ -88,7 +88,9 @@ export async function importStremioFromTrakt(): Promise<{
   );
   const processed = new Set(await stremioProcessedStorage.getValue());
   const currentQueue = await stremioQueueStorage.getValue();
-  const queued = new Set(currentQueue.map((item) => item.traktHistoryId));
+  const queued = new Set(
+    currentQueue.flatMap((item) => [item.traktHistoryId, ...(item.traktHistoryIds ?? [])].filter(Boolean)),
+  );
   const japaneseOnly = config.stremioJapaneseOnly !== false;
   let filteredOut = 0;
   const importedItems: QueuedStremioLog[] = [];
@@ -117,10 +119,10 @@ export async function importStremioFromTrakt(): Promise<{
         if (!res.success) failed.push(item.traktHistoryId);
       }
       if (failed.length > 0) {
-        await updateStremioQueueAtomic((queue) => [...queue, ...importedItems.filter((item) => failed.includes(item.traktHistoryId))]);
+        await updateStremioQueueAtomic((queue) => mergeStremioQueueItems(queue, importedItems.filter((item) => failed.includes(item.traktHistoryId))));
       }
     } else {
-      await updateStremioQueueAtomic((queue) => [...queue, ...importedItems]);
+      await updateStremioQueueAtomic((queue) => mergeStremioQueueItems(queue, importedItems));
     }
   }
 
@@ -164,13 +166,59 @@ export function stremioQueueItemToPayload(item: QueuedStremioLog) {
   };
 }
 
+function mergeStremioQueueItems(queue: QueuedStremioLog[], items: QueuedStremioLog[]) {
+  const next = [...queue];
+
+  for (const item of items) {
+    if (item.traktType !== 'episode') {
+      next.push(item);
+      continue;
+    }
+
+    const key = getStremioSeriesKey(item);
+    const idx = next.findIndex((queuedItem) => queuedItem.traktType === 'episode' && getStremioSeriesKey(queuedItem) === key);
+    if (idx === -1) {
+      next.push({ ...item, traktHistoryIds: [item.traktHistoryId] });
+      continue;
+    }
+
+    const existing = next[idx];
+    const historyIds = new Set([existing.traktHistoryId, ...(existing.traktHistoryIds ?? [])].filter(Boolean));
+    if (historyIds.has(item.traktHistoryId)) continue;
+
+    const sessions = [
+      ...(existing.sessions ?? []),
+      ...(item.sessions ?? []),
+    ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    historyIds.add(item.traktHistoryId);
+
+    next[idx] = {
+      ...existing,
+      date: sessions[0]?.date ?? existing.date,
+      description: existing.contentTitleNative || existing.description,
+      episodes: sessions.length,
+      time: Math.max(1, Math.round(sessions.reduce((sum, session) => sum + (session.secs || 0), 0) / 60)),
+      sessions,
+      traktHistoryIds: [...historyIds],
+    };
+  }
+
+  return next;
+}
+
+function getStremioSeriesKey(item: QueuedStremioLog) {
+  const mediaKey = item.mediaId || item.mediaData?.contentId;
+  if (mediaKey) return `media:${mediaKey}`;
+  return `title:${slugify(item.contentTitleRomaji || item.contentTitleEnglish || item.contentTitleNative)}`;
+}
+
 async function toQueuedStremioLog(item: any): Promise<QueuedStremioLog | null> {
   if (item.type === 'episode') {
     const title = item.show?.title;
     if (!title || !item.episode) return null;
     const mediaData = await findNihongoMedia(title, 'anime');
     const minutes = item.episode?.runtime || item.show?.runtime || mediaData?.episodeDuration || 24;
-    const description = `Trakt: ${title} S${item.episode.season}E${item.episode.number}${item.episode.title ? ` - ${item.episode.title}` : ''}`;
+    const mediaTitle = mediaData?.contentTitleNative || mediaData?.contentTitleRomaji || mediaData?.contentTitleEnglish || title;
 
     return {
       id: `stremio:${item.id}`,
@@ -179,13 +227,21 @@ async function toQueuedStremioLog(item: any): Promise<QueuedStremioLog | null> {
       contentTitleNative: mediaData?.contentTitleNative || title,
       contentTitleEnglish: mediaData?.contentTitleEnglish || title,
       contentTitleRomaji: mediaData?.contentTitleRomaji || title,
-      description,
+      description: mediaTitle,
       episodes: 1,
       time: minutes,
       date: item.watched_at,
       private: false,
       tags: [],
-      sessions: [{ id: `stremio:${item.id}:session`, secs: minutes * 60, date: item.watched_at }],
+      sessions: [{
+        id: `stremio:${item.id}:session`,
+        secs: minutes * 60,
+        date: item.watched_at,
+        season: item.episode.season,
+        episode: item.episode.number,
+        traktHistoryId: String(item.id),
+        episodeTitle: item.episode.title,
+      }],
       mediaId: mediaData?.contentId ? String(mediaData.contentId) : undefined,
       mediaData,
       traktHistoryId: String(item.id),
@@ -227,16 +283,8 @@ async function toQueuedStremioLog(item: any): Promise<QueuedStremioLog | null> {
 
 async function findNihongoMedia(title: string, type: 'anime' | 'movie'): Promise<AnimeMediaData | undefined> {
   const results = await searchMedia({ search: title, type, perPage: 5 });
-  const media = results[0];
-  if (!media) {
-    return {
-      contentId: `trakt:${slugify(title)}`,
-      contentTitleNative: title,
-      contentTitleEnglish: title,
-      contentTitleRomaji: title,
-      type,
-    };
-  }
+  const media = pickBestMediaMatch(results, title);
+  if (!media) return undefined;
 
   return {
     contentId: media.contentId ?? media.id ?? media._id,
@@ -252,6 +300,32 @@ async function findNihongoMedia(title: string, type: 'anime' | 'movie'): Promise
     runtime: media.runtime,
     isAdult: media.isAdult,
   };
+}
+
+function pickBestMediaMatch(results: any[], title: string) {
+  if (!Array.isArray(results) || results.length === 0) return undefined;
+  const wanted = normalizeTitle(title);
+  const exact = results.find((media) => {
+    const titles = [
+      media.title?.contentTitleNative,
+      media.title?.contentTitleEnglish,
+      media.title?.contentTitleRomaji,
+      media.contentTitleNative,
+      media.contentTitleEnglish,
+      media.contentTitleRomaji,
+      media.title,
+    ];
+    return titles.some((candidate) => normalizeTitle(candidate) === wanted);
+  });
+  return exact ?? results[0];
+}
+
+function normalizeTitle(value: unknown) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 async function ensureFreshTraktToken(config: TrackerConfig): Promise<TrackerConfig> {

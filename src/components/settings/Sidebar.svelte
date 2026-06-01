@@ -165,7 +165,11 @@
     >
       <span class="nav-icon"
         ><svg viewBox="0 0 16 16"
-          ><path d="M4 3l9 5-9 5z" fill="currentColor" stroke="none" /></svg
+          ><rect x="3" y="4" width="10" height="8" rx="1.5" /><path
+            d="M6 7l3 1.5L6 10z"
+            fill="currentColor"
+            stroke="none"
+          /><path d="M5 2h6" /></svg
         ></span
       >
       Stremio

@@ -130,8 +130,9 @@
         sessions.length > 0
           ? sessions[0].date
           : item.date || new Date().toISOString();
-      const desc =
-        item.description || item.contentTitleNative || "Unknown Title";
+      const desc = isStremio
+        ? item.mediaData?.contentTitleNative || item.contentTitleNative || item.description || "Unknown Title"
+        : item.description || item.contentTitleNative || "Unknown Title";
 
       if (sessions.length > 1 && !hasOverride) {
         return sessions.map((sess: any) => {
@@ -142,7 +143,7 @@
             time: sessMins,
             date: new Date(sess.date).toISOString(),
             chars: isRead ? sess.chars || 0 : 0,
-            episodes: isStremio ? item.episodes || 1 : 0,
+            episodes: isStremio ? 1 : 0,
             pages: 0,
             unknownDate: false,
             mediaId: isRead

@@ -22,6 +22,7 @@
   let authPending = $state(false);
   let isImporting = $state(false);
   let pollTimer: any;
+  const isConnected = $derived(enabled && tokenSet);
 
   async function load() {
     const cfg = (await configStorage.getValue()) as any;
@@ -124,7 +125,20 @@
 </div>
 
 <div class="info-box">
-  Stremio support uses Trakt watched history. Nothing is imported unless this module is enabled.
+  Stremio support uses Trakt watched history. Nothing is imported unless this module is enabled and Trakt is connected.
+</div>
+
+<div class:connected={isConnected} class:warn={!isConnected} class="stremio-status">
+  <strong>{isConnected ? "Connected to Trakt" : "Not fully linked yet"}</strong>
+  <span>
+    {#if isConnected}
+      New watched items are checked every {Math.max(1, Number(pollMinutes || 5))} minute(s) while the extension background is running.
+    {:else if enabled}
+      Add your Trakt app credentials, save them, then authorize Trakt.
+    {:else}
+      Turn on Stremio via Trakt to start setup.
+    {/if}
+  </span>
 </div>
 
 <div class="field">
@@ -168,9 +182,12 @@
       </label>
       <label class="thresh-opt">
         <input type="radio" bind:group={queueMode} value="auto" />
-        Send automatically
+        Send automatically while browser is running
       </label>
     </div>
+    <p class="hint">
+      Automatic sending happens from the extension background. It will not run while the browser is fully closed.
+    </p>
   </div>
 
   <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
@@ -236,7 +253,7 @@
       {isImporting ? "Checking..." : "Import Now"}
     </button>
     <span style="font-size:11px; color: var(--color-text-muted);">
-      Trakt token: {tokenSet ? "saved" : "missing"}
+      Trakt connection: {tokenSet ? "authorized" : "not authorized"}
     </span>
   </div>
 
@@ -248,3 +265,38 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .stremio-status {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 10px 0 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    font-size: 11px;
+    color: var(--color-text-muted);
+  }
+  .stremio-status strong {
+    color: var(--color-text);
+    font-size: 12px;
+  }
+  .stremio-status.connected {
+    border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+    background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  }
+  .stremio-status.connected strong {
+    color: var(--color-success);
+  }
+  .stremio-status.warn {
+    border-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  }
+  .hint {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--color-text-muted);
+  }
+</style>
