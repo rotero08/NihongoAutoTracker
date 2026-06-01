@@ -3,6 +3,7 @@
  */
 
 import type { UITheme } from '@/lib/types';
+import { THEME_CACHE_KEY, FONT_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY } from '@/lib/constants';
 
 export const DYNAMIC_LOGO_SVG = `
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" style="display: block; width: 100%; height: 100%;" viewBox="0 0 1996 2000" preserveAspectRatio="xMidYMid meet">
@@ -260,12 +261,12 @@ export function hslToRgb(h: number, s: number, l: number) {
  */
 export function syncThemeCache(theme: string, font: string, customColors?: Record<string, string> | null) {
     if (typeof window === 'undefined') return;
-    localStorage.setItem('nta-theme-cache', theme);
-    localStorage.setItem('nta-font-cache', font);
+    localStorage.setItem(THEME_CACHE_KEY, theme);
+    localStorage.setItem(FONT_CACHE_KEY, font);
     if (customColors) {
-        localStorage.setItem('nta-custom-colors-cache', typeof customColors === 'string' ? customColors : JSON.stringify(customColors));
+        localStorage.setItem(CUSTOM_COLORS_CACHE_KEY, typeof customColors === 'string' ? customColors : JSON.stringify(customColors));
     } else {
-        localStorage.removeItem('nta-custom-colors-cache');
+        localStorage.removeItem(CUSTOM_COLORS_CACHE_KEY);
     }
 }
 

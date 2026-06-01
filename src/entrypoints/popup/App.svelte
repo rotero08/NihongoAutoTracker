@@ -305,68 +305,6 @@
     applyInitialTheme(cfg, activeUrl, detectedColors);
   }
 
-  function decorateDropdownOptions() {
-    const options = document.querySelectorAll(
-      ".select-option, .option, [class*='option']",
-    );
-    options.forEach((opt) => {
-      const text = (opt.textContent || "").replace("✕", "").trim();
-      if (!text) return;
-
-      const isPreset = [
-        "Dark Amber (Default)",
-        "Charcoal Amber",
-        "Deep Ocean Dark",
-        "Nordic Light",
-        "Amethyst Purple",
-        "Theme",
-        "Font",
-      ].some((preset) => text.startsWith(preset));
-
-      if (!isPreset && customThemes.some((t) => t.name && text === t.name)) {
-        if (!opt.querySelector(".dropdown-delete-cross")) {
-          const textSpan = document.createElement("span");
-          textSpan.className = "dropdown-option-text";
-          textSpan.textContent = text;
-          textSpan.style.overflow = "hidden";
-          textSpan.style.textOverflow = "ellipsis";
-          textSpan.style.whiteSpace = "nowrap";
-          textSpan.style.flex = "1";
-          textSpan.style.textAlign = "left";
-
-          opt.textContent = "";
-          opt.appendChild(textSpan);
-
-          (opt as HTMLElement).style.display = "flex";
-          (opt as HTMLElement).style.justifyContent = "space-between";
-          (opt as HTMLElement).style.alignItems = "center";
-          (opt as HTMLElement).style.width = "100%";
-          (opt as HTMLElement).style.position = "relative";
-          (opt as HTMLElement).style.gap = "8px";
-
-          const cross = document.createElement("span");
-          cross.className = "dropdown-delete-cross";
-          cross.textContent = "✕";
-          cross.style.color = "var(--color-text-muted)";
-          cross.style.fontSize = "10px";
-          cross.style.fontWeight = "bold";
-          cross.style.cursor = "pointer";
-          cross.style.padding = "2px 4px";
-          cross.style.marginLeft = "auto";
-          cross.style.marginRight = "-2px";
-          cross.style.transition = "color 0.15s";
-
-          cross.onmouseenter = () =>
-            (cross.style.color = "var(--color-error, #ff4444)");
-          cross.onmouseleave = () =>
-            (cross.style.color = "var(--color-text-muted)");
-
-          opt.appendChild(cross);
-        }
-      }
-    });
-  }
-
   onMount(() => {
     initialLoadPromise.catch(() => {});
 
@@ -454,38 +392,10 @@
     const clickOutsideOrDelete = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
 
-      if (target.classList.contains("dropdown-delete-cross")) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const optionEl = target.closest(
-          ".select-option, .option, [class*='option']",
-        );
-        if (optionEl) {
-          const text = (optionEl.textContent || "").replace("✕", "").trim();
-          const matchedTheme = customThemes.find((t) => t.name === text);
-          if (matchedTheme) {
-            if (document.activeElement instanceof HTMLElement) {
-              document.activeElement.blur();
-            }
-            const dropdownMenu = target.closest(
-              ".select-dropdown, .dropdown-menu, .compact-popover, [class*='dropdown'], [class*='popover']",
-            );
-            if (dropdownMenu instanceof HTMLElement) {
-              dropdownMenu.style.display = "none";
-            }
-            showCompactMenu = false;
-            handleQuickTheme("delete-" + matchedTheme.id);
-          }
-        }
-        return;
-      }
-
       if (
         target.closest(".compact-popover") ||
         target.closest(".appearance-toggle")
       ) {
-        setTimeout(decorateDropdownOptions, 30);
         return;
       }
       showCompactMenu = false;
@@ -503,9 +413,6 @@
   /* ── Quick Switch actions ── */
   function toggleCompactMenu() {
     showCompactMenu = !showCompactMenu;
-    if (showCompactMenu) {
-      setTimeout(decorateDropdownOptions, 30);
-    }
   }
 
   async function handleQuickTheme(val: string) {
@@ -1023,6 +930,8 @@
             options={themeOptions}
             value={selectedTheme}
             onChange={handleQuickTheme}
+            onDelete={(id) => handleQuickTheme("delete-" + id)}
+            deletableValues={customThemes.map((t) => t.id)}
             label="Theme"
             compact={true}
           />

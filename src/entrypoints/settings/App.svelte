@@ -17,6 +17,7 @@
   import { showToast } from "@/lib/utils/toast";
   import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
+  import { THEME_CACHE_KEY, FONT_CACHE_KEY } from "@/lib/constants";
 
   import "@/styles/settings-shared.css";
 
@@ -43,11 +44,11 @@
 
   const cachedTheme =
     typeof window !== "undefined"
-      ? localStorage.getItem("nta-theme-cache")
+      ? localStorage.getItem(THEME_CACHE_KEY)
       : null;
   const cachedFont =
     typeof window !== "undefined"
-      ? localStorage.getItem("nta-font-cache")
+      ? localStorage.getItem(FONT_CACHE_KEY)
       : null;
   if (cachedTheme || cachedFont) {
     const themeToApply = cachedTheme || "dark-amber";

@@ -15,6 +15,14 @@
         THEMES,
         lightenHexColor,
     } from "@/lib/ui/themes";
+    import { THEME_CACHE_KEY, FONT_CACHE_KEY } from "@/lib/constants";
+
+    const browser: any =
+      typeof (globalThis as any).browser !== "undefined"
+        ? (globalThis as any).browser
+        : typeof (globalThis as any).chrome !== "undefined"
+          ? (globalThis as any).chrome
+          : undefined;
 
     interface Props {
         onStatus: (msg: string, err?: boolean) => void;
@@ -75,21 +83,6 @@
     let yomiyasuThemeOverride = $state("global");
 
     const customThemeIds = $derived(customThemes.map((theme) => theme.id));
-
-    // Custom confirm dialog state variables
-    let showCustomConfirm = $state(false);
-    let customConfirmTitle = $state("");
-    let customConfirmMessage = $state("");
-    let customConfirmResolve = $state<((value: boolean) => void) | null>(null);
-
-    function showCustomConfirmDialog(title: string, message: string): Promise<boolean> {
-        return new Promise((resolve) => {
-            customConfirmTitle = title;
-            customConfirmMessage = message;
-            customConfirmResolve = resolve;
-            showCustomConfirm = true;
-        });
-    }
 
     function isCustomThemeId(id: string): boolean {
         return id === "custom" || id.startsWith("custom_");
@@ -367,7 +360,7 @@
 
     async function confirmDiscardUnsavedChanges(message: string): Promise<boolean> {
         if (!getHasUnsavedChanges()) return true;
-        return await showCustomConfirmDialog("Unsaved Changes", message);
+        return await onConfirm("Unsaved Changes", message);
     }
 
     function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -512,7 +505,7 @@
     async function confirmDeleteTheme(themeId: string) {
         const theme = customThemes.find((t) => t.id === themeId);
         const name = theme && theme.name ? theme.name : "this custom theme";
-        const confirmed = await showCustomConfirmDialog(
+        const confirmed = await onConfirm(
             "Delete Theme",
             `Are you sure you want to delete "${name}"? This action cannot be reverted.`,
         );
@@ -706,7 +699,7 @@
                         selectedFont,
                         draftColors,
                         { useStaticInPageLogo },
-                    );
+                );
                 } else {
                     applyThemeToDocument(
                         lastActivePresetTheme,
@@ -733,7 +726,7 @@
             isThemeModified(selectedTheme) &&
             selectedTheme !== themeName
         ) {
-            const confirmed = await showCustomConfirmDialog(
+            const confirmed = await onConfirm(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications. Selecting another theme will discard your current edits. Do you want to proceed?",
             );
@@ -852,7 +845,7 @@
             isThemeModified(currentOverride) &&
             currentOverride !== themeName
         ) {
-            const confirmed = await showCustomConfirmDialog(
+            const confirmed = await onConfirm(
                 "Unsaved Changes",
                 "You have unsaved custom theme modifications for this reader override. Selecting another option will discard your edits. Do you want to proceed?",
             );
@@ -907,7 +900,7 @@
     }
 
     async function confirmResetAppearance() {
-        const confirmed = await showCustomConfirmDialog(
+        const confirmed = await onConfirm(
             "Restore Defaults",
             "Are you sure you want to restore all appearance styles to factory default? Your custom themes will not be deleted.",
         );
@@ -1408,50 +1401,6 @@
         onclick={confirmResetAppearance}>Revert to Default</button
     >
 </div>
-
-{#if showCustomConfirm}
-    <!-- Custom confirmation overlay modal that aligns with theme colors -->
-    <div
-        role="dialog"
-        aria-modal="true"
-        style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 999999; animation: fadeIn 0.15s ease-out; pointer-events: auto !important;"
-    >
-        <div
-            style="background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 8px; width: 420px; max-width: 90%; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); display: flex; flex-direction: column; gap: 16px; animation: scaleUp 0.15s ease-out; text-align: left;"
-        >
-            <div style="font-size: 16px; font-weight: bold; color: var(--color-accent); font-family: var(--font-sans);">
-                {customConfirmTitle}
-            </div>
-            <div style="font-size: 13px; color: var(--color-text); line-height: 1.5; font-family: var(--font-sans);">
-                {customConfirmMessage}
-            </div>
-            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px;">
-                <button
-                    type="button"
-                    class="btn btn-ghost"
-                    style="padding: 8px 16px; font-size: 12px; font-weight: bold; cursor: pointer;"
-                    onclick={() => {
-                        showCustomConfirm = false;
-                        customConfirmResolve?.(false);
-                    }}
-                >
-                    Cancel
-                </button>
-                <button
-                    type="button"
-                    class="btn btn-amber"
-                    style="padding: 8px 16px; font-size: 12px; font-weight: bold; cursor: pointer;"
-                    onclick={() => {
-                        showCustomConfirm = false;
-                        customConfirmResolve?.(true);
-                    }}
-                >
-                    Proceed
-                </button>
-            </div>
-        </div>
-    </div>
-{/if}
 
 <style>
     :global(.select-option, .option, [class*="option"]) {
