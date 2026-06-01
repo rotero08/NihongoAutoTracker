@@ -451,3 +451,55 @@ export function clearCustomThemeFromDoc() {
         root.style.removeProperty(prop);
     }
 }
+
+export const DEFAULT_CUSTOM_COLORS: Record<string, string> = {
+    background: "#07070e",
+    surface: "#0d0d1c",
+    surfaceAlt: "#10101f",
+    border: "#1a2235",
+    borderHover: "#222d42",
+    text: "#dde4f0",
+    textMuted: "#7a8ca5",
+    accent: "#f0b429",
+    accentHover: "#ffd060",
+    success: "#3ddc84",
+};
+
+export const READER_MATCH_COLORS: Record<string, Record<string, string>> = {
+  ttu: {
+    background: "#07070e",
+    surface: "#0d0d1c",
+    surfaceAlt: "#10101f",
+    border: "#1a2235",
+    borderHover: "#222d42",
+    text: "#dde4f0",
+    textMuted: "#7a8ca5",
+    accent: "#f0b429",
+    accentHover: "#ffd060",
+    success: "#3ddc84",
+  },
+  yatsu: {
+    background: "#16161a",
+    surface: "#242629",
+    surfaceAlt: "#1c1e21",
+    border: "#3a3f44",
+    borderHover: "#4e545b",
+    text: "#fffffe",
+    textMuted: "#94a1b2",
+    accent: "#f0b429",
+    accentHover: "#ffd060",
+    success: "#2cb67d",
+  },
+  yomiyasu: {
+    background: "#0f0f16",
+    surface: "#151522",
+    surfaceAlt: "#11111c",
+    border: "#202033",
+    borderHover: "#2d2d47",
+    text: "#f5f6f8",
+    textMuted: "#8e90a6",
+    accent: "#f0b429",
+    accentHover: "#ffd060",
+    success: "#3ddc84",
+  }
+};

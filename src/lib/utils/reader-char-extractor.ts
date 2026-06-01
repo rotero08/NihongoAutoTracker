@@ -15,7 +15,6 @@ export interface AdvancedCharData {
 
 // Module-level caches to optimize execution overhead
 const ttuCharCountCache = new WeakMap<Element, number>();
-const seenSectionIds = new Map<string, number>();
 
 let ttuCachedNodes: Element[] = [];
 let ttuCachedAccumulated: number[] = [];

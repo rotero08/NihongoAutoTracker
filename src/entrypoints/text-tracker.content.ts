@@ -58,7 +58,6 @@ let _mutationRafScheduled = false;
 let _mutationTimeout: any = null;
 let _instantThemeSyncScheduled = false;
 let _lastSectionCheckTime = 0;
-let _lastThemeCheckTime = 0;
 let _transitionGraceUntil = 0;
 
 let _lastRecalculateTime = 0;
@@ -617,7 +616,6 @@ function setupProgressObserver() {
 }
 
 function runInstantThemeSync() {
-  _lastThemeCheckTime = Date.now();
   const activeThemeCfg = getActiveThemeConfig(currentConfig);
   const adapter = getActiveReaderAdapter();
   const originalName = adapter ? adapter.name : null;

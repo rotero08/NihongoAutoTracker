@@ -1,7 +1,7 @@
 <!-- ThemeEditor.svelte -->
 <script lang="ts">
     import { onMount } from "svelte";
-    import { THEMES, lightenHexColor } from "@/lib/ui/themes";
+    import { THEMES, lightenHexColor, DEFAULT_CUSTOM_COLORS } from "@/lib/ui/themes";
 
     interface Props {
         themeId: string;
@@ -101,19 +101,6 @@
             alert("Invalid theme share code.");
         }
     }
-
-    const DEFAULT_CUSTOM_COLORS: Record<string, string> = {
-        background: "#07070e",
-        surface: "#0d0d1c",
-        surfaceAlt: "#10101f",
-        border: "#1a2235",
-        borderHover: "#222d42",
-        text: "#dde4f0",
-        textMuted: "#7a8ca5",
-        accent: "#f0b429",
-        accentHover: "#ffd060",
-        success: "#3ddc84",
-    };
 
     function autofocus(node: HTMLInputElement) {
         if (!compact) {

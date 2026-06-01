@@ -27,6 +27,7 @@
     THEME_OPTIONS,
     FONT_OPTIONS,
     DYNAMIC_LOGO_SVG,
+    READER_MATCH_COLORS,
   } from "@/lib/ui/themes";
   import {
     THEME_CACHE_KEY,
@@ -151,45 +152,8 @@
           if (detectedColors) {
             matchedColors = detectedColors;
           } else {
-            if (readerKey === "ttu") {
-              matchedColors = {
-                background: "#07070e",
-                surface: "#0d0d1c",
-                surfaceAlt: "#10101f",
-                border: "#1a2235",
-                borderHover: "#222d42",
-                text: "#dde4f0",
-                textMuted: "#7a8ca5",
-                accent: "#f0b429",
-                accentHover: "#ffd060",
-                success: "#3ddc84",
-              };
-            } else if (readerKey === "yatsu") {
-              matchedColors = {
-                background: "#16161a",
-                surface: "#242629",
-                surfaceAlt: "#1c1e21",
-                border: "#3a3f44",
-                borderHover: "#4e545b",
-                text: "#fffffe",
-                textMuted: "#94a1b2",
-                accent: "#f0b429",
-                accentHover: "#ffd060",
-                success: "#2cb67d",
-              };
-            } else if (readerKey === "yomiyasu") {
-              matchedColors = {
-                background: "#0f0f16",
-                surface: "#151522",
-                surfaceAlt: "#11111c",
-                border: "#202033",
-                borderHover: "#2d2d47",
-                text: "#f5f6f8",
-                textMuted: "#8e90a6",
-                accent: "#f0b429",
-                accentHover: "#ffd060",
-                success: "#3ddc84",
-              };
+            if (READER_MATCH_COLORS[readerKey]) {
+              matchedColors = READER_MATCH_COLORS[readerKey];
             }
           }
         } else {

@@ -14,6 +14,7 @@
         FONT_OPTIONS,
         THEMES,
         lightenHexColor,
+        DEFAULT_CUSTOM_COLORS,
     } from "@/lib/ui/themes";
     import { THEME_CACHE_KEY, FONT_CACHE_KEY } from "@/lib/constants";
 
@@ -29,19 +30,6 @@
         onConfirm: (title: string, msg: string) => Promise<boolean>;
     }
     let { onStatus, onConfirm }: Props = $props();
-
-    const DEFAULT_CUSTOM_COLORS: Record<string, string> = {
-        background: "#07070e",
-        surface: "#0d0d1c",
-        surfaceAlt: "#10101f",
-        border: "#1a2235",
-        borderHover: "#222d42",
-        text: "#dde4f0",
-        textMuted: "#7a8ca5",
-        accent: "#f0b429",
-        accentHover: "#ffd060",
-        success: "#3ddc84",
-    };
 
     interface CustomTheme {
         id: string;
@@ -699,7 +687,7 @@
                         selectedFont,
                         draftColors,
                         { useStaticInPageLogo },
-                );
+                    );
                 } else {
                     applyThemeToDocument(
                         lastActivePresetTheme,

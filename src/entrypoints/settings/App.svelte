@@ -15,7 +15,7 @@
   import ConfirmModal from "@/components/ConfirmModal.svelte";
   import { notify } from "@/lib/utils/toast";
   import { showToast } from "@/lib/utils/toast";
-  import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
+  import { applyThemeToDocument, syncThemeCache, READER_MATCH_COLORS } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
   import { THEME_CACHE_KEY, FONT_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY, ACTIVE_SETTINGS_TAB_KEY } from "@/lib/constants";
 
