@@ -102,3 +102,15 @@ export const DEFAULT_TITLE_REGEXES = [
   { desc: "Volume Format vX (e.g., 'Title v1')", re: "^(.*?)\\s+v(\\d+)$" },
   { desc: "Standard Space Number (e.g., 'Title 1')", re: "^(.*?)\\s+(\\d+)$" },
 ] as const;
+
+/* ── Dynamic Extension Version & User Agent ── */
+export function getExtensionVersion(): string {
+  try {
+    const api = typeof globalThis !== 'undefined' && ((globalThis as any).browser || (globalThis as any).chrome);
+    return api?.runtime?.getManifest()?.version || '4.0.3';
+  } catch {
+    return '4.0.3';
+  }
+}
+
+export const USER_AGENT = `NihongoAutoTracker/${getExtensionVersion()}`;

@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { importStremioFromTrakt, pollTraktDeviceAuth, startTraktDeviceAuth } from "@/lib/api/trakt";
+  import { USER_AGENT } from "@/lib/constants";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -47,7 +48,7 @@
       stremioEnabled: enabled,
       traktClientId: clientId.trim(),
       traktClientSecret: clientSecret.trim() || cfg.traktClientSecret,
-      traktUserAgent: "NihongoAutoTracker/4.0.3",
+      traktUserAgent: USER_AGENT,
       stremioQueueMode: queueMode,
       stremioPollMinutes: Math.max(1, Number(pollMinutes || 5)),
       stremioJapaneseOnly: japaneseOnly,

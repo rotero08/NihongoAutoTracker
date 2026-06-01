@@ -7,6 +7,7 @@ import {
 import { addDebugLog } from '@/lib/storage/debug';
 import { searchMedia, submitLog } from '@/lib/api/nihongotracker';
 import type { AnimeMediaData, QueuedStremioLog, TrackerConfig } from '@/lib/types';
+import { USER_AGENT } from '@/lib/constants';
 
 const TRAKT_BASE = 'https://api.trakt.tv';
 
@@ -363,7 +364,7 @@ async function traktFetch(config: TrackerConfig, path: string, options: any = {}
       'Content-Type': 'application/json',
       'trakt-api-version': '2',
       'trakt-api-key': config.traktClientId || '',
-      'User-Agent': config.traktUserAgent || 'NihongoAutoTracker/4.0.3',
+      'User-Agent': config.traktUserAgent || USER_AGENT,
       ...(options.auth === false ? {} : { Authorization: `Bearer ${config.traktAccessToken}` }),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,

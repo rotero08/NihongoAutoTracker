@@ -451,19 +451,3 @@ export function clearCustomThemeFromDoc() {
         root.style.removeProperty(prop);
     }
 }
-
-export function clearThemeOverrides() {
-    const root = document.documentElement;
-    root.removeAttribute('data-theme');
-
-    const variablesToClear = [
-        '--color-background', '--color-surface', '--color-surface-alt', '--color-border', '--color-border-hover',
-        '--color-text', '--color-text-muted', '--color-text-dimmed', '--color-accent', '--color-accent-hover',
-        '--color-success', '--color-error', '--font-mono', '--font-sans', '--rounded-box', '--rounded-btn',
-        '--nt-color-scheme', '--color-accent-text', '--color-logo-text', '--color-api-green',
-        '--color-logo-accent', '--color-logo-accent-hover', '--color-logo-text-override',
-        '--nt-background', '--nt-surface', '--nt-surface-alt', '--nt-border', '--nt-border-hover',
-        '--nt-text', '--nt-text-muted', '--nt-text-dimmed', '--nt-accent', '--nt-accent-hover', '--nt-success'
-    ];
-    variablesToClear.forEach(variable => root.style.removeProperty(variable));
-}

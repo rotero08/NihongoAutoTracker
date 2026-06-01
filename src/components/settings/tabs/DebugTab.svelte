@@ -3,6 +3,7 @@
   import { configStorage } from "@/lib/storage/config";
   import type { DebugLogEntry } from "@/lib/types";
   import { onMount } from "svelte";
+  import { getExtensionVersion } from "@/lib/constants";
 
   const browser: any =
     typeof (globalThis as any).browser !== "undefined"
@@ -13,8 +14,9 @@
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
+    onConfirm?: (title: string, msg: string) => Promise<boolean>;
   }
-  let { onStatus }: Props = $props();
+  let { onStatus, onConfirm }: Props = $props();
 
   let logs: DebugLogEntry[] = $state([]);
   let diagnosticData = $state({
@@ -58,10 +60,7 @@
     else if (ua.includes("Android")) osName = "Android";
     else if (ua.includes("iPhone") || ua.includes("iPad")) osName = "iOS";
 
-    const browserAPI =
-      (globalThis as any).browser || (globalThis as any).chrome;
-    const extVersion =
-      browserAPI?.runtime?.getManifest?.()?.version || "Unknown";
+    const extVersion = getExtensionVersion();
 
     diagnosticData = {
       extVersion,
@@ -149,7 +148,10 @@
   }
 
   async function clearLogs() {
-    if (!confirm("Are you sure you want to clear all debug logs?")) return;
+    const ok = onConfirm
+      ? await onConfirm("Clear Debug Logs", "Are you sure you want to clear all debug logs?")
+      : confirm("Are you sure you want to clear all debug logs?");
+    if (!ok) return;
     await browser.runtime
       .sendMessage({ action: "CLEAR_DEBUG_LOGS" })
       .catch(() => {});
@@ -279,15 +281,19 @@
 
   /* Console Window Styling */
   .console-window {
-    background: #08080a;
+    background: color-mix(in srgb, var(--color-surface, #0d0d1c) 22%, #050508) !important;
     border: 1px solid var(--color-border);
     border-radius: var(--rounded-box);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
     font-family: var(--font-mono);
     overflow: hidden;
+
+    /* Theme-adaptive legibility controls: Forces readable light text on dark container backgrounds */
+    --console-text: #e2e8f0;
+    --console-text-muted: #94a3b8;
   }
   .console-header {
-    background: #0d0d10;
+    background: color-mix(in srgb, var(--color-surface, #0d0d1c) 35%, #050508) !important;
     border-bottom: 1px solid var(--color-border);
     padding: 8px 12px;
     display: flex;
@@ -306,7 +312,7 @@
   }
   .console-tab-name {
     font-size: 10px;
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
     font-weight: bold;
     letter-spacing: 0.05em;
   }
@@ -318,7 +324,7 @@
     overflow-y: scroll;
     box-sizing: border-box;
     scrollbar-width: thin;
-    scrollbar-color: var(--color-border) transparent;
+    scrollbar-color: var(--console-text-muted) transparent;
   }
   .console-body::-webkit-scrollbar {
     width: 6px;
@@ -328,27 +334,28 @@
     background: transparent;
   }
   .console-body::-webkit-scrollbar-thumb {
-    background: var(--color-border);
+    background: var(--console-text-muted);
     border-radius: 3px;
+    opacity: 0.5;
   }
   .console-body::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
+    background: var(--console-text);
   }
 
   .console-empty {
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
     font-style: italic;
     padding: 16px 0;
   }
   .console-marker {
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
     font-weight: bold;
     margin-right: 4px;
   }
   .console-line {
     padding: 4px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
   }
   .console-line:last-child {
     border-bottom: none;
@@ -360,12 +367,12 @@
     gap: 4px 8px;
   }
   .console-time {
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
   }
   .console-level {
     font-weight: bold;
     font-size: 11px;
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
   }
   .console-line.error .console-level {
     color: #e06c75;
@@ -374,11 +381,11 @@
     color: #e5c07b;
   }
   .console-src {
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
     font-weight: bold;
   }
   .console-msg {
-    color: var(--color-text);
+    color: var(--console-text);
     word-break: break-all;
   }
   .console-line.error .console-msg {
@@ -387,10 +394,10 @@
   .console-data {
     margin: 4px 0 0 16px;
     padding: 6px;
-    background: #0a0a0d;
+    background: color-mix(in srgb, var(--color-surface, #0d0d1c) 12%, #020204) !important;
     border: 1px solid rgba(255, 255, 255, 0.03);
     border-radius: 4px;
-    color: var(--color-text-muted);
+    color: var(--console-text-muted);
     font-size: 10px;
     white-space: pre-wrap;
     word-break: break-all;

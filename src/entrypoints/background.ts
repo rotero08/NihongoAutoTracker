@@ -11,7 +11,7 @@
 import { defineBackground } from '#imports';
 import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
 import { importStremioFromTrakt } from '@/lib/api/trakt';
-import { JP_ALL_RE } from '@/lib/constants';
+import { JP_ALL_RE, ACTIVE_SETTINGS_TAB_KEY } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
 import { readingQueueStorage, stremioQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
@@ -150,7 +150,7 @@ export default defineBackground(() => {
               if (msg.tab) {
                 // Perform the storage write and tab creation concurrently. Svelte's subsequent mount
                 // phase guarantees the storage write completes before it is retrieved.
-                storage.setItem('local:activeSettingsTab', msg.tab).catch(() => null);
+                storage.setItem(ACTIVE_SETTINGS_TAB_KEY, msg.tab).catch(() => null);
                 browser.tabs.create({ url: settingsUrl }).catch(() => null);
               } else {
                 browser.tabs.create({ url: settingsUrl }).catch(() => null);

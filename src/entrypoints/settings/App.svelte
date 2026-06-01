@@ -17,7 +17,7 @@
   import { showToast } from "@/lib/utils/toast";
   import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
-  import { THEME_CACHE_KEY, FONT_CACHE_KEY } from "@/lib/constants";
+  import { THEME_CACHE_KEY, FONT_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY, ACTIVE_SETTINGS_TAB_KEY } from "@/lib/constants";
 
   import "@/styles/settings-shared.css";
 
@@ -60,7 +60,7 @@
       });
     } else {
       try {
-        const cachedColorsStr = localStorage.getItem("nta-custom-colors-cache");
+        const cachedColorsStr = localStorage.getItem(CUSTOM_COLORS_CACHE_KEY);
         if (cachedColorsStr) {
           const cachedColors = JSON.parse(cachedColorsStr);
           applyThemeToDocument("dark-amber", fontToApply, cachedColors, {
@@ -132,11 +132,11 @@
   onMount(() => {
     const loadSavedTab = async () => {
       const savedTab = (await storage.getItem(
-        "local:activeSettingsTab",
+        ACTIVE_SETTINGS_TAB_KEY,
       )) as string;
       if (savedTab) {
         activeTab = savedTab;
-        await storage.setItem("local:activeSettingsTab", null);
+        await storage.setItem(ACTIVE_SETTINGS_TAB_KEY, null);
       } else {
         const localSaved = localStorage.getItem("nt-active-settings-tab");
         if (localSaved) {
@@ -293,7 +293,7 @@
     {:else if activeTab === "readers"}
       <ReadersTab onStatus={showStatus} />
     {:else if activeTab === "debug"}
-      <DebugTab onStatus={showStatus} />
+      <DebugTab onStatus={showStatus} onConfirm={handleConfirm} />
     {/if}
   </main>
 </div>
