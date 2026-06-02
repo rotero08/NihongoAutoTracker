@@ -1167,17 +1167,10 @@
     }
 
     /* `:global` style blocks cleanly prevents Svelte local selector hashing overrides */
-    :global(#nt-ttu-chrono-wrapper) {
-        position: relative;
-        display: flex;
-        z-index: 40;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        width: 2rem;
-        height: 100%;
-        will-change: transform;
-        transform: translateZ(0);
+    :global(#nt-ttu-chrono-btn svg) {
+        width: 28px !important;
+        height: 28px !important;
+        fill: currentColor;
     }
 
     :global(#nt-ttu-chrono-wrapper),

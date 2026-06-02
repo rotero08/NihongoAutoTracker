@@ -4,7 +4,7 @@ import { injectThemeStyles } from '@/lib/ui/reader-overlay';
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
-const THEME_DETECTION_CACHE_TTL = 15000; // ms (Increases performance, cleared on active configuration triggers)
+const THEME_DETECTION_CACHE_TTL = 1500; // ms (Shortened to 1.5s to ensure self-healing updates upon layout switches)
 /* Throttled accent search to shield CPU on translation mutations */
 let _cachedAccentColor: string | null = null;
 let _isAccentCached = false;
@@ -35,12 +35,19 @@ function runWithThemeLock<T>(fn: () => T): T {
         // Keep lock active through the macro-task transition after async resolution
         setTimeout(() => {
           (window as any).__nt_applying_theme__ = false;
-        }, 0);
+          // Safely notify the content script to perform layout & cache sweep post-lock release
+          if (typeof document !== 'undefined') {
+            document.dispatchEvent(new CustomEvent('nt-theme-lock-released'));
+          }
+        }, 100);
       }) as any;
     } else {
       setTimeout(() => {
         (window as any).__nt_applying_theme__ = false;
-      }, 0);
+        if (typeof document !== 'undefined') {
+          document.dispatchEvent(new CustomEvent('nt-theme-lock-released'));
+        }
+      }, 100);
       return result;
     }
   } catch (e) {
@@ -108,7 +115,7 @@ function findDOMAccentColor(isDark: boolean): string | null {
   let cssVars: string[] = [];
 
   if (host.includes('yatsu.moe')) {
-    cssVars = ['--yatsu-accent', '--yatsu-primary', '--color-primary', '--color-accent', '--accent-color'];
+    cssVars = ['--yatsu-accent', '--color-accent', '--accent-color', '--theme-accent'];
   } else if (host.includes('ttsu.app') || host.includes('manabe.es') || host.includes('yomiyasu')) {
     cssVars = ['--color-accent', '--ttu-color-accent', '--ttu-accent', '--accent-color', '--accent', '--color-primary'];
   } else {
@@ -139,9 +146,6 @@ function findDOMAccentColor(isDark: boolean): string | null {
     }
   }
 
-  // To protect the extension from picking up random highlighted words, Yomichan popups,
-  // or default blue link elements, we explicitly do not scan generic DOM elements.
-  // We fall back entirely to custom configurations or the universal default amber system.
   _cachedAccentColor = null;
   return null;
 }
@@ -153,8 +157,6 @@ export function detectReaderThemeColors(): any {
   }
 
   try {
-    // Temporarily remove our inline variable overrides from the documentElement to allow
-    // accurate, unshadowed computed style lookups of the reader's native colors.
     const root = document.documentElement;
     const shadowedProps = [
       '--color-background',
@@ -175,10 +177,34 @@ export function detectReaderThemeColors(): any {
       }
     }
 
+    const rootStyle = window.getComputedStyle(document.documentElement);
     const bodyStyle = window.getComputedStyle(document.body);
-    let bgColor = bodyStyle.backgroundColor;
 
-    let textColor = bodyStyle.color;
+    // Try to extract background color from known CSS variables first
+    let bgVarColor = '';
+    const bgVars = ['--yatsu-background', '--color-background', '--ttu-background', '--yatsu-bg', '--color-bg'];
+    for (const bgVar of bgVars) {
+      const val = rootStyle.getPropertyValue(bgVar).trim() || bodyStyle.getPropertyValue(bgVar).trim();
+      if (val) {
+        bgVarColor = val;
+        break;
+      }
+    }
+
+    let bgColor = bgVarColor || bodyStyle.backgroundColor;
+
+    // Try to extract text color from known CSS variables first
+    let textVarColor = '';
+    const textVars = ['--color-text', '--yatsu-text', '--ttu-text', '--color-text-primary'];
+    for (const textVar of textVars) {
+      const val = rootStyle.getPropertyValue(textVar).trim() || bodyStyle.getPropertyValue(textVar).trim();
+      if (val) {
+        textVarColor = val;
+        break;
+      }
+    }
+
+    let textColor = textVarColor || bodyStyle.color;
     const contentEl = document.querySelector(
       '.book-content p, .book-content-container p, #reader-container p, .reader-container p, .reader-wrapper p, ' +
       '.book-content, .book-content-container, #reader-container, .reader-container, .reader-wrapper'
@@ -239,58 +265,61 @@ export function detectReaderThemeColors(): any {
     let fallbackSat = isDark ? 65 : 60; // Softer, more elegant saturation
     let fallbackLight = isDark ? 62 : 35; // Readable, high-contrast but non-neon lightness
 
-    if (hslBg.s >= 5) {
-      // We have a colored background. Apply an analogous shift to make it harmonious yet distinct!
+    let accent = '';
+
+    // Raised grayscale saturation threshold from 5% to 12% to classify Slate/Gray themes correctly
+    if (hslBg.s >= 12) {
       const bgHue = hslBg.h;
-      
       if (bgHue >= 30 && bgHue < 60) {
-        // Sepia/Warm Brown themes: Shift slightly warmer (towards deep gold/amber/terracotta)
-        fallbackHue = bgHue - 10; 
+        fallbackHue = bgHue - 10;
         fallbackSat = isDark ? 70 : 65;
         fallbackLight = isDark ? 58 : 32;
       } else if (bgHue >= 60 && bgHue < 150) {
-        // Green themes: Shift towards a cool, elegant teal/forest-sage
-        fallbackHue = bgHue + 25; 
+        fallbackHue = bgHue + 25;
         fallbackSat = isDark ? 60 : 55;
         fallbackLight = isDark ? 60 : 34;
       } else if (bgHue >= 150 && bgHue < 210) {
-        // Teal/Cyan themes: Shift towards a deep slate blue
         fallbackHue = bgHue + 20;
         fallbackSat = isDark ? 65 : 60;
         fallbackLight = isDark ? 62 : 35;
       } else if (bgHue >= 210 && bgHue < 250) {
-        // Blue themes: Shift towards royal indigo or soft purple
         fallbackHue = bgHue + 20;
         fallbackSat = isDark ? 65 : 60;
         fallbackLight = isDark ? 64 : 36;
       } else if (bgHue >= 250 && bgHue < 300) {
-        // Purple/Amethyst themes: Shift towards rich amethyst-violet or soft magenta-rose
         fallbackHue = bgHue + 20;
         fallbackSat = isDark ? 65 : 60;
         fallbackLight = isDark ? 64 : 35;
       } else {
-        // Red/Orange/Pink themes: Shift towards coral/terracotta
         fallbackHue = (bgHue + 15) % 360;
         fallbackSat = isDark ? 70 : 65;
         fallbackLight = isDark ? 60 : 34;
       }
+      const derivedAccentRgb = hslToRgb(fallbackHue, fallbackSat, fallbackLight);
+      accent = `rgb(${derivedAccentRgb.r}, ${derivedAccentRgb.g}, ${derivedAccentRgb.b})`;
     } else if (hslText.s >= 5) {
-      // If the background is grayscale but the text is colored, align harmoniously with the text hue
       fallbackHue = hslText.h;
+      const derivedAccentRgb = hslToRgb(fallbackHue, fallbackSat, fallbackLight);
+      accent = `rgb(${derivedAccentRgb.r}, ${derivedAccentRgb.g}, ${derivedAccentRgb.b})`;
+    } else {
+      // Use the exact dark-amber accent color hex code on low-saturation/grayscale reader backgrounds
+      accent = isDark ? '#f0b429' : '#d97706';
     }
 
-    const derivedAccentRgb = hslToRgb(fallbackHue, fallbackSat, fallbackLight);
-    let accent = `rgb(${derivedAccentRgb.r}, ${derivedAccentRgb.g}, ${derivedAccentRgb.b})`;
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    const isKnownReader = host.includes('ttsu.app') || host.includes('yatsu.moe') || host.includes('manabe.es');
 
-    const extractedAccent = findDOMAccentColor(isDark);
+    // Bypass DOM accent lookups on TTSU, Yatsu, and Yomiyasu completely.
+    // This allows the engine to generate beautiful, contrast-optimized dynamic analogous accents
+    // directly from the background, completely bypassing clashing native brand teal-blue variables.
+    const extractedAccent = isKnownReader ? null : findDOMAccentColor(isDark);
+    
     if (extractedAccent) {
       const rgbExtracted = parseColorToRgb(extractedAccent);
       const hslExtracted = rgbToHsl(rgbExtracted.r, rgbExtracted.g, rgbExtracted.b);
 
-      // Only override our dynamic analogous accent if the background is monochrome (grayscale),
-      // OR if the extracted accent actually aligns harmoniously with the background's hue.
-      // This avoids brand blue variables from overriding beautiful custom sepia/green palettes on Yatsu.
-      if (hslBg.s < 5 || Math.abs(hslExtracted.h - hslBg.h) < 35 || Math.abs(hslExtracted.h - hslBg.h) > 325) {
+      // Raised saturation check to 12% to align with our revised grayscale threshold
+      if (hslBg.s < 12 || Math.abs(hslExtracted.h - hslBg.h) < 35 || Math.abs(hslExtracted.h - hslBg.h) > 325) {
         accent = extractedAccent;
       }
     }
@@ -429,6 +458,7 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
       }
 
       const useStaticInPageLogo = cfg.useStaticInPageLogo === true;
+
       if (themeName === 'match-reader' && !isExtensionPage) {
         const host = window.location.hostname;
         const stored = (await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
@@ -464,7 +494,7 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
         } else {
           clearCustomThemeFromDoc();
           applyThemeToDocument(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
-          injectThemeStyles(cfg.theme ?? 'dark-amber', cfg.font ?? 'sans');
+          injectThemeStyles('dark-amber', cfg.font ?? 'sans');
         }
       } else if (themeName === 'match-reader' && isExtensionPage && customColors) {
         applyThemeToDocument("dark-amber", cfg.font ?? "sans", customColors, { useStaticInPageLogo });

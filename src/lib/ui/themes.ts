@@ -305,6 +305,7 @@ export function applyThemeToDocument(
 ) {
     const theme = getTheme(themeName);
     const root = document.documentElement;
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
 
     root.setAttribute('data-theme', themeName);
 
@@ -385,12 +386,17 @@ export function applyThemeToDocument(
 
     Object.entries(variables).forEach(([key, value]) => {
         root.style.setProperty(key, value);
+        if (wrapper) {
+            wrapper.style.setProperty(key, value, 'important');
+        }
     });
 }
 
 export function applyCustomThemeToDoc(customColors: any) {
     if (!customColors) return;
     const root = document.documentElement;
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+
     const mapping: Record<string, string> = {
         "--color-background": customColors.background,
         "--color-surface": customColors.surface,
@@ -418,12 +424,19 @@ export function applyCustomThemeToDoc(customColors: any) {
         "--nt-logger-accent": customColors.accent,
     };
     for (const [prop, val] of Object.entries(mapping)) {
-        if (val) root.style.setProperty(prop, val, 'important');
+        if (val) {
+            root.style.setProperty(prop, val, 'important');
+            if (wrapper) {
+                wrapper.style.setProperty(prop, val, 'important');
+            }
+        }
     }
 }
 
 export function clearCustomThemeFromDoc() {
     const root = document.documentElement;
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+
     const props = [
         "--color-background",
         "--color-surface",
@@ -451,6 +464,9 @@ export function clearCustomThemeFromDoc() {
     ];
     for (const prop of props) {
         root.style.removeProperty(prop);
+        if (wrapper) {
+            wrapper.style.removeProperty(prop);
+        }
     }
 }
 

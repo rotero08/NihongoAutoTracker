@@ -326,6 +326,7 @@ function invalidateReadingViewCache() {
   _readingViewCache = null;
   _insertPointCache = null;
   clearExtractorCache();
+  clearThemeDetectionCache(); // Ensure theme detection re-evaluates fresh on navigation/layout transitions
 }
 
 function safelySetAdapterName(adapter: any, name: string | null) {
@@ -549,10 +550,7 @@ function runInstantThemeSync() {
   if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
     safelySetAdapterName(adapter, 'ッツ Ebook Reader');
   }
-  const activeTheme = getActiveThemeName(activeThemeCfg);
-  if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
-    applyActiveTheme(activeThemeCfg).catch(() => {});
-  }
+  applyActiveTheme(activeThemeCfg).catch(() => {});
   if (adapter && originalName) {
     safelySetAdapterName(adapter, originalName);
   }
@@ -610,6 +608,10 @@ async function setupTTUChronometer() {
   }
   if (document.getElementById('nt-ttu-chrono-wrapper')) return;
 
+  // Invalidate stale insert point caches before attempting a fresh chronometer initialization
+  _insertPointCache = null;
+  clearExtractorCache();
+
   isChronoInitializing = true;
   try {
     const pt = findTTUInsertPoint();
@@ -622,6 +624,8 @@ async function setupTTUChronometer() {
     if (isFloating) wrapper.classList.add('nt-floating');
 
     pt.el.insertAdjacentElement(pt.pos, wrapper);
+
+    const adapter = getActiveReaderAdapter(); // Resolved active adapter in this scope
 
     mountedChronoComponent = mount(TtuChronoDropdown, {
       target: wrapper,
@@ -643,6 +647,18 @@ async function setupTTUChronometer() {
 
     setupProgressObserver();
     stabilizer.runGracePeriodIfJiten();
+
+    // Apply the active theme directly to the newly created wrapper
+    const activeThemeCfg = getActiveThemeConfig(currentConfig);
+    const originalName = adapter ? adapter.name : null;
+    if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
+      safelySetAdapterName(adapter, 'ッツ Ebook Reader');
+    }
+    applyActiveTheme(activeThemeCfg).then(() => {
+      if (adapter && originalName) {
+        safelySetAdapterName(adapter, originalName);
+      }
+    }).catch(() => {});
 
     if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
 
@@ -781,6 +797,11 @@ if (isRelevantFrame) {
   });
   window.addEventListener('pagehide', forceSyncOnExit);
   window.addEventListener('beforeunload', forceSyncOnExit);
+
+  document.addEventListener('nt-theme-lock-released', () => {
+    invalidateReadingViewCache();
+    handleMutations();
+  });
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
@@ -963,6 +984,13 @@ function handleMutations() {
   if (isReadingViewActive() && isLoaderActive) {
     if (lastLoggedPaginatedMode === false) _transitionGraceUntil = Date.now() + 400;
     stabilizer.runGracePeriodIfJiten();
+    // Schedule a retry to handle injection once the loader finishes
+    if (!document.getElementById('nt-ttu-chrono-wrapper')) {
+      setTimeout(() => {
+        invalidateReadingViewCache();
+        handleMutations();
+      }, 250);
+    }
     return;
   }
 
@@ -1202,7 +1230,17 @@ export default defineContentScript({
         if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
-        applyActiveTheme(activeThemeCfg).catch(() => {});
+        
+        applyActiveTheme(activeThemeCfg)
+          .finally(() => {
+            // After the theme is fully applied and unlocked, force re-evaluate mutations 
+            // to ensure the chronometer is cleanly injected in the correct updated DOM position.
+            setTimeout(() => {
+              invalidateReadingViewCache();
+              handleMutations();
+            }, 50);
+          });
+
         if (adapter && originalName) safelySetAdapterName(adapter, originalName);
 
         if (adapter) {
