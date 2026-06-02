@@ -65,6 +65,15 @@ const THEME_SYNC_THROTTLE_MS = 250;
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
 
+// Highly-performant module-level cached variables to bypass frequent deep DOM queries
+let _cachedYatsuSidebarOpen = false;
+let _lastYatsuSidebarCheckTime = 0;
+const YATSU_SIDEBAR_CHECK_TTL = 1000; // Scan the deep DOM at most once every 1000ms during idle reading
+
+function invalidateYatsuSidebarCache() {
+  _lastYatsuSidebarCheckTime = 0;
+}
+
 // Shared Iframe cache variable resolving Cross-Origin DOM blocks securely
 let cachedActiveTabTitle = "";
 
@@ -581,20 +590,82 @@ function scheduleInstantThemeSync() {
   });
 }
 
+// Deep, geometric evaluation of sidebars, dialogs, and settings drawers 
 function isYatsuSidebarOpen(): boolean {
   if (window.location.hostname !== 'app.yatsu.moe') return false;
-  const body = document.body;
-  if (!body) return false;
+  const now = Date.now();
+  if (now - _lastYatsuSidebarCheckTime < YATSU_SIDEBAR_CHECK_TTL) {
+    return _cachedYatsuSidebarOpen;
+  }
+  _lastYatsuSidebarCheckTime = now;
 
-  const els = body.querySelectorAll('aside, [role="dialog"], [class*="drawer"], [class*="modal"], [class*="backdrop"], [class*="overlay"]');
+  const body = document.body;
+  if (!body) {
+    _cachedYatsuSidebarOpen = false;
+    return false;
+  }
+
+  // Query all fixed, absolute, semantic, or dialog/menu elements on the page
+  const els = body.querySelectorAll('aside, [role="dialog"], [role="menu"], .fixed, .absolute, [class*="fixed"], [class*="absolute"]');
+  
   for (let i = 0; i < els.length; i++) {
-    const el = els[i];
-    const id = el.id;
-    if (id === 'nt-ttu-chrono-wrapper' || id === 'nt-overlay' || id === 'nt-toast-container' || el.classList.contains('nt-toast') || el.closest('#nt-ttu-chrono-wrapper') || el.closest('#nt-overlay')) {
+    const el = els[i] as HTMLElement;
+    const id = el.id || '';
+    const className = el.className || '';
+    
+    const idStr = typeof id === 'string' ? id.toLowerCase() : '';
+    const classStr = typeof className === 'string' ? className.toLowerCase() : '';
+
+    // 1. Skip our own extension elements to prevent self-triggering
+    if (idStr.includes('nt-') || classStr.includes('nt-') || el.closest('#nt-ttu-chrono-wrapper') || el.closest('#nt-overlay')) {
       continue;
     }
-    if ((el as HTMLElement).offsetParent !== null || el.getAttribute('aria-hidden') !== 'true') return true;
+
+    // 2. Skip hover popups, lookup dictionaries, and translation tools
+    if (
+      classStr.includes('jiten') || classStr.includes('yomichan') || classStr.includes('yomitan') || classStr.includes('anki') || classStr.includes('jpdb') || classStr.includes('lookup') || classStr.includes('popup') ||
+      idStr.includes('jiten') || idStr.includes('yomichan') || idStr.includes('yomitan') || idStr.includes('anki') || idStr.includes('jpdb') || idStr.includes('lookup') || idStr.includes('popup')
+    ) {
+      continue;
+    }
+
+    // 3. Verify element geometry
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      continue;
+    }
+
+    // 4. Verify element visibility in computed style
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+      continue;
+    }
+
+    // 5. Read computed z-index to isolate overlays and drawers (usually z-index >= 30)
+    const zIndexStr = style.zIndex;
+    const zIndex = parseInt(zIndexStr, 10);
+    if (isNaN(zIndex) || zIndex < 30) {
+      continue;
+    }
+
+    // 6. Geometric Classification:
+    
+    // A. Backdrop / Full Screen Overlay: covers almost the entire viewport
+    const isBackdrop = rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.9;
+
+    // B. Sidebar / Drawer / Vertical Panel: spans vertically with height > 70% of screen, and reasonable width
+    const isSidePanel = rect.height >= window.innerHeight * 0.7 && rect.width >= 150 && rect.width <= 600;
+
+    // C. Modal Dialog / Centered settings: floating dialog positioned away from top/bottom bounds
+    const isModalDialog = rect.height >= 120 && rect.width >= 200 && rect.top > 80 && rect.bottom < window.innerHeight - 80;
+
+    if (isBackdrop || isSidePanel || isModalDialog) {
+      _cachedYatsuSidebarOpen = true;
+      return true;
+    }
   }
+
+  _cachedYatsuSidebarOpen = false;
   return false;
 }
 
@@ -735,17 +806,10 @@ async function setupTTUChronometer() {
   }
 }
 
-function isTargetInIgnoredContainer(target: HTMLElement): boolean {
-  let el: HTMLElement | null = target;
-  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-  const overlay = document.getElementById('nt-overlay');
-  while (el) {
-    if (el === wrapper || el === overlay) return true;
-    const cl = el.className;
-    if (cl && typeof cl === 'string' && cl.toLowerCase().includes('nt-toast')) return true;
-    el = el.parentElement;
-  }
-  return false;
+function isTargetInIgnoredContainer(target: Node): boolean {
+  const element = target.nodeType === Node.ELEMENT_NODE ? (target as HTMLElement) : target.parentElement;
+  if (!element) return false;
+  return !!element.closest('#nt-ttu-chrono-wrapper, #nt-overlay, [class*="nt-toast"]');
 }
 
 if (isRelevantFrame) {
@@ -761,29 +825,33 @@ if (isRelevantFrame) {
   window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
   window.addEventListener('resize', handleScrollUpdate, { passive: true });
   window.addEventListener('click', () => {
+    invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
   window.addEventListener('keyup', (e) => {
+    invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
 
-  window.addEventListener('popstate', () => { invalidateReadingViewCache(); handleMutations(); });
-  window.addEventListener('hashchange', () => { invalidateReadingViewCache(); handleMutations(); });
+  window.addEventListener('popstate', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
+  window.addEventListener('hashchange', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
 
   const origPushState = window.history.pushState;
   window.history.pushState = function (...args) {
     origPushState.apply(this, args);
     invalidateReadingViewCache();
+    invalidateYatsuSidebarCache();
     handleMutations();
   };
   const origReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
     origReplaceState.apply(this, args);
     invalidateReadingViewCache();
+    invalidateYatsuSidebarCache();
     handleMutations();
   };
 
@@ -800,6 +868,7 @@ if (isRelevantFrame) {
 
   document.addEventListener('nt-theme-lock-released', () => {
     invalidateReadingViewCache();
+    invalidateYatsuSidebarCache();
     handleMutations();
   });
 }
@@ -868,18 +937,20 @@ function setupOptimizedMutationObserver() {
       if (isTargetInIgnoredContainer(target)) continue;
 
       let isDictionaryMutation = true;
-      for (let i = 0; i < m.addedNodes.length; i++) {
+      const addedLen = m.addedNodes.length;
+      for (let i = 0; i < addedLen; i++) {
         if (!isDictNode(m.addedNodes[i])) { isDictionaryMutation = false; break; }
       }
       if (isDictionaryMutation) {
-        for (let i = 0; i < m.removedNodes.length; i++) {
+        const removedLen = m.removedNodes.length;
+        for (let i = 0; i < removedLen; i++) {
           if (!isDictNode(m.removedNodes[i])) { isDictionaryMutation = false; break; }
         }
       }
 
       if (!stabilizer.getGracePeriodActive() && !stabilizer.getSilentGraceActive()) {
         let hasJitenAdded = false;
-        for (let i = 0; i < m.addedNodes.length; i++) {
+        for (let i = 0; i < addedLen; i++) {
           const node = m.addedNodes[i];
           if (node.nodeType === Node.ELEMENT_NODE) {
             const el = node as HTMLElement;
@@ -896,11 +967,30 @@ function setupOptimizedMutationObserver() {
         }
       }
 
-      const hasStyleTagMutation = Array.from(m.addedNodes).some(n => n.nodeName === 'LINK' || n.nodeName === 'STYLE') ||
-        Array.from(m.removedNodes).some(n => n.nodeName === 'LINK' || n.nodeName === 'STYLE');
+      let hasStyleTagMutation = false;
+      for (let i = 0; i < addedLen; i++) {
+        const nodeName = m.addedNodes[i].nodeName;
+        if (nodeName === 'LINK' || nodeName === 'STYLE') {
+          hasStyleTagMutation = true;
+          break;
+        }
+      }
+      if (!hasStyleTagMutation) {
+        const removedLen = m.removedNodes.length;
+        for (let i = 0; i < removedLen; i++) {
+          const nodeName = m.removedNodes[i].nodeName;
+          if (nodeName === 'LINK' || nodeName === 'STYLE') {
+            hasStyleTagMutation = true;
+            break;
+          }
+        }
+      }
 
       if (hasStyleTagMutation && isReadingViewActive()) scheduleInstantThemeSync();
       if (isDictionaryMutation) continue;
+
+      // Invalidate the Yatsu sidebar evaluation cache upon any core reader mutations
+      invalidateYatsuSidebarCache();
 
       scheduleMutations();
       break;
@@ -955,7 +1045,11 @@ function setupOptimizedMutationObserver() {
   rootStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   rootStyleObserver.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 
-  bodyObserver = new MutationObserver(() => { invalidateReadingViewCache(); handleMutations(); });
+  bodyObserver = new MutationObserver(() => { 
+    invalidateReadingViewCache(); 
+    invalidateYatsuSidebarCache();
+    handleMutations(); 
+  });
   bodyObserver.observe(document.body, { childList: true, subtree: false });
 
   startObserver();
@@ -1231,15 +1325,7 @@ export default defineContentScript({
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
         
-        applyActiveTheme(activeThemeCfg)
-          .finally(() => {
-            // After the theme is fully applied and unlocked, force re-evaluate mutations 
-            // to ensure the chronometer is cleanly injected in the correct updated DOM position.
-            setTimeout(() => {
-              invalidateReadingViewCache();
-              handleMutations();
-            }, 50);
-          });
+        applyActiveTheme(activeThemeCfg);
 
         if (adapter && originalName) safelySetAdapterName(adapter, originalName);
 
