@@ -18,6 +18,7 @@ import { BadgeRenderer } from '@/lib/utils/badge-renderer';
 import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
+import { DEFAULT_THEME } from '@/lib/types';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,
@@ -431,30 +432,40 @@ function isPlaylistOrPodcastPage(): boolean {
  * preventing double-button rendering errors on YouTube SPA page transitions.
  */
 function getActivePlaylistContainers(): HTMLElement[] {
-  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) return [];
-
-  // Watch page with side panel playlist
-  const panelContainer = document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') as HTMLElement;
-  if (panelContainer) {
-    return [panelContainer];
+  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) {
+    return [];
   }
 
-  // Main playlist details page
-  const selectors = [
-    'yt-page-header-renderer yt-flexible-actions-view-model',
-    'yt-page-header-view-model yt-flexible-actions-view-model',
-    'ytd-playlist-header-renderer ytd-menu-renderer',
-    'ytd-playlist-header-renderer .metadata-buttons-wrapper'
-  ];
+  const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+  const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+  const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
 
-  for (const selector of selectors) {
-    const container = document.querySelector(selector) as HTMLElement;
-    if (container && (container.offsetWidth > 0 || container.offsetHeight > 0)) {
-      return [container]; // Returns only the first visible match sequentially
+  const containers: HTMLElement[] = [];
+  const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
+  const matches = document.querySelectorAll(selectors);
+
+  for (let i = 0; i < matches.length; i++) {
+    const el = matches[i];
+    if (el instanceof HTMLElement) {
+      if (el.offsetWidth > 0 || el.offsetHeight > 0) {
+        containers.push(el);
+      }
     }
   }
+  return containers;
+}
 
-  return [];
+function getActiveAccentColor(): string {
+  const theme = cachedConfig.theme ?? 'nihongo';
+  let customColors: any = null;
+  if (theme && (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom')) {
+    const themeId = theme.replace('custom_', '').replace('custom-', '');
+    const targetTheme = (cachedConfig.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
+    if (targetTheme) customColors = targetTheme.colors;
+    else if (cachedConfig.customColors) customColors = cachedConfig.customColors;
+  }
+  const activeTheme = getTheme(theme) || JSON.parse(JSON.stringify(DEFAULT_THEME));
+  return customColors?.accent || activeTheme.colors?.accent || '#F5B831';
 }
 
 function runPlaylistInjection(): boolean {
@@ -463,15 +474,12 @@ function runPlaylistInjection(): boolean {
   if (!host.includes('youtube.com') && !host.includes('youtu.be')) return false;
   if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || cachedConfig.hidePlaylistBadgeIcon === true || isYouTubeShorts()) return false;
 
-  // Single Page Check: If a playlist badge exists on the page, don't inject another one
-  if (document.querySelector('.nt-playlist-logger')) {
-    return true;
-  }
-
   const targets = getActivePlaylistContainers();
   if (targets.length === 0) return false;
 
+  const resolvedAccent = getActiveAccentColor();
   let injectedAny = false;
+  
   for (const targetContainer of targets) {
     if (targetContainer.querySelector('.nt-playlist-logger')) {
       injectedAny = true;
@@ -482,8 +490,8 @@ function runPlaylistInjection(): boolean {
       const btn = document.createElement('button');
       btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
       btn.innerHTML = `
-        <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)">
-          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/>
+        <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24">
+          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z" style="fill: ${resolvedAccent} !important;" />
         </svg>
       `;
 
@@ -491,7 +499,8 @@ function runPlaylistInjection(): boolean {
         background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '40px',
         height: '40px', borderRadius: '50%', transition: 'background-color 0.2s',
-        filter: 'none !important', boxShadow: 'none !important', flexShrink: '0'
+        filter: 'none !important', boxShadow: 'none !important', flexShrink: '0',
+        color: `${resolvedAccent} !important`
       });
 
       btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
@@ -503,7 +512,8 @@ function runPlaylistInjection(): boolean {
 
         const existingPlaylistModal = document.getElementById('nt-playlist-modal');
         if (existingPlaylistModal) {
-          cleanupPlaylistModal();
+          if (typeof cleanupPlaylistModal === 'function') cleanupPlaylistModal();
+          else existingPlaylistModal.remove();
           return;
         }
         const isInline = targetContainer.closest('ytd-playlist-panel-renderer') !== null;
@@ -535,6 +545,54 @@ function runVideoInjection() {
   }
 }
 
+function applyCachedTheme(c: any) {
+  const theme = c.theme ?? 'nihongo';
+  const font = c.font ?? 'sans';
+  const useStaticInPageLogo = c.useStaticInPageLogo === true;
+  let customColors: any = null;
+  if (theme && (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom')) {
+    const themeId = theme.replace('custom_', '').replace('custom-', '');
+    const targetTheme = (c.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
+    if (targetTheme) customColors = targetTheme.colors;
+    else if (c.customColors) customColors = c.customColors;
+  }
+  applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
+  
+  const activeTheme = getTheme(theme) || JSON.parse(JSON.stringify(DEFAULT_THEME));
+  if (customColors && activeTheme.colors) {
+    activeTheme.colors = { ...activeTheme.colors, ...customColors };
+  }
+  
+  injectModalStyles(activeTheme);
+  injectThemeVariables(activeTheme);
+}
+
+function injectThemeVariables(theme: any) {
+  if (!theme || !theme.colors) return;
+
+  const colors = theme.colors;
+  
+  const rootStyle = document.documentElement.style;
+  try {
+    rootStyle.setProperty('--color-background', colors.background, 'important');
+    rootStyle.setProperty('--color-surface', colors.surface, 'important');
+    rootStyle.setProperty('--color-surface-alt', colors.surfaceAlt, 'important');
+    rootStyle.setProperty('--color-border', colors.border, 'important');
+    rootStyle.setProperty('--color-border-hover', colors.borderHover, 'important');
+    rootStyle.setProperty('--color-text', colors.text, 'important');
+    rootStyle.setProperty('--color-text-muted', colors.muted, 'important');
+    rootStyle.setProperty('--color-text-dimmed', colors.muted, 'important');
+    rootStyle.setProperty('--color-accent', colors.accent, 'important');
+    rootStyle.setProperty('--nt-accent', colors.accent, 'important');
+    rootStyle.setProperty('--color-accent-hover', colors.accentHover, 'important');
+    rootStyle.setProperty('--color-success', colors.success, 'important');
+    rootStyle.setProperty('--color-error', colors.error, 'important');
+    rootStyle.setProperty('--nt-logger-accent', colors.accent, 'important'); // Persistent custom variable untouched by YouTube parent scopes
+  } catch (err) {
+    addDebugLog('ERROR', 'VideoTracker', 'Failed to write CSS custom properties onto documentElement', err);
+  }
+}
+
 export default defineContentScript({
   matches: [
     '*://*.youtube.com/*',
@@ -546,22 +604,6 @@ export default defineContentScript({
 
   async main() {
     cachedConfig = await configStorage.getValue() || {};
-
-    const applyCachedTheme = (c: any) => {
-      const theme = c.theme ?? 'nihongo';
-      const font = c.font ?? 'sans';
-      const useStaticInPageLogo = c.useStaticInPageLogo === true;
-      let customColors: any = null;
-      if (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom') {
-        const themeId = theme.replace('custom_', '').replace('custom-', '');
-        const targetTheme = (c.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
-        if (targetTheme) customColors = targetTheme.colors;
-        else if (c.customColors) customColors = c.customColors;
-      }
-      applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
-      const activeTheme = getTheme(theme);
-      injectModalStyles(activeTheme);
-    };
 
     applyCachedTheme(cachedConfig);
 
@@ -627,6 +669,10 @@ export default defineContentScript({
       }
 
       const activeUrlOnNavigation = window.location.href;
+
+      // Re-apply theme properties to document context on SPA page changes
+      applyCachedTheme(cachedConfig);
+
       runVideoInjection();
       runPlaylistInjection();
 
@@ -679,13 +725,19 @@ export default defineContentScript({
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {
+      window.removeEventListener('yt-navigate-finish', startTargetedObserver);
       clearExtractionCaches();
-      cleanupPlaylistModal();
+      if (typeof cleanupPlaylistModal === 'function') {
+        cleanupPlaylistModal();
+      } else {
+        const modal = document.getElementById('nt-playlist-modal');
+        if (modal) modal.remove();
+      }
       document.getElementById('nt-modal-popup')?.remove();
-      document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
       engine.flushPlayClock();
       unbindActiveVideoListeners();
       trackedVideo = null;
+      window.addEventListener('yt-navigate-finish', startTargetedObserver);
     });
 
     configStorage.watch((newCfg) => {
