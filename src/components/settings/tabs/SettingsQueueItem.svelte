@@ -46,8 +46,8 @@
   const isRead = $derived(type === "reading");
   const isStremio = $derived(type === "stremio");
   let sending = $state(false);
-  let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
+  let searchDropdown = $state<SearchDropdown | undefined>(undefined);
   let titleInputEl = $state<HTMLInputElement | undefined>(undefined);
 
   /* ── State for Title & Inline Volume Input ────────────────────── */
@@ -80,6 +80,13 @@
       : item.date || new Date().toISOString(),
   );
 
+  const displaySeason = $derived(
+    Math.max(1, Number(item.season || (sessions[0]?.season) || 1))
+  );
+  const displayEpisode = $derived(
+    Math.max(1, Number(item.episode || (sessions[0]?.episode) || 1))
+  );
+
   let isLinked = $derived(
     isRead
       ? !!(item.mediaId && item.mediaId !== "web-reading")
@@ -88,9 +95,18 @@
         : true,
   );
 
+  const capLogType = $derived(
+    item.logType
+      ? item.logType
+          .split(" ")
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ")
+      : "Trakt"
+  );
+
   let channelName = $derived(
     isStremio
-      ? `Stremio • ${((item.sessions?.length || item.episodes || 1) > 1) ? `${item.sessions?.length || item.episodes} episodes` : item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      ? `Stremio • ${capLogType}`
       : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
@@ -460,8 +476,6 @@
           session.secs = Math.max(1, Number(val) || 1) * 60;
         } else if (field === "season") {
           session.season = Math.max(1, Number(val) || 1);
-        } else if (field === "episode") {
-          session.episode = Math.max(1, Number(val) || 1);
         } else if (field === "date") {
           try {
             session.date = new Date(val).toISOString();
@@ -721,7 +735,7 @@
           time: sessMins,
           date: new Date(sess.date).toISOString(),
           chars: isRead ? sess.chars || 0 : 0,
-          episodes: isStremio ? 1 : 0,
+          episodes: isStremio ? 1 : 0, // Individual sessions always log 1 episode
           pages: 0,
           unknownDate: false,
           mediaId: isRead
@@ -743,7 +757,7 @@
         time: displayM,
         date: new Date(defaultDateStr).toISOString(),
         chars: isRead ? current.chars || 0 : 0,
-        episodes: isStremio ? current.episodes || 1 : 0,
+        episodes: isStremio ? current.episodes || 1 : 0, // For single-item, use the item's total episodes
         pages: 0,
         unknownDate: false,
         mediaId: isRead
@@ -890,6 +904,14 @@
     }
     await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
+
+  /* Dynamically synchronize input box sizing columns to matching values */
+  let maxCharsLen = $derived(
+    sessions.reduce((max: number, s: any) => Math.max(max, String(s.chars || 0).length), 1)
+  );
+  let maxMinsLen = $derived(
+    sessions.reduce((max: number, s: any) => Math.max(max, String(Math.max(1, Math.round(s.secs / 60))).length), 1)
+  );
 </script>
 
 <div class="qi" class:sending data-type={type}>
@@ -928,19 +950,24 @@
             class="qi-link-status"
             title="Unlink AniList match"
             onclick={handleUnlink}
+            onmouseenter={() => (isUnlinkHovered = true)}
+            onmouseleave={() => (isUnlinkHovered = false)}
+            style={isUnlinkHovered ? "color: var(--color-error, #f0706a) !important;" : "color: var(--color-success, #3ddc84) !important;"}
           >
-            <svg class="broken-icon" style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              <path d="M10 13a5 5 0 0 0 7.54.54l0.8-0.8" />
-              <path d="M19.74 11.34l0.8-0.8a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <line x1="18.5" y1="8.5" x2="19.5" y2="5.5" stroke-width="1.8" />
-              <line x1="21.5" y1="10.5" x2="24.5" y2="10.5" stroke-width="1.8" />
-              <line x1="20.5" y1="8.5" x2="23" y2="6.5" stroke-width="1.8" />
-            </svg>
-            <svg class="connected-icon" style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-            </svg>
+            {#if isUnlinkHovered}
+              <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+                <line x1="8" y1="12" x2="16" y2="12"/>
+                <line x1="2" y1="2" x2="22" y2="22"/>
+              </svg>
+            {:else}
+              <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+                <line x1="8" y1="12" x2="16" y2="12"/>
+              </svg>
+            {/if}
           </button>
         {:else}
           <span
@@ -949,8 +976,9 @@
             style="cursor:default; color:var(--color-success, #3ddc84) !important; position:absolute; right:8px; top:50%; transform:translateY(-50%)"
           >
             <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+              <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
             </svg>
           </span>
         {/if}
@@ -1004,7 +1032,7 @@
             type="number"
             value={item.chars || 0}
             min="0"
-            style={`--chars-len: ${String(item.chars || 0).length};`}
+            style="--chars-len: {String(item.chars || 0).length};"
             onblur={(e) => handleEditableBlur(e, "chars", (val) => saveItem({ chars: Math.max(0, Number(val) || 0) }))}
             onfocus={rememberEditableStart}
             onkeydown={handleEditableKeydown}
@@ -1101,33 +1129,35 @@
         />
   </div>
 
-  {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
-    <div class="qi-row stremio-ep-meta">
-      <span>Season</span>
-      <input
-        type="number"
-        min="1"
-        value={Math.max(1, Number(item.season || 1))}
-        onfocus={rememberEditableStart}
-        onkeydown={handleEditableKeydown}
-        onblur={(e) => handleEditableBlur(e, "season", (val) => saveItem({ season: Math.max(1, Number(val) || 1) }))}
-        aria-label="Season"
-      />
-      <span style="color: var(--color-border, #1c2333); margin: 0 6px;">·</span>
-      <span>Episode</span>
-      <input
-        type="number"
-        min="1"
-        value={Math.max(1, Number(item.episode || 1))}
-        onfocus={rememberEditableStart}
-        onkeydown={handleEditableKeydown}
-        onblur={(e) => handleEditableBlur(e, "episode", (val) => saveItem({ episode: Math.max(1, Number(val) || 1) }))}
-        aria-label="Episode"
-      />
+  {#if isStremio}
+    <div class="stremio-ep-meta">
+      <span class="unit-lbl">Season {displaySeason}</span>
+      {#if !((item.episodes > 1) || (sessions.length > 1))}
+        <span class="unit-lbl-sep">·</span>
+        <span class="unit-lbl">Ep {displayEpisode}</span>
+      {/if}
+      <span class="unit-lbl-sep">·</span>
+      <div class="qi-stremio-stepper" style="display: flex; align-items: center; gap: 4px;">
+        <input
+          class="qi-stremio-num"
+          type="number"
+          min="1"
+          value={Math.max(1, Number(item.episodes || 1))}
+          onfocus={rememberEditableStart}
+          onkeydown={handleEditableKeydown}
+          onblur={(e) => handleEditableBlur(e, "episodes", (val) => saveItem({ episodes: Math.max(1, Number(val) || 1) }))}
+          aria-label="Episodes count"
+        />
+        <span class="unit-lbl">episodes watched</span>
+        <div class="stepper-buttons">
+          <button type="button" class="step-btn" onclick={() => saveItem({ episodes: Math.max(1, Number(item.episodes || 1) + 1) })} aria-label="Increment episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg></button>
+          <button type="button" class="step-btn" onclick={() => saveItem({ episodes: Math.max(1, Number(item.episodes || 1) - 1) })} aria-label="Decrement episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg></button>
+        </div>
+      </div>
     </div>
   {/if}
 
-  <!-- Collapsible Sessions list -->
+  <!-- Collapsible Episodes list -->
   {#if sessions.length > 1}
     <div class="qi-sessions">
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1137,38 +1167,18 @@
         onclick={toggleSessionsOpen}
         style="list-style: none; background: none; border: none; text-align: left; width: 100%; padding: 0; cursor: pointer; display: block;"
       >
-        {isSessionsOpen ? "▾" : "▸"} Sessions ({sessions.length})
+        {isSessionsOpen ? "▾" : "▸"} {isStremio ? "Episodes" : "Sessions"} ({sessions.length})
       </button>
 
       {#if isSessionsOpen}
         <div class="session-list">
           {#each sessions as session, i}
             <div class="qi-session">
-              <span class="qi-session-num">S{i + 1}</span>
+              <span class="qi-session-num">{isStremio ? i + 1 : `s${i + 1}`}</span>
 
               {#if isStremio}
-                <input
-                  class="qi-session-mins"
-                  type="number"
-                  value={Math.max(1, Number(session.season || 1))}
-                  min="1; width: 18px;"
-                  onfocus={rememberEditableStart}
-                  onkeydown={handleEditableKeydown}
-                  onblur={(e) => handleSessionLocalBlur(e, i, "season")}
-                  aria-label={`Session ${i + 1} season`}
-                />
-                <span style="font-size:10px; color:var(--color-text-muted);">season</span>
-                <input
-                  class="qi-session-mins"
-                  type="number"
-                  value={Math.max(1, Number(session.episode || 1))}
-                  min="1; width: 18px;"
-                  onfocus={rememberEditableStart}
-                  onkeydown={handleEditableKeydown}
-                  onblur={(e) => handleSessionLocalBlur(e, i, "episode")}
-                  aria-label={`Session ${i + 1} episode`}
-                />
-                <span style="font-size:10px; color:var(--color-text-muted);">episode</span>
+                <span class="stremio-static-meta">Season {session.season || 1} · Ep {session.episode || 1}</span>
+                <span style="font-family: var(--font-mono, monospace) !important; font-size: 10px !important; color: var(--color-text-muted, #7a8ca5) !important; margin-left: 2px !important; margin-right: 4px !important;">·</span>
               {/if}
 
               {#if isRead}
@@ -1176,11 +1186,11 @@
                   class="qi-session-chars"
                   type="number"
                   value={session.chars || 0}
-                  style={`--chars-len: ${String(session.chars || 0).length};`}
                   onfocus={rememberEditableStart}
                   onkeydown={handleEditableKeydown}
                   onblur={(e) => handleSessionLocalBlur(e, i, "chars")}
                   aria-label={`Session ${i + 1} characters`}
+                  style="width: {Math.min(6, maxCharsLen)}ch;"
                 />
                 <span style="font-size:10px; color:var(--color-text-muted);"
                   >chars</span
@@ -1196,6 +1206,7 @@
                 onkeydown={handleEditableKeydown}
                 onblur={(e) => handleSessionLocalBlur(e, i, "mins")}
                 aria-label={`Session ${i + 1} minutes`}
+                style="width: {Math.min(4, maxMinsLen)}ch;"
               />
               <span style="font-size:10px; color:var(--color-text-muted);">min</span>
 
@@ -1203,7 +1214,7 @@
                 type="button"
                 class="qi-session-remove send-sess-btn"
                 style="color: var(--color-accent) !important; padding: 0 4px !important; margin-left: 2px;"
-                title="Log session individually"
+                title="Log episode individually"
                 onclick={() => handleSendSession(i)}
               >
                 <svg style="width: 10px; height: 10px; fill: currentColor !important;" viewBox="0 0 24 24">
@@ -1229,7 +1240,7 @@
 
               <button
                 class="qi-session-remove"
-                title="Remove session"
+                title="Remove episode"
                 onclick={() => handleRemoveSession(session.id)}>×</button
               >
             </div>
@@ -1287,57 +1298,111 @@
     transition: color 0.15s;
     font-weight: bold;
   }
-  .qi-link-status .broken-icon {
-    display: none;
-  }
-  .qi-link-status .connected-icon {
-    display: block;
-  }
   .qi-link-status:hover {
     color: var(--color-error, #f0706a) !important;
-  }
-  .qi-link-status:hover .broken-icon {
-    display: block;
-  }
-  .qi-link-status:hover .connected-icon {
-    display: none;
   }
   .stremio-ep-meta {
     display: flex;
     align-items: center;
+    justify-content: flex-start !important; /* Forces selectors entirely to the left */
     gap: 6px;
-    font-size: 11px;
-    color: var(--color-text-dimmed, #7a8ca5);
-    margin-top: 6px;
-    margin-bottom: 6px;
-    font-family: var(--font-mono, monospace);
+    margin-top: -5px !important;
+    margin-bottom: -1px !important;
+    padding-top: 0px !important;
+    padding-bottom: 0px !important;
   }
-  .stremio-ep-meta span {
-    font-weight: normal;
-    opacity: 0.85;
+  .stremio-ep-meta .unit-lbl {
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    color: var(--color-text-muted, #7a8ca5) !important;
   }
-  .stremio-ep-meta input {
-    width: 32px;
-    text-align: center;
-    color: var(--color-accent, #f0b429);
+  .stremio-ep-meta .unit-lbl-sep {
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    color: var(--color-text-dimmed, #7a8ca5) !important;
     font-weight: bold;
-    background: none;
-    border: none;
-    border-bottom: 1px dashed var(--color-border, #1c2333);
-    padding: 0 2px;
-    margin: 0;
-    outline: none;
-    font-family: inherit;
-    font-size: inherit;
-    transition: border-color 0.15s, background 0.15s;
   }
-  .stremio-ep-meta input:hover {
-    border-bottom-color: var(--color-accent, #f0b429);
-    border-bottom-style: solid;
+  .qi-stremio-num {
+    text-align: center !important;
+    font-size: 10px !important;
+    font-family: var(--font-mono, monospace) !important;
+    font-weight: bold !important;
+    color: var(--color-accent, #f0b429) !important;
+    background: none !important;
+    border: none !important;
+    outline: none !important;
+    width: 14px !important;
+    height: 12px !important;
+    line-height: 1 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    appearance: textfield !important;
+    -moz-appearance: textfield !important;
   }
-  .stremio-ep-meta input:focus {
-    border-bottom-color: var(--color-accent, #f0b429);
-    border-bottom-style: solid;
-    background: rgba(255, 255, 255, 0.04);
+  .qi-stremio-num::-webkit-outer-spin-button,
+  .qi-stremio-num::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+  }
+  .qi-sessions {
+    margin-top: 2px !important;
+    padding-top: 4px !important;
+    border-top: 1px solid var(--color-border, #1c2333) !important;
+  }
+  .qi-session-num {
+    width: auto !important;
+    min-width: unset !important;
+    margin-right: 1px !important;
+  }
+  .stremio-static-meta {
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    color: var(--color-text-muted, #7a8ca5) !important;
+    margin-left: 0px !important;
+    margin-right: 4px !important;
+  }
+  .session-summary {
+    font-size: 11.5px !important;
+    padding-bottom: 5px !important;
+    margin-bottom: 2px !important;
+  }
+  .stepper-buttons {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 12px;
+    margin-left: 2px;
+    gap: 0px;
+  }
+  .stepper-buttons .step-btn {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--color-text-dimmed, #7a8ca5) !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 5px !important;
+    width: 10px !important;
+    transition: color 0.15s;
+    line-height: 1 !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .stepper-buttons .step-btn:hover {
+    color: var(--color-accent, #f0b429) !important;
+  }
+  .stepper-buttons svg {
+    width: 6px !important;
+    height: 3px !important;
+    stroke: currentColor !important;
+    stroke-width: 2.5 !important;
+    fill: none !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
   }
 </style>

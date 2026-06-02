@@ -65,27 +65,44 @@
       input.value = input.dataset.editStart ?? input.defaultValue;
     }
   }
+
+  /* Accommodate the box size of all session elements to match the largest row value */
+  let maxCharsLen = $derived(
+    sessions.reduce((max, s) => Math.max(max, String(s.chars || 0).length), 1)
+  );
+  let maxMinsLen = $derived(
+    sessions.reduce((max, s) => Math.max(max, String(Math.max(1, Math.round(s.secs / 60))).length), 1)
+  );
 </script>
 
 {#if sessions.length > 1}
   <div class="sessions-container">
     <button class="session-summary" onclick={toggleOpen}>
-      {isOpen ? "▾" : "▸"} Sessions ({sessions.length})
+      {isOpen ? "▾" : "▸"} {isStremio ? "Episodes" : "Sessions"} ({sessions.length})
     </button>
 
     {#if isOpen}
       <div class="session-list">
         {#each sessions as session, i}
-          <div class="session-row" data-session-id={session.id}>
+          <div class="session-row" class:stremio-session-row={isStremio} data-session-id={session.id}>
             <span class="session-dot"></span>
-            <span class="session-label">{isStremio && session.season && session.episode ? `S${session.season}E${session.episode}` : `S${i + 1}`}</span>
+            <span class="session-label">
+              {isStremio ? i + 1 : `s${i + 1}`}
+            </span>
+
+            {#if isStremio}
+              <span class="stremio-static-meta">
+                Season {session.season || 1} · Ep {session.episode || 1}
+              </span>
+              <span style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--color-text-muted, #5a6a85); margin-left: 2px; margin-right: 4px;">·</span>
+            {/if}
 
             {#if isReading}
               <input
                 class="ghost-num chars"
                 type="number"
                 value={session.chars || 0}
-                style={`--chars-len: ${String(session.chars || 0).length};`}
+                style="width: {Math.min(6, maxCharsLen)}ch;"
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
                 onblur={(e) => handleEditableBlur(e, i, "chars")}
@@ -93,36 +110,12 @@
               <span class="unit">chars</span>
             {/if}
 
-            {#if isStremio}
-              <input
-                class="ghost-num stremio-part"
-                type="number"
-                min="1"
-                value={Math.max(1, Number(session.season || 1))}
-                title="Season"
-                onfocus={rememberEditableStart}
-                onkeydown={handleEditableKeydown}
-                onblur={(e) => handleEditableBlur(e, i, "season")}
-              />
-              <span class="unit">season</span>
-              <input
-                class="ghost-num stremio-part"
-                type="number"
-                min="1"
-                value={Math.max(1, Number(session.episode || 1))}
-                title="Episode"
-                onfocus={rememberEditableStart}
-                onkeydown={handleEditableKeydown}
-                onblur={(e) => handleEditableBlur(e, i, "episode")}
-              />
-              <span class="unit">episode</span>
-            {/if}
-
             <input
               class="ghost-num mins"
               type="number"
               min="1"
               value={Math.max(1, Math.round(session.secs / 60))}
+              style="width: {Math.min(4, maxMinsLen)}ch;"
               onfocus={rememberEditableStart}
               onkeydown={handleEditableKeydown}
               onblur={(e) => handleEditableBlur(e, i, "mins")}
@@ -132,7 +125,7 @@
             <button
               type="button"
               class="send-sess-btn"
-              title="Log session individually"
+              title="Log episode individually"
               onclick={() => onSendSession?.(i)}
             >
               <svg viewBox="0 0 24 24">
@@ -200,6 +193,16 @@
     font-size: 10px;
     color: var(--color-text-dimmed, #3a4a60);
     gap: 0;
+    flex-wrap: nowrap;
+    row-gap: 4px;
+    min-width: 0;
+  }
+  .session-row.stremio-session-row {
+    flex-wrap: nowrap !important;
+  }
+  .session-row.stremio-session-row .ghost-date {
+    width: 165px !important;
+    max-width: 165px !important;
   }
   .session-dot {
     width: 3px;
@@ -211,11 +214,18 @@
   }
   .session-label {
     font-family: var(--font-mono, monospace);
-    font-size: 9px;
-    color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+    font-size: 10px;
+    color: var(--color-accent-dim, #b88e33) !important;
     font-weight: bold;
     flex-shrink: 0;
     margin-right: 5px;
+  }
+  .stremio-static-meta {
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    color: var(--color-text-muted, #5a6a85);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .ghost-num {
     background: none;
@@ -250,11 +260,7 @@
     width: 20px;
   }
   .ghost-num.chars {
-    width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch);
     color: var(--color-accent, #f0b429);
-  }
-  .ghost-num.stremio-part {
-    width: 18px;
   }
   .unit {
     font-size: 10px;

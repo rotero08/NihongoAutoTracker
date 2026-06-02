@@ -42,6 +42,7 @@
     let anilistResults = $state<any[]>([]);
     let isSearchingAnilist = $state(false);
     let pastSessions = $state<any[]>([]);
+    let isUnlinkHovered = $state(false);
 
     // Editing Overlays
     let isEditingTime = $state(false);
@@ -158,10 +159,7 @@
                     "nt-history-refresh",
                     handleHistoryRefresh,
                 );
-                wrapper.removeEventListener(
-                    "nt-jiten-status",
-                    handleJitenStatus,
-                );
+                wrapper.removeEventListener("nt-jiten-status", handleJitenStatus);
             }
             document.removeEventListener("click", handleOuterClick);
         };
@@ -258,6 +256,7 @@
         toggleTimer();
     }
 
+    // Toggle logic for timer tracking
     function toggleTimer() {
         const wasRunning = ttuState.running;
         ttuState.running = !ttuState.running;
@@ -524,6 +523,7 @@
         isEditingTime = true;
     }
 
+    // Commit dynamic changes to tracking timer input
     function commitTimeEdit() {
         isEditingTime = false;
         const parts = timeInputVal.split(":").map(Number);
@@ -547,6 +547,7 @@
         isEditingChars = true;
     }
 
+    // Commit custom updates to character tracking inputs
     function commitCharsEdit() {
         isEditingChars = false;
         const val = parseInt(charsInputVal.replace(/\D/g, ""), 10);
@@ -902,12 +903,19 @@
                         title="Click to edit"
                     >
                         <svg
-                          style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
-                          viewBox="0 0 24 24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            ><circle cx="11" cy="11" r="8"></circle><line
+                                x1="21"
+                                y1="21"
+                                x2="16.65"
+                                y2="16.65"
+                            ></line></svg
                         >
-                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                        </svg>
                         <span id="nt-ttu-link-label"
                             >{linkedMedia.mediaData.contentTitleNative ||
                                 "Linked"}</span
@@ -937,16 +945,31 @@
                         id="nt-ttu-unlink-btn"
                         class="nt-ttu-unlink-btn"
                         onclick={unlinkMedia}
+                        onmouseenter={() => (isUnlinkHovered = true)}
+                        onmouseleave={() => (isUnlinkHovered = false)}
                         title="Unlink Media"
+                        style={isUnlinkHovered ? "color: var(--color-error, #f0706a) !important;" : "color: var(--color-success, #3ddc84) !important;"}
                     >
-                        <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                          <path d="M10 13a5 5 0 0 0 7.54.54l1.5-1.5" />
-                          <path d="M19 7.5l1.5-1.5a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                          <line x1="18" y1="5" x2="19" y2="2" stroke-width="1.8" />
-                          <line x1="19" y1="8" x2="22" y2="9" stroke-width="1.8" />
-                          <line x1="21" y1="5" x2="23" y2="3" stroke-width="1.8" />
-                        </svg>
+                        {#if isUnlinkHovered}
+                            <svg
+                                style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
+                                viewBox="0 0 24 24"
+                            >
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+                                <line x1="8" y1="12" x2="16" y2="12"/>
+                                <line x1="2" y1="2" x2="22" y2="22"/>
+                            </svg>
+                        {:else}
+                            <svg
+                                style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
+                                viewBox="0 0 24 24"
+                            >
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+                                <line x1="8" y1="12" x2="16" y2="12"/>
+                            </svg>
+                        {/if}
                     </button>
                 </div>
             {:else}
@@ -1105,8 +1128,7 @@
                                 day: "numeric",
                             })}</span
                         >
-                        <span>{Math.max(1, Math.round(s.timeMs / 60000))}m</span
-                        >
+                        <span>{Math.max(1, Math.round(s.timeMs / 60000))}m</span>
                         <span
                             ><span class="nt-ttu-chars-value">{s.chars}</span>
                             chars</span
@@ -1242,7 +1264,7 @@
         border: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
         border-radius: var(
             --rounded-box,
-            --nt-rounded-box, 6px
+            var(--nt-rounded-box, 6px)
         ) !important;
         width: 280px;
         color: var(--color-text, var(--nt-text, #fff)) !important;
@@ -1450,6 +1472,7 @@
     :global(.nt-ttu-linker) {
         margin-top: 12px;
         border-top: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
+        padding-top: 12px;
     }
 
     :global(.nt-ttu-link-compact) {
@@ -1506,13 +1529,13 @@
     :global(.nt-ttu-unlink-btn) {
         background: none;
         border: none;
-        color: var(--color-error, var(--nt-error, #f0706a)) !important;
+        color: var(--color-success, var(--nt-success, #3ddc84)) !important;
         cursor: pointer;
         padding: 2px;
         display: flex;
         align-items: center;
-        opacity: 0.8;
-        transition: opacity 0.15s;
+        opacity: 0.6;
+        transition: opacity 0.15s, color 0.15s;
     }
 
     :global(.nt-ttu-unlink-btn:hover) {
@@ -1643,6 +1666,7 @@
         gap: 4px;
         max-height: 140px;
         overflow-y: auto;
+        margin-top: 4px;
         display: none;
         position: static !important;
         border: none !important;

@@ -16,6 +16,10 @@
   /** Error state */
   let error = $state(false);
 
+  // Dynamic orientation bounds checker
+  let dropdownEl = $state<HTMLDivElement | undefined>(undefined);
+  let renderUpwards = $state(false);
+
   // Tracks the last query to prevent late-returning network requests
   let activeQueryToken = $state(0);
 
@@ -26,6 +30,19 @@
     onMouseDown?: () => void;
   }
   let { onSelect, searchType = "reading", onMouseDown }: Props = $props();
+
+  $effect(() => {
+    if (open && dropdownEl) {
+      const rect = dropdownEl.getBoundingClientRect();
+      const viewportHeight = window.innerHeight;
+      // Flip layout if search results clip beyond screen limits or viewport bottom
+      if (rect.bottom > viewportHeight || (viewportHeight - rect.top < rect.height)) {
+        renderUpwards = true;
+      } else {
+        renderUpwards = false;
+      }
+    }
+  });
 
   /** Execute a search query */
   export async function search(query: string) {
@@ -109,7 +126,7 @@
 </script>
 
 {#if open}
-  <div class="dropdown">
+  <div class="dropdown" class:upwards={renderUpwards} bind:this={dropdownEl}>
     {#if loading}
       <div class="dropdown-msg">Searching...</div>
     {:else if error}
@@ -154,6 +171,11 @@
     display: flex;
     flex-direction: column;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+  }
+  .dropdown.upwards {
+    top: auto;
+    bottom: calc(100% + 4px);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.8);
   }
   .dropdown-msg {
     padding: 6px;

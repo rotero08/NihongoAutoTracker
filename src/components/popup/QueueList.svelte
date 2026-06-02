@@ -78,18 +78,34 @@
 
 <style>
   .queue-list {
-    padding: 7px 10px 10px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 8px 10px; /* Reduced side gaps significantly to let cards expand */
     flex: 1;
     max-height: 400px;
     overflow-y: auto;
     overflow-x: hidden !important;
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: 6px;
+    min-width: 0;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .queue-list :global(.qi) {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    align-self: stretch;
+    box-sizing: border-box;
   }
 
   .queue-list::-webkit-scrollbar {
-    width: 3px;
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
   }
   .queue-list::-webkit-scrollbar-thumb {
     background: var(--color-border-hover, #242d42);

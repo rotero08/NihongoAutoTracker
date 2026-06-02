@@ -257,7 +257,12 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
       cleanupActiveObservers();
       return;
     }
-    if (!modalContainer.contains(e.target as Node) && !btn.contains(e.target as Node)) {
+
+    const eventPath = e.composedPath();
+    const clickedInsideModal = eventPath.includes(modalContainer);
+    const clickedTriggerButton = eventPath.includes(btn);
+
+    if (!clickedInsideModal && !clickedTriggerButton) {
       cleanupActiveObservers();
       cleanupPlaylistModal();
       document.removeEventListener('click', clickOutsideHandler);

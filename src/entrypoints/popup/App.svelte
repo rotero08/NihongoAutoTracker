@@ -1128,7 +1128,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
   }
   .queue-container :global(.empty-state),
   .queue-container :global(.empty-message),

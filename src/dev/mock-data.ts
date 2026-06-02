@@ -273,55 +273,55 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
   }
 ];
 
-/** Sample Stremio queue items for dev testing */
+/** Sample Stremio queue items representing real consecutive watch history of Frieren Season 2 */
 export const MOCK_STREMIO_QUEUE: QueuedStremioLog[] = [
   {
-    id: "mock-stremio-1",
+    id: "mock-stremio-frieren-s2",
     type: "stremio",
     logType: "anime",
     contentTitleNative: "葬送のフリーレン",
-    contentTitleEnglish: "Frieren: Beyond Journey's End",
-    contentTitleRomaji: "Sousou no Frieren",
+    contentTitleEnglish: "Frieren: Beyond Journey's End Season 2",
+    contentTitleRomaji: "Sousou no Frieren Season 2",
     description: "葬送のフリーレン",
     episodes: 2,
     time: 48,
-    date: "2026-06-01T12:00:00.000Z",
+    date: "2026-06-01T07:00:00.000Z",
     private: false,
     tags: [],
     sessions: [
       {
-        id: "sess-s1",
+        id: "sess-frieren-s2-e1",
         secs: 1440,
-        date: "2026-06-01T12:00:00.000Z",
-        season: 1,
+        date: "2026-06-01T07:00:00.000Z",
+        season: 2,
         episode: 1,
-        traktHistoryId: "trakt-mock-s1",
-        episodeTitle: "冒険の終わり"
+        traktHistoryId: "trakt-frieren-s2-e1",
+        episodeTitle: "旅立ちの刻"
       },
       {
-        id: "sess-s2",
+        id: "sess-frieren-s2-e2",
         secs: 1440,
-        date: "2026-06-01T12:00:00.000Z",
-        season: 1,
+        date: "2026-06-01T09:18:00.000Z",
+        season: 2,
         episode: 2,
-        traktHistoryId: "trakt-mock-s2",
-        episodeTitle: "別に魔法でなくとも..."
+        traktHistoryId: "trakt-frieren-s2-e2",
+        episodeTitle: "新たな出会い"
       }
     ],
     mediaId: "154587",
     mediaData: {
       contentId: "154587",
       contentTitleNative: "葬送のフリーレン",
-      contentTitleEnglish: "Frieren: Beyond Journey's End",
-      contentTitleRomaji: "Sousou no Frieren",
+      contentTitleEnglish: "Frieren: Beyond Journey's End Season 2",
+      contentTitleRomaji: "Sousou no Frieren Season 2",
       contentImage: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-n6b6Y62vSuC5.jpg",
       coverImage: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-n6b6Y62vSuC5.jpg",
       type: "anime",
       episodes: 28,
       episodeDuration: 24
     },
-    traktHistoryId: "trakt-mock-s1",
-    traktHistoryIds: ["trakt-mock-s1", "trakt-mock-s2"],
+    traktHistoryId: "trakt-frieren-s2-e1",
+    traktHistoryIds: ["trakt-frieren-s2-e1", "trakt-frieren-s2-e2"],
     traktType: "episode"
   }
 ];

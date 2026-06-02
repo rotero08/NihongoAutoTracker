@@ -39,8 +39,9 @@
     hideNonJp = showOnlyJapanese;
   }
 
-  function handleRowClick(index: number) {
-    selectedIndices[index] = !selectedIndices[index];
+  function handleRowChecked(index: number, checked: boolean) {
+    selectedIndices[index] = checked;
+    allSelected = visibleVideos.length > 0 && visibleVideos.every((v: any) => selectedIndices[v.originalIndex]);
   }
 
   function triggerSubmit() {
@@ -48,6 +49,7 @@
     showConfirmation = true;
   }
 
+  // Go back from confirmation
   function cancelSubmit() {
     showConfirmation = false;
   }
@@ -82,10 +84,14 @@
 
     <div id="nt-playlist-modal-list" style="max-height:300px; overflow-y:auto; overflow-x:hidden; margin-bottom:8px; display:flex; flex-direction:column; gap:4px; flex-shrink:1;">
       {#each visibleVideos as v (v.originalIndex)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <label class="pl-vid-row" onclick={() => handleRowClick(v.originalIndex)} style="display:flex; gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;">
-          <input type="checkbox" class="nt-pl-chk pl-vid-chk" checked={!!selectedIndices[v.originalIndex]} style="margin:0; flex-shrink:0; width:14px; height:14px;" />
+        <label class="pl-vid-row" style="display:flex; gap:4px; align-items:center; font-size:11px; cursor:pointer; padding:3px 0; width:100%; box-sizing:border-box;">
+          <input
+            type="checkbox"
+            class="nt-pl-chk pl-vid-chk"
+            checked={!!selectedIndices[v.originalIndex]}
+            onchange={(e) => handleRowChecked(v.originalIndex, (e.currentTarget as HTMLInputElement).checked)}
+            style="margin: 0 !important; padding: 0 !important; box-sizing: border-box; width: 16px !important; height: 16px !important; flex-shrink: 0; align-self: center;"
+          />
           <span style="font-family:ui-monospace,SFMono-Regular,monospace; color:#8A8A9A; width:14px; text-align:right; flex-shrink:0; font-size:10px; margin-right:2px;">{v.originalIndex + 1}.</span>
           <div class="pl-scroll-title" style="flex:1; overflow-x:auto; white-space:nowrap; padding: 2px 0; font-size:11px; scrollbar-width:none; -ms-overflow-style:none;">
             {v.title}

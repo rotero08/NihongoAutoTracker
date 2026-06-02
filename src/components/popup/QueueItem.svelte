@@ -21,15 +21,19 @@
     getUpdater
   } from "@/lib/utils/queue-actions";
 
-  interface Props {
+  let {
+    item,
+    type,
+    onStatusMessage,
+    onConfirm,
+    onRefresh
+  }: {
     item: any;
     type: "video" | "reading" | "stremio";
     onStatusMessage: (msg: string, err?: boolean) => void;
     onConfirm: (title: string, msg: string, warnKey?: string) => Promise<boolean>;
     onRefresh: () => void;
-  }
-
-  let { item, type, onStatusMessage, onConfirm, onRefresh }: Props = $props();
+  } = $props();
 
   let sending = $state(false);
   let isUnlinkHovered = $state(false);
@@ -64,9 +68,18 @@
     }
   });
 
+  const capLogType = $derived(
+    item.logType
+      ? item.logType
+          .split(" ")
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ")
+      : "Trakt"
+  );
+
   let channelName = $derived(
     isStremio
-      ? `Stremio • ${((item.sessions?.length || item.episodes || 1) > 1) ? `${item.sessions?.length || item.episodes} episodes` : item.season && item.episode ? `S${item.season}E${item.episode}` : item.logType || "Trakt"}`
+      ? `Stremio • ${capLogType}`
       : isRead
       ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
       : item.channelTitle || item.contentTitleNative || "YouTube",
@@ -82,6 +95,17 @@
   const defaultDateStr = $derived(
     sessions.length > 0 ? sessions[0].date : item.date || new Date().toISOString(),
   );
+
+  const displaySeason = $derived(
+    Math.max(1, Number(item.season || (sessions[0]?.season) || 1))
+  );
+  const displayEpisode = $derived(
+    Math.max(1, Number(item.episode || (sessions[0]?.episode) || 1))
+  );
+
+  const charsLength = $derived(String(item.chars || 0).length);
+  const minsLength = $derived(String(displayMins || 0).length);
+  const volLength = $derived(String(Math.max(1, Number(item.volume || 1))).length);
 
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let debounceTimer: any;
@@ -368,8 +392,8 @@
         } catch {}
       } else if (field === "season") {
         session.season = Math.max(1, Number(val) || 1);
-      } else if (field === "episode") {
-        session.episode = Math.max(1, Number(val) || 1);
+      } else if (field === "episodes") {
+        entry.episodes = Math.max(1, Number(val) || 1);
       }
 
       const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
@@ -383,6 +407,11 @@
       return nextQueue;
     });
     onRefresh();
+  }
+
+  async function adjustStremioPart(field: "season" | "episodes", delta: number) {
+    const current = Math.max(1, Number(item[field] || 1));
+    await persistField(item.id, type, field, Math.max(1, current + delta), onRefresh);
   }
 </script>
 
@@ -438,25 +467,25 @@
         >
           {#if isUnlinkHovered}
             <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              <path d="M10 13a5 5 0 0 0 7.54.54l1.5-1.5" />
-              <path d="M17.25 4.75a5 5 0 0 0-4.32-.82l-1.72 1.71" />
-              <line x1="18.5" y1="2.5" x2="18.5" y2="0.5" stroke-width="2.2" />
-              <line x1="20" y1="3.5" x2="21.5" y2="2" stroke-width="2.2" />
-              <line x1="20.5" y1="5.5" x2="22.5" y2="5.5" stroke-width="2.2" />
+              <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+              <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
+              <line x1="2" y1="2" x2="22" y2="22"/>
             </svg>
           {:else}
             <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+              <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+              <line x1="8" y1="12" x2="16" y2="12"/>
             </svg>
           {/if}
         </button>
       {:else}
         <span class="qi-link-status" title="Matched" style="cursor:default; color: var(--color-success, #3ddc84) !important;">
           <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+            <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+            <line x1="8" y1="12" x2="16" y2="12"/>
           </svg>
         </span>
       {/if}
@@ -471,7 +500,7 @@
         type="number"
         min="0"
         value={item.chars || 0}
-        style={`--chars-len: ${String(item.chars || 0).length};`}
+        style="width: {charsLength + 0.5}ch !important;"
         onblur={(e) => handleEditableBlur(e, "chars", (val) => persistField(item.id, type, "chars", Math.max(0, Number(val) || 0), onRefresh))}
         onfocus={rememberEditableStart}
         onkeydown={handleEditableKeydown}
@@ -485,6 +514,7 @@
       min="1"
       value={displayMins}
       title="Total minutes"
+      style="width: {minsLength + 0.5}ch !important;"
       onblur={(e) => handleEditableBlur(e, "time", (val) => persistField(item.id, type, "time", isRead ? Math.max(1, Number(val) || 1) * 60 : Math.max(1, Number(val) || 1), onRefresh))}
       onfocus={rememberEditableStart}
       onkeydown={handleEditableKeydown}
@@ -498,6 +528,7 @@
         min="1"
         value={Math.max(1, Number(item.volume || 1))}
         title="Volume"
+        style="width: {volLength + 0.5}ch !important;"
         onblur={(e) => handleEditableBlur(e, "volume", (val) => persistField(item.id, type, "volume", Math.max(1, Number(val) || 1), onRefresh))}
         onfocus={rememberEditableStart}
         onkeydown={handleEditableKeydown}
@@ -509,37 +540,34 @@
     <div class="qi-mid">
       <span class="qi-channel" title="{channelName} {urlDisplay}">{channelName} {urlDisplay}</span>
     </div>
-    {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
+    {#if isStremio}
       <div style="flex-basis: 100%; height: 0;"></div>
-      <div class="stremio-capsule">
-        <span class="stremio-badge">Ep Info</span>
-        <div class="stremio-fields">
-          <div class="stremio-field">
-            <span class="stremio-label">S</span>
-            <input
-              class="stremio-input"
-              type="number"
-              min="1"
-              value={Math.max(1, Number(item.season || 1))}
-              onfocus={rememberEditableStart}
-              onkeydown={handleEditableKeydown}
-              onblur={(e) => handleEditableBlur(e, "season", (val) => persistField(item.id, type, "season", Math.max(1, Number(val) || 1), onRefresh))}
-              aria-label="Season"
-            />
-          </div>
-          <div class="stremio-divider"></div>
-          <div class="stremio-field">
-            <span class="stremio-label">E</span>
-            <input
-              class="stremio-input"
-              type="number"
-              min="1"
-              value={Math.max(1, Number(item.episode || 1))}
-              onfocus={rememberEditableStart}
-              onkeydown={handleEditableKeydown}
-              onblur={(e) => handleEditableBlur(e, "episode", (val) => persistField(item.id, type, "episode", Math.max(1, Number(val) || 1), onRefresh))}
-              aria-label="Episode"
-            />
+      <div class="stremio-meta-row">
+        <span>Season {displaySeason}</span>
+        {#if !((item.episodes > 1) || (sessions.length > 1))}
+          <span>·</span>
+          <span>Ep {displayEpisode}</span>
+        {/if}
+        <span>·</span>
+        <div class="qi-stremio-stepper" style="display: flex; align-items: center; gap: 4px;">
+          <input
+            class="qi-episodes-num"
+            type="number"
+            min="1"
+            value={Math.max(1, Number(item.episodes || 1))}
+            onfocus={rememberEditableStart}
+            onkeydown={handleEditableKeydown}
+            onblur={(e) => handleEditableBlur(e, "episodes", (val) => persistField(item.id, type, "episodes", Math.max(1, Number(val) || 1), onRefresh))}
+            aria-label="Episodes count"
+          />
+          <span>episodes watched</span>
+          <div class="stepper-nav">
+            <button type="button" onclick={() => adjustStremioPart('episodes', 1)} aria-label="Increment episodes">
+              <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg>
+            </button>
+            <button type="button" onclick={() => adjustStremioPart('episodes', -1)} aria-label="Decrement episodes">
+              <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -570,56 +598,83 @@
 </div>
 
 <style>
-  .stremio-capsule {
-    display: inline-flex;
-    align-items: center;
-    background: color-mix(in srgb, var(--color-accent, #f0b429) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--color-accent, #f0b429) 15%, transparent);
-    border-radius: 4px;
-    padding: 2px 6px;
-    gap: 8px;
-    font-family: var(--font-mono, monospace);
-    font-size: 10px;
-    margin-top: 4px;
+  .ghost-num {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    outline: none !important;
+    background: none !important;
+    min-width: unset !important;
+    box-shadow: none !important;
   }
-  .stremio-badge {
-    color: var(--color-text-dimmed, #7a8ca5);
-    font-weight: bold;
-    font-size: 8px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-  .stremio-fields {
+  .stremio-meta-row {
     display: flex;
     align-items: center;
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    color: var(--color-text-muted, #7a8ca5) !important;
     gap: 4px;
+    margin-top: 6px;
   }
-  .stremio-field {
+  .stremio-meta-row span {
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    color: var(--color-text-dimmed, #7a8ca5) !important;
+  }
+  .qi-episodes-num {
+    width: 14px;
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 10px !important;
+    font-weight: bold !important;
+    color: var(--color-accent, #f0b429) !important;
+    background: none !important;
+    border: none !important;
+    outline: none !important;
+    text-align: right !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    appearance: textfield !important;
+    -moz-appearance: textfield !important;
+  }
+  .qi-episodes-num::-webkit-outer-spin-button,
+  .qi-episodes-num::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+  }
+  .stepper-nav {
     display: flex;
-    align-items: center;
-    gap: 2px;
+    flex-direction: column;
+    justify-content: center;
+    height: 12px;
+    margin-left: 2px;
+    gap: 0px;
   }
-  .stremio-label {
-    color: var(--color-text-dimmed, #7a8ca5);
-    font-weight: bold;
+  .stepper-nav button {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--color-text-dimmed, #7a8ca5) !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 5px !important;
+    width: 10px !important;
+    transition: color 0.15s;
+    line-height: 1 !important;
+    outline: none !important;
+    box-shadow: none !important;
   }
-  .stremio-input {
-    width: 22px;
-    text-align: center;
-    color: var(--color-accent, #f0b429);
-    font-weight: bold;
-    background: none;
-    border: none;
-    padding: 0;
-    outline: none;
+  .stepper-nav button:hover {
+    color: var(--color-accent, #f0b429) !important;
   }
-  .stremio-input:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 2px;
-  }
-  .stremio-divider {
-    width: 1px;
-    height: 8px;
-    background: var(--color-border, #1c2333);
+  .stepper-nav svg {
+    width: 6px !important;
+    height: 3px !important;
+    stroke: currentColor !important;
+    stroke-width: 2.5 !important;
+    fill: none !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
   }
 </style>
