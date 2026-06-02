@@ -120,7 +120,16 @@ function findDOMAccentColor(isDark: boolean): string | null {
   }
 
   for (const cssVar of cssVars) {
+    const inlineValue = typeof document !== 'undefined' && document.documentElement
+      ? document.documentElement.style.getPropertyValue(cssVar)
+      : '';
+    if (inlineValue && document.documentElement) {
+      document.documentElement.style.removeProperty(cssVar);
+    }
     const val = rootStyle.getPropertyValue(cssVar).trim() || bodyStyle.getPropertyValue(cssVar).trim();
+    if (inlineValue && document.documentElement) {
+      document.documentElement.style.setProperty(cssVar, inlineValue);
+    }
     if (val) {
       const rgb = parseColorToRgb(val);
       if (isValidAccent(rgb, isDark)) {
@@ -144,6 +153,28 @@ export function detectReaderThemeColors(): any {
   }
 
   try {
+    // Temporarily remove our inline variable overrides from the documentElement to allow
+    // accurate, unshadowed computed style lookups of the reader's native colors.
+    const root = document.documentElement;
+    const shadowedProps = [
+      '--color-background',
+      '--color-text',
+      '--color-accent',
+      '--nt-background',
+      '--nt-text',
+      '--nt-accent',
+      'background-color',
+      'color'
+    ];
+    const savedValues: Record<string, string> = {};
+    for (const prop of shadowedProps) {
+      const val = root.style.getPropertyValue(prop);
+      if (val) {
+        savedValues[prop] = val;
+        root.style.removeProperty(prop);
+      }
+    }
+
     const bodyStyle = window.getComputedStyle(document.body);
     let bgColor = bodyStyle.backgroundColor;
 
@@ -184,10 +215,16 @@ export function detectReaderThemeColors(): any {
       }
     }
 
+    // Restore our inline variables immediately after querying raw computed styles
+    for (const [prop, val] of Object.entries(savedValues)) {
+      root.style.setProperty(prop, val);
+    }
+
     const parsedBg = parseColorToRgb(bgColor || '#07070e');
     const parsedText = parseColorToRgb(textColor || '#dde4f0');
 
     const hslBg = rgbToHsl(parsedBg.r, parsedBg.g, parsedBg.b);
+    const hslText = rgbToHsl(parsedText.r, parsedText.g, parsedText.b);
     const isDark = hslBg.l < 50;
 
     let background = `rgb(${parsedBg.r}, ${parsedBg.g}, ${parsedBg.b})`;
@@ -197,12 +234,65 @@ export function detectReaderThemeColors(): any {
     let borderHover = isDark ? adjustLightness(parsedBg, 32) : adjustLightness(parsedBg, -32);
     let textMuted = `rgba(${parsedText.r}, ${parsedText.g}, ${parsedText.b}, 0.6)`;
 
-    // Universal fallback: default amber accent color for all hosting environments
-    let accent = isDark ? '#f0b429' : '#d97706';
+    // Dynamically compute an elegant, theme-fitting accent color based on theme hue
+    let fallbackHue = 42; // Default to warm gold/amber
+    let fallbackSat = isDark ? 65 : 60; // Softer, more elegant saturation
+    let fallbackLight = isDark ? 62 : 35; // Readable, high-contrast but non-neon lightness
+
+    if (hslBg.s >= 5) {
+      // We have a colored background. Apply an analogous shift to make it harmonious yet distinct!
+      const bgHue = hslBg.h;
+      
+      if (bgHue >= 30 && bgHue < 60) {
+        // Sepia/Warm Brown themes: Shift slightly warmer (towards deep gold/amber/terracotta)
+        fallbackHue = bgHue - 10; 
+        fallbackSat = isDark ? 70 : 65;
+        fallbackLight = isDark ? 58 : 32;
+      } else if (bgHue >= 60 && bgHue < 150) {
+        // Green themes: Shift towards a cool, elegant teal/forest-sage
+        fallbackHue = bgHue + 25; 
+        fallbackSat = isDark ? 60 : 55;
+        fallbackLight = isDark ? 60 : 34;
+      } else if (bgHue >= 150 && bgHue < 210) {
+        // Teal/Cyan themes: Shift towards a deep slate blue
+        fallbackHue = bgHue + 20;
+        fallbackSat = isDark ? 65 : 60;
+        fallbackLight = isDark ? 62 : 35;
+      } else if (bgHue >= 210 && bgHue < 250) {
+        // Blue themes: Shift towards royal indigo or soft purple
+        fallbackHue = bgHue + 20;
+        fallbackSat = isDark ? 65 : 60;
+        fallbackLight = isDark ? 64 : 36;
+      } else if (bgHue >= 250 && bgHue < 300) {
+        // Purple/Amethyst themes: Shift towards rich amethyst-violet or soft magenta-rose
+        fallbackHue = bgHue + 20;
+        fallbackSat = isDark ? 65 : 60;
+        fallbackLight = isDark ? 64 : 35;
+      } else {
+        // Red/Orange/Pink themes: Shift towards coral/terracotta
+        fallbackHue = (bgHue + 15) % 360;
+        fallbackSat = isDark ? 70 : 65;
+        fallbackLight = isDark ? 60 : 34;
+      }
+    } else if (hslText.s >= 5) {
+      // If the background is grayscale but the text is colored, align harmoniously with the text hue
+      fallbackHue = hslText.h;
+    }
+
+    const derivedAccentRgb = hslToRgb(fallbackHue, fallbackSat, fallbackLight);
+    let accent = `rgb(${derivedAccentRgb.r}, ${derivedAccentRgb.g}, ${derivedAccentRgb.b})`;
 
     const extractedAccent = findDOMAccentColor(isDark);
     if (extractedAccent) {
-      accent = extractedAccent;
+      const rgbExtracted = parseColorToRgb(extractedAccent);
+      const hslExtracted = rgbToHsl(rgbExtracted.r, rgbExtracted.g, rgbExtracted.b);
+
+      // Only override our dynamic analogous accent if the background is monochrome (grayscale),
+      // OR if the extracted accent actually aligns harmoniously with the background's hue.
+      // This avoids brand blue variables from overriding beautiful custom sepia/green palettes on Yatsu.
+      if (hslBg.s < 5 || Math.abs(hslExtracted.h - hslBg.h) < 35 || Math.abs(hslExtracted.h - hslBg.h) > 325) {
+        accent = extractedAccent;
+      }
     }
 
     const rgbAccent = parseColorToRgb(accent);

@@ -45,7 +45,7 @@ export interface TrackerConfig {
   /* ── Auto-Send Queue Settings ── */
   autoSendEndOfDay?: boolean;
   warnSendAll?: boolean;
-  warnUnmatched?: boolean; // Resolves TS compilation error in QueueItemController
+  warnUnmatched?: boolean;
   debugMode?: boolean;
 
   /* ── Custom Theme Registers ── */
@@ -291,9 +291,13 @@ export interface ReaderAdapter {
   isEnabled(config: TrackerConfig): boolean;
   findInsertPoint(): { el: Element; pos: InsertPosition } | null;
   extractCharCount(): number | null;
-  getTitle(): string;
+  getTitle(rawTitle?: string): string;
   onUpdateStyles?(wrapper: HTMLElement): void;
   getThemeOverride?(config: TrackerConfig): string | undefined;
+
+  // Category 7 Interface Abstract Queries
+  isReadingViewActive(doc: Document): boolean;
+  onTick(ttuState: any, stateRefs: any): void;
 }
 
 export interface VideoSiteAdapter {
@@ -305,4 +309,9 @@ export interface VideoSiteAdapter {
   isLikelyJapanese(): boolean;
   isMusic(): boolean;
   getTimestampContainer?(vid: HTMLVideoElement): HTMLElement | null;
+
+  // Category 7 Interface Abstract Queries
+  isAdPlaying(doc: Document): boolean;
+  getPlaylistContainers(doc: Document): HTMLElement[];
+  injectPlaylistButton(container: HTMLElement, btn: HTMLButtonElement): void;
 }

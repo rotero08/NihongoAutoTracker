@@ -11,7 +11,6 @@
     videoQueueStorage,
     readingQueueStorage,
     stremioQueueStorage,
-    stremioProcessedStorage,
     updateVideoQueueAtomic,
     updateReadingQueueAtomic,
     updateStremioQueueAtomic,
@@ -28,6 +27,17 @@
   import { onMount, onDestroy } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { addDebugLog } from "@/lib/storage/debug";
+  import {
+    persistField,
+    persistFields,
+    getUpdater,
+    handleUnlink as unlinkQueueMedia,
+    ensureVideoMediaData as resolveVideoMetaData,
+    markStremioProcessed as flagStremioProcessed,
+    getItemPayloads,
+    removeSessionFromQueue,
+    sendSessionFromQueue,
+  } from "@/lib/utils/queue-actions";
 
   interface Props {
     item: any;
@@ -142,67 +152,6 @@
     node.select();
   }
 
-  /* ── Atomic persistence helper ── */
-  async function saveItem(updatedFields: Partial<any>) {
-    if (isRead) {
-      await updateReadingQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx > -1) {
-          const updatedItem = { ...currentQueue[idx], ...updatedFields };
-          const plainObj = JSON.parse(JSON.stringify(updatedItem));
-          if (
-            "mediaData" in updatedFields &&
-            updatedFields.mediaData === undefined
-          ) {
-            delete plainObj.mediaData;
-          }
-          const newQueue = [...currentQueue];
-          newQueue[idx] = plainObj;
-          return newQueue;
-        }
-        return currentQueue;
-      });
-    } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx > -1) {
-          const updatedItem = { ...currentQueue[idx], ...updatedFields };
-          const plainObj = JSON.parse(JSON.stringify(updatedItem));
-          if (
-            "mediaData" in updatedFields &&
-            updatedFields.mediaData === undefined
-          ) {
-            delete plainObj.mediaData;
-          }
-          const newQueue = [...currentQueue];
-          newQueue[idx] = plainObj;
-          return newQueue;
-        }
-        return currentQueue;
-      });
-
-    } else {
-      await updateVideoQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx > -1) {
-          const updatedItem = { ...currentQueue[idx], ...updatedFields };
-          const plainObj = JSON.parse(JSON.stringify(updatedItem));
-          if (
-            "mediaData" in updatedFields &&
-            updatedFields.mediaData === undefined
-          ) {
-            delete plainObj.mediaData;
-          }
-          const newQueue = [...currentQueue];
-          newQueue[idx] = plainObj;
-          return newQueue;
-        }
-        return currentQueue;
-      });
-    }
-    onRefresh();
-  }
-
   /* ── Editing Handlers ────────────────────────────────────────── */
   let debounceTimer: any;
 
@@ -215,11 +164,6 @@
       if (val.trim().length < 2) {
         searchDropdown?.close();
         return;
-      }
-      if (import.meta.env.DEV) {
-        console.log(
-          `[NAT DEV - SettingsQueueItem] Debouncing search for AniList matching: ${val.trim()}`,
-        );
       }
       debounceTimer = setTimeout(() => searchDropdown?.search(val.trim()), 500);
     }
@@ -288,11 +232,10 @@
     }
 
     if (input.dataset.committed === "true") {
-      // Unmatch on final change commit to title fields if text has actually changed [3]
       if (field === "description" || field === "contentTitleNative") {
         const changed = input.value !== input.dataset.editStart;
         if (changed && isLinked && input.dataset.isMatching !== "true") {
-          saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
+          persistFields(item.id, type, { mediaId: isRead ? "web-reading" : undefined, mediaData: undefined }, onRefresh);
         }
       }
       saveFn(input.value);
@@ -311,7 +254,7 @@
     const { volume: parsedVolume } = parseTitleForUI(native);
     const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
 
-    await saveItem({
+    await persistFields(item.id, type, {
       description: native,
       contentTitleNative: native,
       contentTitleEnglish:
@@ -341,15 +284,14 @@
         type: isStremio ? item.logType || "anime" : undefined,
       },
       ...(isRead ? { volume: finalVolume } : {}),
-    });
+    }, onRefresh);
     searchDropdown?.close();
   }
 
   async function handleUnlink(e: Event) {
     e.preventDefault();
     e.stopPropagation();
-    await saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
-    onStatus("✓ AniList match unlinked");
+    await unlinkQueueMedia(item.id, type, onRefresh, onStatus);
   }
 
   /* Volume editing */
@@ -362,7 +304,7 @@
   async function commitVolume() {
     const nextVal = Math.max(1, Number(volInputValue) || 1);
     isEditingVol = false;
-    await saveItem({ volume: nextVal });
+    await persistField(item.id, type, "volume", nextVal, onRefresh);
   }
 
   function handleVolumeKey(e: KeyboardEvent) {
@@ -384,7 +326,7 @@
       0,
     );
     const nextVal = Math.max(sumChars, current + amt);
-    await saveItem({ chars: nextVal });
+    await persistField(item.id, type, "chars", nextVal, onRefresh);
   }
 
   /* Minutes spin navigation */
@@ -396,7 +338,7 @@
     );
     const sumMins = Math.max(1, Math.round(sumSecs / 60));
     const nextVal = Math.max(sumMins, current + amt);
-    await saveItem({ time: isRead ? nextVal * 60 : nextVal });
+    await persistField(item.id, type, "time", isRead ? nextVal * 60 : nextVal, onRefresh);
   }
 
   /* Date editing */
@@ -404,7 +346,7 @@
     const val = (e.target as HTMLInputElement).value;
     try {
       const iso = new Date(val).toISOString();
-      await saveItem({ date: iso });
+      await persistField(item.id, type, "date", iso, onRefresh);
     } catch {}
   }
 
@@ -415,7 +357,7 @@
     val: any,
   ) {
     if (isRead) {
-      await updateReadingQueueAtomic((currentQueue) => {
+      await updateReadingQueueAtomic((currentQueue: any[]) => {
         const idx = currentQueue.findIndex((x) => x.id === item.id);
         if (idx === -1) return currentQueue;
 
@@ -464,7 +406,7 @@
         return newQueue;
       });
     } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQueue) => {
+      await updateStremioQueueAtomic((currentQueue: any[]) => {
         const idx = currentQueue.findIndex((x) => x.id === item.id);
         if (idx === -1) return currentQueue;
 
@@ -493,7 +435,7 @@
         return newQueue;
       });
     } else {
-      await updateVideoQueueAtomic((currentQueue) => {
+      await updateVideoQueueAtomic((currentQueue: any[]) => {
         const idx = currentQueue.findIndex((x) => x.id === item.id);
         if (idx === -1) return currentQueue;
 
@@ -537,160 +479,14 @@
     );
     if (!ok) return;
 
-    if (isRead) {
-      await updateReadingQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        entry.sessions = (entry.sessions ?? []).filter(
-          (s: any) => s.id !== sessionId,
-        );
-
-        const totalSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        entry.time = totalSecs;
-        entry.chars = entry.sessions.reduce(
-          (a: number, b: any) => a + (b.chars || 0),
-          0,
-        );
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        entry.sessions = (entry.sessions ?? []).filter(
-          (s: any) => s.id !== sessionId,
-        );
-
-        const totalSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-          );
-        entry.time = Math.max(1, Math.round(totalSecs / 60));
-        entry.episodes = entry.sessions.length || 1;
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    } else {
-      await updateVideoQueueAtomic((currentQueue) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        entry.sessions = (entry.sessions ?? []).filter(
-          (s: any) => s.id !== sessionId,
-        );
-
-        const totalSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        entry.time = Math.round(totalSecs / 60);
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    }
-
+    await removeSessionFromQueue(item.id, sessionId, type, onRefresh);
     onStatus("✓ Session removed");
-    onRefresh();
   }
 
   async function handleSendSession(sessionIdx: number) {
-    const session = sessions[sessionIdx];
-    if (!session) return;
-
     sending = true;
-    const desc = isStremio
-      ? item.mediaData?.contentTitleNative || item.contentTitleNative || titleValue
-      : titleValue || (isRead ? item.mediaData?.contentTitleNative || item.contentTitleNative : item.contentTitleNative);
-    const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
-
-    const payload: any = {
-      type: isStremio ? item.logType || "anime" : type,
-      description: apiTitle,
-      time: Math.max(1, Math.round((session.secs || 0) / 60)),
-      date: new Date(session.date).toISOString(),
-      chars: isRead ? session.chars || 0 : 0,
-      episodes: isStremio ? 1 : 0,
-      pages: 0,
-      unknownDate: false,
-      private: false,
-      mediaId: isRead
-        ? item.mediaId || "web-reading"
-        : isStremio
-          ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-          : item.mediaData?.channelId || item.channelId || "web-video",
-      mediaData: item.mediaData || {},
-    };
-    if (isRead) {
-      payload.volume = Math.max(1, Number(item.volume || 1));
-    }
-
-    // Set silent = true to avoid double toasts [4]
-    const result = await submitLog(payload, true);
-    if (result?.success) {
-      if (isRead) {
-        await updateReadingQueueAtomic((queue) => {
-          const idx = queue.findIndex((x) => x.id === item.id);
-          if (idx === -1) return queue;
-          const entry = JSON.parse(JSON.stringify(queue[idx]));
-          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
-          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
-          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-          entry.time = totalSecs;
-          entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
-          const nextQueue = [...queue];
-          nextQueue[idx] = entry;
-          return nextQueue;
-        });
-      } else if (isStremio) {
-        await updateStremioQueueAtomic((queue) => {
-          const idx = queue.findIndex((x) => x.id === item.id);
-          if (idx === -1) return queue;
-          const entry = JSON.parse(JSON.stringify(queue[idx]));
-          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
-          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
-          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-          entry.time = Math.max(1, Math.round(totalSecs / 60));
-          entry.episodes = entry.sessions.length || 1;
-          const nextQueue = [...queue];
-          nextQueue[idx] = entry;
-          return nextQueue;
-        });
-      } else {
-        await updateVideoQueueAtomic((queue) => {
-          const idx = queue.findIndex((x) => x.id === item.id);
-          if (idx === -1) return queue;
-          const entry = JSON.parse(JSON.stringify(queue[idx]));
-          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
-          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
-          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-          entry.time = Math.round(totalSecs / 60);
-          const nextQueue = [...queue];
-          nextQueue[idx] = entry;
-          return nextQueue;
-        });
-      }
-      sending = false; // Restore brightness instantly [4]
-      onRefresh();
-      onStatus("✓ Session logged successfully");
-    } else {
-      sending = false;
-      onStatus(`⚠ Failed: ${result?.error || "Unknown error"}`, true);
-    }
+    await sendSessionFromQueue(item, sessionIdx, type, onRefresh, onStatus);
+    sending = false;
   }
 
   function handleSessionLocalBlur(e: FocusEvent, sessionIdx: number, field: string) {
@@ -699,78 +495,6 @@
       handleSessionChange(sessionIdx, field, input.value);
     } else {
       input.value = input.dataset.editStart ?? input.defaultValue;
-    }
-  }
-
-  function getItemPayloads(current: any, type: "reading" | "video" | "stremio") {
-    const isRead = type === "reading";
-    const isStremio = type === "stremio";
-    const s = current.sessions ?? [];
-    const displayM = isRead
-      ? Math.max(1, Math.round((current.time || 0) / 60))
-      : current.time || 0;
-    const sumSecs = s.reduce((a: number, b: any) => a + (b.secs || 0), 0);
-    const sumMins = Math.max(1, Math.round(sumSecs / 60));
-    const sumChars = isRead
-      ? s.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-      : 0;
-
-    const hasOverride = isRead
-      ? Number(current.chars || 0) > sumChars || displayM > sumMins
-      : displayM > Math.round(sumSecs / 60);
-
-    const defaultDateStr =
-      s.length > 0 ? s[0].date : current.date || new Date().toISOString();
-    const desc =
-      isStremio
-        ? current.mediaData?.contentTitleNative || current.contentTitleNative || current.description || "Unknown Title"
-        : current.description || current.contentTitleNative || "Unknown Title";
-
-    if (s.length > 1 && !hasOverride) {
-      return s.map((sess: any) => {
-        const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
-        const payload: any = {
-          type: isStremio ? current.logType || "anime" : type,
-          description: type === "video" ? stripVideoTitle(desc) : desc,
-          time: sessMins,
-          date: new Date(sess.date).toISOString(),
-          chars: isRead ? sess.chars || 0 : 0,
-          episodes: isStremio ? 1 : 0, // Individual sessions always log 1 episode
-          pages: 0,
-          unknownDate: false,
-          mediaId: isRead
-            ? current.mediaId || "web-reading"
-            : isStremio
-              ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
-              : current.mediaData?.channelId || current.channelId || "web-video",
-          mediaData: current.mediaData || {},
-        };
-        if (isRead) {
-          payload.volume = Math.max(1, Number(current.volume || 1));
-        }
-        return payload;
-      });
-    } else {
-      const payload: any = {
-        type: isStremio ? current.logType || "anime" : type,
-        description: type === "video" ? stripVideoTitle(desc) : desc,
-        time: displayM,
-        date: new Date(defaultDateStr).toISOString(),
-        chars: isRead ? current.chars || 0 : 0,
-        episodes: isStremio ? current.episodes || 1 : 0, // For single-item, use the item's total episodes
-        pages: 0,
-        unknownDate: false,
-        mediaId: isRead
-          ? current.mediaId || "web-reading"
-          : isStremio
-            ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
-            : current.mediaData?.channelId || current.channelId || "web-video",
-          mediaData: current.mediaData || {},
-      };
-      if (isRead) {
-        payload.volume = Math.max(1, Number(current.volume || 1));
-      }
-      return [payload];
     }
   }
 
@@ -785,13 +509,6 @@
       return;
     }
 
-    if (import.meta.env.DEV) {
-      console.log(
-        `[NAT DEV - SettingsQueueItem] Initiating manual send for: ${current.description || current.contentTitleNative}`,
-      );
-    }
-
-    // Single item unmatched warning logic
     if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
       const cfg = (await configStorage.getValue()) as any;
       if (cfg.warnUnmatched !== false) {
@@ -809,18 +526,7 @@
 
     if (type === "video") {
       try {
-        const cId = current.channelId || current.mediaData?.channelId;
-        const cTitle =
-          current.mediaData?.channelTitle ||
-          current.channelTitle ||
-          current.contentTitleNative;
-        if (cId || cTitle) {
-          const media = await resolveVideoChannelMedia({
-            channelId: cId,
-            channelTitle: cTitle,
-          });
-          current.mediaData = { ...current.mediaData, ...media };
-        }
+        current.mediaData = await resolveVideoMetaData(current);
       } catch {}
     }
 
@@ -834,7 +540,6 @@
             : `⚠ Failed: ${result?.error}`;
           onStatus(errText, true);
           sending = false;
-          // Persistent error logging for manual queue sends
           await addDebugLog(
             "ERROR",
             "SettingsQueueItem",
@@ -845,19 +550,8 @@
         }
       }
 
-      if (isRead) {
-        await updateReadingQueueAtomic((currentQ) =>
-          currentQ.filter((x) => x.id !== item.id),
-        );
-      } else if (isStremio) {
-        await updateStremioQueueAtomic((currentQ) =>
-          currentQ.filter((x) => x.id !== item.id),
-        );
-      } else {
-        await updateVideoQueueAtomic((currentQ) =>
-          currentQ.filter((x) => x.id !== item.id),
-        );
-      }
+      const updater = getUpdater(type);
+      await updater((currentQ) => currentQ.filter((x) => x.id !== item.id));
       onRefresh();
     } catch (e: any) {
       onStatus(`⚠ Error: ${e.message || e}`, true);
@@ -878,31 +572,13 @@
     );
     if (!ok) return;
 
-    if (isRead) {
-      await updateReadingQueueAtomic((currentQ) =>
-        currentQ.filter((x) => x.id !== item.id),
-      );
-    } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQ) =>
-        currentQ.filter((x) => x.id !== item.id),
-      );
-      await markStremioProcessed(item);
-    } else {
-      await updateVideoQueueAtomic((currentQ) =>
-        currentQ.filter((x) => x.id !== item.id),
-      );
+    const updater = getUpdater(type);
+    await updater((currentQ) => currentQ.filter((x) => x.id !== item.id));
+    if (isStremio) {
+      await flagStremioProcessed(item);
     }
     onStatus("✓ Log removed");
     onRefresh();
-  }
-
-  async function markStremioProcessed(stremioItem?: any) {
-    if (!stremioItem) return;
-    const processed = new Set(await stremioProcessedStorage.getValue());
-    for (const historyId of [stremioItem.traktHistoryId, ...(stremioItem.traktHistoryIds ?? [])]) {
-      if (historyId) processed.add(String(historyId));
-    }
-    await stremioProcessedStorage.setValue([...processed].slice(-5000));
   }
 
   /* Dynamically synchronize input box sizing columns to matching values */
@@ -934,7 +610,7 @@
         oninput={handleTitleInput}
         onblur={(e) => {
           handleBlur();
-          handleEditableBlur(e, isStremio ? "contentTitleNative" : "description", (val) => saveItem(isStremio ? { description: val, contentTitleNative: val } : { description: val }));
+          handleEditableBlur(e, isStremio ? "contentTitleNative" : "description", (val) => persistFields(item.id, type, isStremio ? { description: val, contentTitleNative: val } : { description: val }, onRefresh));
         }}
         onfocus={(e) => {
           rememberEditableStart(e);
@@ -1033,7 +709,7 @@
             value={item.chars || 0}
             min="0"
             style="--chars-len: {String(item.chars || 0).length};"
-            onblur={(e) => handleEditableBlur(e, "chars", (val) => saveItem({ chars: Math.max(0, Number(val) || 0) }))}
+            onblur={(e) => handleEditableBlur(e, "chars", (val) => persistField(item.id, type, "chars", Math.max(0, Number(val) || 0), onRefresh))}
             onfocus={rememberEditableStart}
             onkeydown={handleEditableKeydown}
             aria-label="Character count"
@@ -1074,7 +750,7 @@
           type="number"
           value={displayMins}
           min="1"
-          onblur={(e) => handleEditableBlur(e, "time", (val) => saveItem({ time: isRead ? Math.max(1, Number(val) || 1) * 60 : Math.max(1, Number(val) || 1) }))}
+          onblur={(e) => handleEditableBlur(e, "time", (val) => persistField(item.id, type, "time", isRead ? Math.max(1, Number(val) || 1) * 60 : Math.max(1, Number(val) || 1), onRefresh))}
           onfocus={rememberEditableStart}
           onkeydown={handleEditableKeydown}
           aria-label="Minutes duration"
@@ -1145,13 +821,13 @@
           value={Math.max(1, Number(item.episodes || 1))}
           onfocus={rememberEditableStart}
           onkeydown={handleEditableKeydown}
-          onblur={(e) => handleEditableBlur(e, "episodes", (val) => saveItem({ episodes: Math.max(1, Number(val) || 1) }))}
+          onblur={(e) => handleEditableBlur(e, "episodes", (val) => persistField(item.id, type, "episodes", Math.max(1, Number(val) || 1), onRefresh))}
           aria-label="Episodes count"
         />
         <span class="unit-lbl">episodes watched</span>
         <div class="stepper-buttons">
-          <button type="button" class="step-btn" onclick={() => saveItem({ episodes: Math.max(1, Number(item.episodes || 1) + 1) })} aria-label="Increment episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg></button>
-          <button type="button" class="step-btn" onclick={() => saveItem({ episodes: Math.max(1, Number(item.episodes || 1) - 1) })} aria-label="Decrement episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg></button>
+          <button type="button" class="step-btn" onclick={() => persistField(item.id, type, "episodes", Math.max(1, Number(item.episodes || 1) + 1), onRefresh)} aria-label="Increment episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg></button>
+          <button type="button" class="step-btn" onclick={() => persistField(item.id, type, "episodes", Math.max(1, Number(item.episodes || 1) - 1), onRefresh)} aria-label="Decrement episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg></button>
         </div>
       </div>
     </div>
@@ -1295,7 +971,7 @@
     justify-content: center;
     width: 16px;
     height: 16px;
-    transition: color 0.15s;
+    transition: color .15s;
     font-weight: bold;
   }
   .qi-link-status:hover {

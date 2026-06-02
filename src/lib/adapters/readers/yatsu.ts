@@ -54,7 +54,16 @@ export const yatsuAdapter: ReaderAdapter = {
     return null;
   },
 
-  getTitle(): string {
-    return document.title.replace(/\s*\|\s*Yatsu Reader\s*/i, '').trim() || document.title;
+  getTitle(rawTitle?: string): string {
+    const raw = rawTitle || document.title;
+    return raw.replace(/\s*\|\s*Yatsu Reader\s*/i, '').trim() || raw;
   },
+
+  isReadingViewActive(doc: Document): boolean {
+    return !!doc.querySelector('#reader-container, .reader-wrapper, [data-ref="container"], .book-content, .book-content-container, .writing-container, #writing-container');
+  },
+
+  onTick(_ttuState: any, _stateRefs: any): void {
+    // Left empty for future platform-specific updates
+  }
 };

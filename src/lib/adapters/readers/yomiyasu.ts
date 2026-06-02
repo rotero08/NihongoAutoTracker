@@ -35,7 +35,18 @@ export const yomiyasuAdapter: ReaderAdapter = {
     return null;
   },
 
-  getTitle(): string {
-    return document.title.replace(/\s*\|\s*YomiYasu Reader\s*/i, '').trim() || document.title;
+  getTitle(rawTitle?: string): string {
+    const raw = rawTitle || document.title;
+    return raw.replace(/\s*\|\s*YomiYasu Reader\s*/i, '')
+              .replace(/^YomiYasu\s*-\s*/i, '')
+              .trim() || raw;
   },
+
+  isReadingViewActive(doc: Document): boolean {
+    return !!doc.querySelector('.reader-container, .book-content, .writing-container, #writing-container');
+  },
+
+  onTick(_ttuState: any, _stateRefs: any): void {
+    // Left empty for future platform-specific updates
+  }
 };

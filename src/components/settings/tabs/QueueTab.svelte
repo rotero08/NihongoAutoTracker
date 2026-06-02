@@ -14,6 +14,7 @@
     resolveVideoChannelMedia,
   } from "@/lib/api/nihongotracker";
   import { stripVideoTitle } from "@/lib/utils/text-parsing";
+  import { getItemPayloads } from "@/lib/utils/queue-actions";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -105,82 +106,6 @@
     }
 
     isSendingAll = true;
-
-    function getItemPayloads(item: any, type: "reading" | "video" | "stremio") {
-      const isRead = type === "reading";
-      const isStremio = type === "stremio";
-      const sessions = item.sessions ?? [];
-      const displayMins = isRead
-        ? Math.max(1, Math.round((item.time || 0) / 60))
-        : item.time || 0;
-      const sumSecs = sessions.reduce(
-        (a: number, b: any) => a + (b.secs || 0),
-        0,
-      );
-      const sumMins = Math.max(1, Math.round(sumSecs / 60));
-      const sumChars = isRead
-        ? sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-        : 0;
-
-      const hasOverride = isRead
-        ? Number(item.chars || 0) > sumChars || displayMins > sumMins
-        : displayMins > Math.round(sumSecs / 60);
-
-      const defaultDateStr =
-        sessions.length > 0
-          ? sessions[0].date
-          : item.date || new Date().toISOString();
-      const desc = isStremio
-        ? item.mediaData?.contentTitleNative || item.contentTitleNative || item.description || "Unknown Title"
-        : item.description || item.contentTitleNative || "Unknown Title";
-
-      if (sessions.length > 1 && !hasOverride) {
-        return sessions.map((sess: any) => {
-          const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
-          const payload: any = {
-            type: isStremio ? item.logType || "anime" : type,
-            description: type === "video" ? stripVideoTitle(desc) : desc,
-            time: sessMins,
-            date: new Date(sess.date).toISOString(),
-            chars: isRead ? sess.chars || 0 : 0,
-            episodes: isStremio ? 1 : 0,
-            pages: 0,
-            unknownDate: false,
-            mediaId: isRead
-              ? item.mediaId || "web-reading"
-              : isStremio
-                ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-                : item.mediaData?.channelId || item.channelId || "web-video",
-            mediaData: item.mediaData || {},
-          };
-          if (isRead) {
-            payload.volume = Math.max(1, Number(item.volume || 1));
-          }
-          return payload;
-        });
-      } else {
-        const payload: any = {
-          type: isStremio ? item.logType || "anime" : type,
-          description: type === "video" ? stripVideoTitle(desc) : desc,
-          time: displayMins,
-          date: new Date(defaultDateStr).toISOString(),
-          chars: isRead ? item.chars || 0 : 0,
-          episodes: isStremio ? item.episodes || 1 : 0,
-          pages: 0,
-          unknownDate: false,
-          mediaId: isRead
-            ? item.mediaId || "web-reading"
-            : isStremio
-              ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-              : item.mediaData?.channelId || item.channelId || "web-video",
-          mediaData: item.mediaData || {},
-        };
-        if (isRead) {
-          payload.volume = Math.max(1, Number(item.volume || 1));
-        }
-        return [payload];
-      }
-    }
 
     const rItems = [...readingQueue];
     const vItems = [...videoQueue];

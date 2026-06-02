@@ -3,6 +3,7 @@
  * Monitors page focus, scrolls, and manages the in-page reading overlay timer.
  */
 
+import { browser } from 'wxt/browser';
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
 import TtuChronoDropdown from '@/components/reader/TtuChronoDropdown.svelte';
@@ -31,12 +32,9 @@ import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
 import { mount, unmount } from 'svelte';
 
-const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && !!window.location.hostname && (
+const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && (
   window.self === window.top ||
-  window.location.hostname.includes('manga.manabe.es') ||
-  window.location.hostname.includes('reader.ttsu.app') ||
-  window.location.hostname.includes('app.yatsu.moe') ||
-  window.location.hostname.includes('yomiyasu')
+  !!getActiveReaderAdapter()
 );
 
 let currentConfig: any = {};
@@ -244,7 +242,7 @@ const ttuState = new Proxy({
 
 let isSyncing = false;
 
-// Query the background frame title cache asynchronously to resolve CORS exceptions securely
+// Query the background frame title cache asynchronously to resolve Cross-Origin DOM blocks securely
 function updateCachedActiveTabTitle() {
   if (window.self !== window.top) {
     browser.runtime.sendMessage({ action: "GET_ACTIVE_TAB_TITLE" })
@@ -268,9 +266,11 @@ function getTTUTitle() {
   } catch (e) {
     if (cachedActiveTabTitle) title = cachedActiveTabTitle;
   }
-  title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|YomiYasu Reader)\s*/i, '');
-  title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
-  title = title.replace(/^YomiYasu\s*-\s*/i, '');
+  
+  const adapter = getActiveReaderAdapter();
+  if (adapter) {
+    return adapter.getTitle(title);
+  }
   return title.trim() || document.title;
 }
 
@@ -307,10 +307,16 @@ function isReadingViewActive(): boolean {
     }
   }
 
-  const container = document.querySelector(
-    '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, .writing-container, #writing-container'
-  );
-  const hasContainer = !!container;
+  let hasContainer = false;
+  if (adapter) {
+    hasContainer = adapter.isReadingViewActive(document);
+  } else {
+    const container = document.querySelector(
+      '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, .writing-container, #writing-container'
+    );
+    hasContainer = !!container;
+  }
+
   _readingViewCache = hasContainer;
   _readingViewCacheTime = now;
   return hasContainer;
@@ -1070,7 +1076,7 @@ function handleMutations() {
 
           ttuLinkStorage.getValue().then((links) => {
             const linkedMedia = (links || {})[rawTitle];
-            const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parsedVolume || 1));
+            const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
             if (activeSection > stateRefs.lastSectionIndex) {
               if (stateRefs.visitedSections.has(activeSection)) {
@@ -1182,6 +1188,10 @@ export default defineContentScript({
 
     configStorage.watch((newCfg) => {
       if (newCfg) {
+        // Force reset the cached reading view status and elements to prevent 
+        // the chronometer from failing to re-inject after settings/theme changes.
+        invalidateReadingViewCache();
+
         currentConfig = newCfg;
         _cachedAutoSave = getReaderConfig(newCfg).autoSave !== false;
         clearThemeDetectionCache();

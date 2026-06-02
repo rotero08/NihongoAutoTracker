@@ -3,6 +3,7 @@
  * Binds browser player event loops, watched threshold aggregators, and manual modals.
  */
 
+import { browser } from 'wxt/browser';
 import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
@@ -66,15 +67,9 @@ function isAdPlaying(): boolean {
   if (now - _adPlayingLastCheck < 500) return _adPlayingCached;
   _adPlayingLastCheck = now;
 
-  const host = window.location.hostname;
-  if (host.includes('youtube.com')) {
-    _adPlayingCached = !!document.querySelector(
-      '.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting'
-    );
-    return _adPlayingCached;
-  }
-  _adPlayingCached = false;
-  return false;
+  const adapter = getActiveVideoAdapter();
+  _adPlayingCached = adapter ? adapter.isAdPlaying(document) : false;
+  return _adPlayingCached;
 }
 
 const engine = new PlayerTrackerEngine(
@@ -432,31 +427,15 @@ function isPlaylistOrPodcastPage(): boolean {
  * preventing double-button rendering errors on YouTube SPA page transitions.
  */
 function getActivePlaylistContainers(): HTMLElement[] {
-  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) {
+  const adapter = getActiveVideoAdapter();
+  if (!adapter || !isPlaylistOrPodcastPage() || isYouTubeShorts()) {
     return [];
   }
-
-  const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-  const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-  const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
-
-  const containers: HTMLElement[] = [];
-  const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
-  const matches = document.querySelectorAll(selectors);
-
-  for (let i = 0; i < matches.length; i++) {
-    const el = matches[i];
-    if (el instanceof HTMLElement) {
-      if (el.offsetWidth > 0 || el.offsetHeight > 0) {
-        containers.push(el);
-      }
-    }
-  }
-  return containers;
+  return adapter.getPlaylistContainers(document);
 }
 
 function getActiveAccentColor(): string {
-  const theme = cachedConfig.theme ?? 'nihongo';
+  const theme = cachedConfig.theme ?? 'dark-amber';
   let customColors: any = null;
   if (theme && (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom')) {
     const themeId = theme.replace('custom_', '').replace('custom-', '');
@@ -479,9 +458,18 @@ function runPlaylistInjection(): boolean {
 
   const resolvedAccent = getActiveAccentColor();
   let injectedAny = false;
+  const adapter = getActiveVideoAdapter();
+  if (!adapter) return false;
   
   for (const targetContainer of targets) {
-    if (targetContainer.querySelector('.nt-playlist-logger')) {
+    const existingBtn = targetContainer.querySelector('.nt-playlist-logger') as HTMLElement;
+    if (existingBtn) {
+      // Ensure existing button style properties use the dynamic variable on theme changes
+      existingBtn.style.setProperty('color', `var(--color-accent, ${resolvedAccent})`, 'important');
+      const path = existingBtn.querySelector('path');
+      if (path) {
+        path.style.setProperty('fill', 'currentColor', 'important');
+      }
       injectedAny = true;
       continue;
     }
@@ -491,17 +479,27 @@ function runPlaylistInjection(): boolean {
       btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
       btn.innerHTML = `
         <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24">
-          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z" style="fill: ${resolvedAccent} !important;" />
+          <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z" style="fill: currentColor !important;" />
         </svg>
       `;
 
       Object.assign(btn.style, {
-        background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '40px',
-        height: '40px', borderRadius: '50%', transition: 'background-color 0.2s',
-        filter: 'none !important', boxShadow: 'none !important', flexShrink: '0',
-        color: `${resolvedAccent} !important`
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        margin: '0 4px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '40px',
+        height: '40px',
+        borderRadius: '50%',
+        transition: 'background-color 0.2s',
+        flexShrink: '0'
       });
+      btn.style.setProperty('filter', 'none', 'important');
+      btn.style.setProperty('box-shadow', 'none', 'important');
+      btn.style.setProperty('color', `var(--color-accent, ${resolvedAccent})`, 'important');
 
       btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
       btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
@@ -520,12 +518,7 @@ function runPlaylistInjection(): boolean {
         showPlaylistSelectorModal(btn, isInline, cachedConfig.theme);
       };
 
-      const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
-      if (overflowNode && overflowNode.parentElement === targetContainer) {
-        targetContainer.insertBefore(btn, overflowNode);
-      } else {
-        targetContainer.appendChild(btn);
-      }
+      adapter.injectPlaylistButton(targetContainer, btn);
       injectedAny = true;
     } catch (err) {
       addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
@@ -546,7 +539,7 @@ function runVideoInjection() {
 }
 
 function applyCachedTheme(c: any) {
-  const theme = c.theme ?? 'nihongo';
+  const theme = c.theme ?? 'dark-amber';
   const font = c.font ?? 'sans';
   const useStaticInPageLogo = c.useStaticInPageLogo === true;
   let customColors: any = null;
@@ -587,7 +580,6 @@ function injectThemeVariables(theme: any) {
     rootStyle.setProperty('--color-accent-hover', colors.accentHover, 'important');
     rootStyle.setProperty('--color-success', colors.success, 'important');
     rootStyle.setProperty('--color-error', colors.error, 'important');
-    rootStyle.setProperty('--nt-logger-accent', colors.accent, 'important'); // Persistent custom variable untouched by YouTube parent scopes
   } catch (err) {
     addDebugLog('ERROR', 'VideoTracker', 'Failed to write CSS custom properties onto documentElement', err);
   }

@@ -18,7 +18,9 @@
     ensureVideoMediaData,
     markStremioProcessed,
     buildPayloads,
-    getUpdater
+    getUpdater,
+    removeSessionFromQueue,
+    sendSessionFromQueue
   } from "@/lib/utils/queue-actions";
 
   let {
@@ -266,69 +268,9 @@
   }
 
   async function handleSendSession(sessionIdx: number) {
-    const session = sessions[sessionIdx];
-    if (!session) return;
-
     sending = true;
-    const desc = isStremio
-      ? item.mediaData?.contentTitleNative || item.contentTitleNative || titleValue
-      : titleValue || (isRead ? item.mediaData?.contentTitleNative || item.contentTitleNative : item.contentTitleNative);
-    const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
-
-    const payload: any = {
-      type: isStremio ? item.logType || "anime" : type,
-      description: apiTitle,
-      time: Math.max(1, Math.round((session.secs || 0) / 60)),
-      date: new Date(session.date).toISOString(),
-      chars: isRead ? session.chars || 0 : 0,
-      episodes: isStremio ? 1 : 0,
-      pages: 0,
-      unknownDate: false,
-      private: false,
-      mediaId: isRead
-        ? item.mediaId || "web-reading"
-        : isStremio
-          ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-          : item.mediaData?.channelId || item.channelId || "web-video",
-      mediaData: item.mediaData || {},
-    };
-    if (isRead) {
-      payload.volume = Math.max(1, Number(item.volume || 1));
-    }
-
-    const result = await submitLog(payload, true);
-    if (result?.success) {
-      const updater = getUpdater(type);
-      await updater((queue: any[]) => {
-        const idx = queue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return queue;
-
-        const entry = JSON.parse(JSON.stringify(queue[idx]));
-        entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
-
-        if (entry.sessions.length === 0) {
-          return queue.filter((x) => x.id !== item.id);
-        }
-
-        const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-        entry.time = isRead ? totalSecs : Math.round(totalSecs / 60);
-        if (isRead) {
-          entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
-        } else if (isStremio) {
-          entry.episodes = entry.sessions.length || 1;
-        }
-
-        const nextQueue = [...queue];
-        nextQueue[idx] = entry;
-        return nextQueue;
-      });
-      sending = false;
-      onRefresh();
-      onStatusMessage("✓ Session logged successfully");
-    } else {
-      sending = false;
-      onStatusMessage(`⚠ Failed: ${result?.error || "Unknown error"}`, true);
-    }
+    await sendSessionFromQueue(item, sessionIdx, type, onRefresh, onStatusMessage);
+    sending = false;
   }
 
   async function handleDelete() {
@@ -348,26 +290,7 @@
     const proceed = await onConfirm("Delete Session", "Are you sure you want to delete this session?");
     if (!proceed) return;
 
-    const updater = getUpdater(type);
-    await updater((queue: any[]) => {
-      const idx = queue.findIndex((x) => x.id === item.id);
-      if (idx === -1) return queue;
-
-      const entry = JSON.parse(JSON.stringify(queue[idx]));
-      entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sessionId);
-
-      const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
-      entry.time = isRead ? totalSecs : Math.round(totalSecs / 60);
-      if (isRead) {
-        entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
-      } else if (isStremio) {
-        entry.episodes = entry.sessions.length || 1;
-      }
-
-      const nextQueue = [...queue];
-      nextQueue[idx] = entry;
-      return nextQueue;
-    });
+    await removeSessionFromQueue(item.id, sessionId, type, onRefresh);
     onRefresh();
     onStatusMessage("✓ Session removed");
   }

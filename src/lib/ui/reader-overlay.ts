@@ -27,7 +27,7 @@ export function isWebsiteOverlaySkipped(cfg: any): boolean {
     return true;
   }
 
-  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'crunchyroll.com', 'animekai.to', 'music.youtube.com', 'nihongotracker.app'];
+  const skipSites: string[] = cfg?.skipSites ?? ['youtube.com', 'youtu.be', 'music.youtube.com', 'nihongotracker.app'];
   if (SKIP_HOSTS_DEFAULT.some(h => host.includes(h))) return true;
   if (skipSites.some((h: string) => host.includes(h))) return true;
   return false;

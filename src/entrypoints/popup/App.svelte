@@ -38,6 +38,7 @@
     THEME_CACHE_KEY,
     FONT_CACHE_KEY,
     CUSTOM_COLORS_CACHE_KEY,
+    ACTIVE_SETTINGS_TAB_KEY,
   } from "@/lib/constants";
   import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
@@ -288,7 +289,7 @@
       }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
-        const nextTheme = val?.theme ?? "nihongo";
+        const nextTheme = val?.theme ?? "dark-amber";
         const nextFont = val?.font ?? "sans";
         const useStaticInPageLogo = val?.useStaticInPageLogo === true;
 

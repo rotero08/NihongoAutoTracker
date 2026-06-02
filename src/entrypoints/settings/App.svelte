@@ -113,7 +113,7 @@
     }
 
     activeTab = tab;
-    localStorage.setItem("nt-active-settings-tab", tab);
+    localStorage.setItem(ACTIVE_SETTINGS_TAB_KEY, tab);
   }
 
   function handleDebugToggle(enabled: boolean) {
@@ -143,7 +143,7 @@
         activeTab = savedTab;
         await storage.setItem(ACTIVE_SETTINGS_TAB_KEY, null);
       } else {
-        const localSaved = localStorage.getItem("nt-active-settings-tab");
+        const localSaved = localStorage.getItem(ACTIVE_SETTINGS_TAB_KEY);
         if (localSaved) {
           activeTab = localSaved;
         }
@@ -163,7 +163,7 @@
       queueCount = (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0);
 
       const applyTheme = (c: any) => {
-        const theme = c?.theme ?? "nihongo";
+        const theme = c?.theme ?? "dark-amber";
         const font = c?.font ?? "sans";
         const useStaticInPageLogo = c?.useStaticInPageLogo === true;
 
@@ -210,7 +210,7 @@
       }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
-        const nextTheme = val?.theme ?? "nihongo";
+        const nextTheme = val?.theme ?? "dark-amber";
         const nextFont = val?.font ?? "sans";
         const useStaticInPageLogo = val?.useStaticInPageLogo === true;
 

@@ -22,8 +22,6 @@ export const ACTIVE_SETTINGS_TAB_KEY = 'local:activeSettingsTab' as const;
 export const SKIP_HOSTS_DEFAULT = [
   'youtube.com',
   'youtu.be',
-  'crunchyroll.com',
-  'animekai.to',
   'music.youtube.com',
   'nihongotracker.app',
   'mail.google.com',

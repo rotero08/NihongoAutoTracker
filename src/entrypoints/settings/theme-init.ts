@@ -1,8 +1,10 @@
+import { THEME_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY } from '@/lib/constants';
+
 // Synchronously apply the cached theme background before first visual paint
 (function () {
     try {
-        const theme = localStorage.getItem('nta-theme-cache') || 'dark-amber';
-        const customColors = localStorage.getItem('nta-custom-colors-cache');
+        const theme = localStorage.getItem(THEME_CACHE_KEY) || 'dark-amber';
+        const customColors = localStorage.getItem(CUSTOM_COLORS_CACHE_KEY);
         let bg = '#07070e';
         let fg = '#dde4f0';
 

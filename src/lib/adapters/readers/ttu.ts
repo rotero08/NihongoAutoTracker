@@ -43,8 +43,18 @@ export const ttuAdapter: ReaderAdapter = {
     return null;
   },
 
-  getTitle(): string {
-    const raw = document.title;
-    return raw.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '').trim() || raw;
+  getTitle(rawTitle?: string): string {
+    const raw = rawTitle || document.title;
+    return raw.replace(/\s*\|\s*ッツ Ebook Reader\s*/i, '')
+              .replace(/\s*[–—-]\s*ttu.*$/i, '')
+              .trim() || raw;
   },
+
+  isReadingViewActive(doc: Document): boolean {
+    return !!doc.querySelector('.book-content-container, .book-content');
+  },
+
+  onTick(_ttuState: any, _stateRefs: any): void {
+    // Left empty for future platform-specific updates
+  }
 };

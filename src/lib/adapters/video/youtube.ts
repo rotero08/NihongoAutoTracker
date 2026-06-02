@@ -7,8 +7,6 @@ export const youtubeAdapter: VideoSiteAdapter = {
   matchPatterns: [
     '*://*.youtube.com/*',
     '*://music.youtube.com/*',
-    '*://*.crunchyroll.com/*',
-    '*://*.animekai.to/*',
   ],
 
   isEnabled(_config: TrackerConfig): boolean {
@@ -46,34 +44,26 @@ export const youtubeAdapter: VideoSiteAdapter = {
   isLikelyJapanese(): boolean {
     const host = window.location.hostname;
 
-    /* Known Japanese content sites → always true */
-    if (host.includes('animekai') || host.includes('crunchyroll')) return true;
-
     if (host.includes('youtube.com')) {
-      /* Check for Japanese caption tracks in player response */
       try {
         const playerResponse = (window as any).ytInitialPlayerResponse;
         const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         if (tracks) {
           for (const track of tracks) if (track.languageCode === 'ja') return true;
         }
-      } catch (_e) { /* caption data not available */ }
+      } catch (_e) { }
 
-      /* Check document title for Japanese characters */
       const docTitle = document.title.replace(/^\(\d+\)\s*/, '');
       if ((docTitle.match(JP_RE) ?? []).length >= 1) return true;
 
-      /* Check video title element */
       const titleEl = document.querySelector<HTMLElement>('#title h1 yt-formatted-string, h1.ytd-watch-metadata');
       if (titleEl && (titleEl.innerText.match(JP_RE) ?? []).length >= 1) return true;
 
-      /* Check channel name */
       const channelEl = document.querySelector<HTMLElement>(
         '#owner ytd-channel-name yt-formatted-string, ytd-channel-name a',
       );
       if (channelEl && (channelEl.innerText.match(JP_RE) ?? []).length >= 1) return true;
 
-      /* Sample the video description for Japanese text */
       const descEl = document.querySelector<HTMLElement>(
         '#description-inline-expander yt-attributed-string, ytd-expandable-video-description-body-renderer',
       );
@@ -91,16 +81,47 @@ export const youtubeAdapter: VideoSiteAdapter = {
       const el = document.querySelector('.ytp-left-controls') as HTMLElement;
       if (el) return el;
     }
-    if (host.includes('crunchyroll.com')) {
-      const el = document.querySelector('.vmp-controls__left') || document.querySelector('.velocity-controls');
-      if (el) return el as HTMLElement;
-    }
-    if (host.includes('animekai')) {
-      const el = document.querySelector('.plyr__controls__item.plyr__time--current') || document.querySelector('.jw-controlbar-left-group');
-      if (el) return el as HTMLElement;
-    }
     const fallback = document.querySelector('.video-player-container') || document.querySelector('#movie_player') || document.querySelector('.plyr__video-wrapper') || document.querySelector('.jw-media') || vid.parentElement;
     if (fallback) return fallback as HTMLElement;
     return null;
+  },
+
+  isAdPlaying(doc: Document): boolean {
+    const host = window.location.hostname;
+    if (host.includes('youtube.com')) {
+      return !!doc.querySelector(
+        '.ad-showing, .ad-interrupting, .html5-video-player.ad-showing, .html5-video-player.ad-interrupting'
+      );
+    }
+    return false;
+  },
+
+  getPlaylistContainers(doc: Document): HTMLElement[] {
+    const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
+    const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
+    const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
+
+    const containers: HTMLElement[] = [];
+    const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
+    const matches = doc.querySelectorAll(selectors);
+
+    for (let i = 0; i < matches.length; i++) {
+      const el = matches[i];
+      if (el instanceof HTMLElement) {
+        if (el.offsetWidth > 0 || el.offsetHeight > 0) {
+          containers.push(el);
+        }
+      }
+    }
+    return containers;
+  },
+
+  injectPlaylistButton(container: HTMLElement, btn: HTMLButtonElement): void {
+    const overflowNode = container.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
+    if (overflowNode && overflowNode.parentElement === container) {
+      container.insertBefore(btn, overflowNode);
+    } else {
+      container.appendChild(btn);
+    }
   }
 };

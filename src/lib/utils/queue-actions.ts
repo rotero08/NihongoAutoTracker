@@ -1,9 +1,3 @@
-/**
- * ── Queue Actions Stateless Service ──────────────────────────────────────────
- * Consolidates complex operations for queue items (payload building, submissions).
- * Keeping this utility stateless prevents Svelte 5 compiler errors in .ts files.
- */
-
 import { submitLog, resolveVideoChannelMedia } from '@/lib/api/nihongotracker';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { addDebugLog } from '@/lib/storage/debug';
@@ -16,12 +10,40 @@ import {
 import type { ReadingMediaData } from '@/lib/types';
 
 /**
- * Returns the atomic updater function for the specific queue type.
+ * Returns the atomic updater function for the specific queue type with unified casting.
  */
-export function getUpdater(type: "video" | "reading" | "stremio") {
-  if (type === "reading") return updateReadingQueueAtomic;
-  if (type === "stremio") return updateStremioQueueAtomic;
-  return updateVideoQueueAtomic;
+export function getUpdater(type: "video" | "reading" | "stremio"): (modifier: (currentQueue: any[]) => any[] | Promise<any[]>) => Promise<any[]> {
+  if (type === "reading") return updateReadingQueueAtomic as any;
+  if (type === "stremio") return updateStremioQueueAtomic as any;
+  return updateVideoQueueAtomic as any;
+}
+
+/**
+ * Persists multiple field updates atomically to the database.
+ */
+export async function persistFields(
+  id: string,
+  type: "video" | "reading" | "stremio",
+  fields: Record<string, any>,
+  onRefresh: () => void
+) {
+  const updater = getUpdater(type);
+  await updater((queue: any[]) => {
+    const idx = queue.findIndex((x) => x.id === id);
+    if (idx > -1) {
+      const nextQueue = [...queue];
+      const plainObj = JSON.parse(JSON.stringify({ ...nextQueue[idx], ...fields }));
+      Object.keys(fields).forEach(k => {
+        if (fields[k] === undefined) {
+          delete plainObj[k];
+        }
+      });
+      nextQueue[idx] = plainObj;
+      return nextQueue;
+    }
+    return queue;
+  });
+  onRefresh();
 }
 
 /**
@@ -108,60 +130,168 @@ export async function markStremioProcessed(item: any) {
  * Formats queued item data into API submission payloads.
  */
 export function buildPayloads(item: any, type: "video" | "reading" | "stremio", titleValue: string): any[] {
+  return getItemPayloads(item, type, titleValue);
+}
+
+/**
+ * Compile unified, single-item session listings into formatted tracker payloads.
+ */
+export function getItemPayloads(current: any, type: "reading" | "video" | "stremio", titleValue?: string): any[] {
+  const isRead = type === "reading";
+  const isStremio = type === "stremio";
+  const s = current.sessions ?? [];
+  const displayM = isRead
+    ? Math.max(1, Math.round((current.time || 0) / 60))
+    : current.time || 0;
+  const sumSecs = s.reduce((a: number, b: any) => a + (b.secs || 0), 0);
+  const sumMins = Math.max(1, Math.round(sumSecs / 60));
+  const sumChars = isRead
+    ? s.reduce((a: number, b: any) => a + (b.chars || 0), 0)
+    : 0;
+
+  const hasOverride = isRead
+    ? Number(current.chars || 0) > sumChars || displayM > sumMins
+    : displayM > Math.round(sumSecs / 60);
+
+  const defaultDateStr =
+    s.length > 0 ? s[0].date : current.date || new Date().toISOString();
+  const desc = titleValue || (
+    isStremio
+      ? current.mediaData?.contentTitleNative || current.contentTitleNative || current.description || "Unknown Title"
+      : current.description || current.contentTitleNative || "Unknown Title"
+  );
+
+  if (s.length > 1 && !hasOverride) {
+    return s.map((sess: any) => {
+      const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
+      const payload: any = {
+        type: isStremio ? current.logType || "anime" : type,
+        description: type === "video" ? stripVideoTitle(desc) : desc,
+        time: sessMins,
+        date: new Date(sess.date).toISOString(),
+        chars: isRead ? sess.chars || 0 : 0,
+        episodes: isStremio ? 1 : 0, // Individual sessions always log 1 episode
+        pages: 0,
+        unknownDate: false,
+        mediaId: isRead
+          ? current.mediaId || "web-reading"
+          : isStremio
+            ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
+            : current.mediaData?.channelId || current.channelId || "web-video",
+        mediaData: current.mediaData || {},
+      };
+      if (isRead) {
+        payload.volume = Math.max(1, Number(current.volume || 1));
+      }
+      return payload;
+    });
+  } else {
+    const payload: any = {
+      type: isStremio ? current.logType || "anime" : type,
+      description: type === "video" ? stripVideoTitle(desc) : desc,
+      time: displayM,
+      date: new Date(defaultDateStr).toISOString(),
+      chars: isRead ? current.chars || 0 : 0,
+      episodes: isStremio ? current.episodes || 1 : 0, // For single-item, use the item's total episodes
+      pages: 0,
+      unknownDate: false,
+      mediaId: isRead
+        ? current.mediaId || "web-reading"
+        : isStremio
+          ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
+          : current.mediaData?.channelId || current.channelId || "web-video",
+      mediaData: current.mediaData || {},
+    };
+    if (isRead) {
+      payload.volume = Math.max(1, Number(current.volume || 1));
+    }
+    return [payload];
+  }
+}
+
+/**
+ * Centralized transactional helper to delete single sessions from a queue entry.
+ */
+export async function removeSessionFromQueue(
+  itemId: string,
+  sessionId: string,
+  type: "video" | "reading" | "stremio",
+  onRefresh: () => void
+) {
+  const updater = getUpdater(type);
+  await updater((queue: any[]) => {
+    const idx = queue.findIndex((x) => x.id === itemId);
+    if (idx === -1) return queue;
+
+    const entry = JSON.parse(JSON.stringify(queue[idx]));
+    entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== sessionId);
+
+    const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+    entry.time = type === "reading" ? totalSecs : Math.round(totalSecs / 60);
+    if (type === "reading") {
+      entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+    } else if (type === "stremio") {
+      entry.episodes = entry.sessions.length || 1;
+    }
+
+    if (entry.sessions.length === 0) {
+      return queue.filter((x) => x.id !== itemId);
+    }
+
+    const nextQueue = [...queue];
+    nextQueue[idx] = entry;
+    return nextQueue;
+  });
+  onRefresh();
+}
+
+/**
+ * Centralized transactional helper to submit a single session of a queue entry directly.
+ */
+export async function sendSessionFromQueue(
+  item: any,
+  sessionIdx: number,
+  type: "video" | "reading" | "stremio",
+  onRefresh: () => void,
+  onStatusMessage: (msg: string, err?: boolean) => void
+) {
+  const session = item.sessions?.[sessionIdx];
+  if (!session) return;
+
+  const isRead = type === "reading";
+  const isStremio = type === "stremio";
   const rawTitle = item.description || item.contentTitleNative || "Unknown Title";
-  const desc = type === "stremio"
-    ? item.mediaData?.contentTitleNative || item.contentTitleNative || titleValue
-    : titleValue || (type === "reading" ? item.mediaData?.contentTitleNative || item.contentTitleNative : item.contentTitleNative);
+  const desc = isStremio
+    ? item.mediaData?.contentTitleNative || item.contentTitleNative || rawTitle
+    : rawTitle;
   const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
 
-  const base: any = {
-    type: type === "stremio" ? item.logType || "anime" : type,
+  const payload: any = {
+    type: isStremio ? item.logType || "anime" : type,
     description: apiTitle,
-    episodes: type === "stremio" ? 1 : 0,
+    time: Math.max(1, Math.round((session.secs || 0) / 60)),
+    date: new Date(session.date).toISOString(),
+    chars: isRead ? session.chars || 0 : 0,
+    episodes: isStremio ? 1 : 0,
     pages: 0,
     unknownDate: false,
     private: false,
+    mediaId: isRead
+      ? item.mediaId || "web-reading"
+      : isStremio
+        ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+        : item.mediaData?.channelId || item.channelId || "web-video",
+    mediaData: item.mediaData || {},
   };
+  if (isRead) {
+    payload.volume = Math.max(1, Number(item.volume || 1));
+  }
 
-  if (type === "reading") {
-    base.mediaId = item.mediaId || "web-reading";
-    base.volume = Math.max(1, Number(item.volume || 1));
-    base.mediaData = item.mediaData || {
-      contentId: "web-reading",
-      contentTitleNative: item.contentTitleNative,
-    };
-  } else if (type === "stremio") {
-    base.mediaId = item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`;
-    base.mediaData = item.mediaData || {
-      contentId: base.mediaId,
-      contentTitleNative: item.contentTitleNative,
-      contentTitleEnglish: item.contentTitleEnglish,
-      contentTitleRomaji: item.contentTitleRomaji,
-      type: item.logType || "anime",
-    };
+  const result = await submitLog(payload, true);
+  if (result?.success) {
+    await removeSessionFromQueue(item.id, session.id, type, onRefresh);
+    onStatusMessage("✓ Session logged successfully");
   } else {
-    base.mediaId = item.mediaData?.channelId || item.channelId || "web-video";
-    base.mediaData = item.mediaData || {
-      channelId: item.channelId || "web-video",
-      channelTitle: item.contentTitleNative,
-    };
+    onStatusMessage(`⚠ Failed: ${result?.error || "Unknown error"}`, true);
   }
-
-  const sessions = item.sessions ?? [];
-  if (type === "stremio" && sessions.length > 1) {
-    return sessions.map((session: any) => ({
-      ...base,
-      time: Math.max(1, Math.round((session.secs || 0) / 60)),
-      date: new Date(session.date).toISOString(),
-      chars: 0,
-    }));
-  }
-
-  const defaultDateStr = sessions.length > 0 ? sessions[0].date : item.date || new Date().toISOString();
-  return [{
-    ...base,
-    time: type === "reading" ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0,
-    date: new Date(defaultDateStr).toISOString(),
-    chars: type === "reading" ? item.chars || 0 : 0,
-  }];
 }

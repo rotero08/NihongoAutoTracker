@@ -13,7 +13,7 @@ export function getActiveVideoAdapter(): VideoSiteAdapter | null {
             const clean = pattern
                 .replace(/\*/g, '')
                 .replace('://', '')
-                .split('/')[0]; // e.g., ".youtube.com" or ".crunchyroll.com"
+                .split('/')[0]; // e.g., ".youtube.com" 
             return currentHostname.includes(clean) || clean.includes(currentHostname);
         })
     ) || null;
