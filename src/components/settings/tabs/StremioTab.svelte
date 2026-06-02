@@ -122,9 +122,9 @@
   </div>
 </div>
 
-<div class="info-box">
-  Stremio support uses Trakt watched history. Nothing is imported unless this module is enabled and Trakt is connected.
-</div>
+<p class="hint">
+  Stremio support uses Trakt watched history. Nothing is imported unless this module is enabled, the browser is open and Trakt is connected.
+</p>
 
 <div class="stremio-status-card" class:is-connected={isConnected}>
   <div class="stremio-status-dot"></div>
