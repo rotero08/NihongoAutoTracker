@@ -1,9 +1,14 @@
 <!-- Settings/App.svelte -->
 <script lang="ts">
+  /**
+   * ── Settings App.svelte ─────────────────────────────────────────────────────
+   * The primary layout skeleton wrapping the advanced dashboard tabs.
+   */
+
   import { onMount } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
-  import Sidebar from "@/components/settings/Sidebar.svelte";
+  import Sidebar from "@/components/settings/layout/Sidebar.svelte";
   import QueueTab from "@/components/settings/tabs/QueueTab.svelte";
   import ApiKeyTab from "@/components/settings/tabs/ApiKeyTab.svelte";
   import ThemeTab from "@/components/settings/tabs/ThemeTab.svelte";
@@ -12,10 +17,10 @@
   import StremioTab from "@/components/settings/tabs/StremioTab.svelte";
   import ReadersTab from "@/components/settings/tabs/ReadersTab.svelte";
   import DebugTab from "@/components/settings/tabs/DebugTab.svelte";
-  import ConfirmModal from "@/components/ConfirmModal.svelte";
+  import ConfirmModal from "@/components/common/ConfirmModal.svelte";
   import { notify } from "@/lib/utils/toast";
   import { showToast } from "@/lib/utils/toast";
-  import { applyThemeToDocument, syncThemeCache, READER_MATCH_COLORS } from "@/lib/ui/themes";
+  import { applyThemeToDocument, syncThemeCache } from "@/lib/ui/themes";
   import { storage } from "wxt/utils/storage";
   import { THEME_CACHE_KEY, FONT_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY, ACTIVE_SETTINGS_TAB_KEY } from "@/lib/constants";
 
@@ -317,7 +322,6 @@
     background-color: var(--color-background) !important;
     flex: 1;
   }
-
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: var(--color-api-green) !important;
     border-color: color-mix(

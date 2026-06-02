@@ -5,9 +5,9 @@
  * content script to modularize the codebase and improve readability.
  */
 import { SKIP_HOSTS_DEFAULT, TTU_HOSTS } from '../constants';
+import { getTheme } from './themes';
 import { addDebugLog } from '../storage/debug';
 import { fmt } from '../utils/time';
-import { getTheme } from './themes';
 
 let overlayDismissed = false;
 

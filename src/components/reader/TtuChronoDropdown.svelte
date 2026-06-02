@@ -902,19 +902,12 @@
                         title="Click to edit"
                     >
                         <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            ><circle cx="11" cy="11" r="8"></circle><line
-                                x1="21"
-                                y1="21"
-                                x2="16.65"
-                                y2="16.65"
-                            ></line></svg
+                          style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
+                          viewBox="0 0 24 24"
                         >
+                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                        </svg>
                         <span id="nt-ttu-link-label"
                             >{linkedMedia.mediaData.contentTitleNative ||
                                 "Linked"}</span
@@ -946,19 +939,14 @@
                         onclick={unlinkMedia}
                         title="Unlink Media"
                     >
-                        <svg
-                            style="width:12px; height:12px;"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2.5"
-                            ><line x1="18" y1="6" x2="6" y2="18"></line><line
-                                x1="6"
-                                y1="6"
-                                x2="18"
-                                y2="18"
-                            ></line></svg
-                        >
+                        <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                          <path d="M10 13a5 5 0 0 0 7.54.54l1.5-1.5" />
+                          <path d="M19 7.5l1.5-1.5a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                          <line x1="18" y1="5" x2="19" y2="2" stroke-width="1.8" />
+                          <line x1="19" y1="8" x2="22" y2="9" stroke-width="1.8" />
+                          <line x1="21" y1="5" x2="23" y2="3" stroke-width="1.8" />
+                        </svg>
                     </button>
                 </div>
             {:else}
@@ -1254,7 +1242,7 @@
         border: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
         border-radius: var(
             --rounded-box,
-            var(--nt-rounded-box, 6px)
+            --nt-rounded-box, 6px
         ) !important;
         width: 280px;
         color: var(--color-text, var(--nt-text, #fff)) !important;
@@ -1462,7 +1450,6 @@
     :global(.nt-ttu-linker) {
         margin-top: 12px;
         border-top: 1px solid var(--color-border, var(--nt-border, #3a3a3a)) !important;
-        padding-top: 12px;
     }
 
     :global(.nt-ttu-link-compact) {
@@ -1524,12 +1511,13 @@
         padding: 2px;
         display: flex;
         align-items: center;
-        opacity: 0.6;
+        opacity: 0.8;
         transition: opacity 0.15s;
     }
 
     :global(.nt-ttu-unlink-btn:hover) {
         opacity: 1;
+        color: var(--color-error, var(--nt-error, #f0706a)) !important;
     }
 
     :global(.nt-ttu-vol-pill) {
@@ -1655,7 +1643,6 @@
         gap: 4px;
         max-height: 140px;
         overflow-y: auto;
-        margin-top: 4px;
         display: none;
         position: static !important;
         border: none !important;

@@ -2,6 +2,7 @@
 
 html {
   background-color: #07070e;
+  overflow-x: hidden !important;
 }
 
 body {
@@ -10,7 +11,8 @@ body {
   color: var(--color-text, #dde4f0);
   width: 380px;
   font-size: 13px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden !important;
 }
 
 /* ── Header ── */
@@ -77,6 +79,7 @@ body {
 /* ── Queue list ── */
 .queue-list {
   padding: 7px 10px 10px; max-height: 400px; overflow-y: auto;
+  overflow-x: hidden !important;
   display: flex; flex-direction: column; gap: 6px;
 }
 .queue-list::-webkit-scrollbar { width: 3px; }
@@ -161,7 +164,7 @@ body {
 .ghost-num:focus { background: color-mix(in srgb, var(--color-accent) 14%, transparent); outline: none; }
 
 .ghost-num.num-chars { width: 40px; color: var(--color-accent); }
-.ghost-num.num-vol { width: 24px; color: var(--color-accent); }
+.ghost-num.num-vol { width: 24px; color: var(--color-text); }
 .ghost-num.qi-chars-num {
   width: clamp(3ch, calc(var(--chars-len, 3) * 1ch), 10ch);
   color: var(--color-accent);
@@ -173,10 +176,15 @@ body {
 
 .qi-mid {
   flex: 1; min-width: 0; display: flex; align-items: center;
-  gap: 0; overflow-x: auto; white-space: nowrap;
-  scrollbar-width: none; -ms-overflow-style: none;
+  gap: 0; overflow-x: auto !important; white-space: nowrap;
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* IE 10+ */
 }
-.qi-mid::-webkit-scrollbar { display: none; }
+.qi-mid::-webkit-scrollbar {
+  display: none !important; /* WebKit */
+  width: 0 !important;
+  height: 0 !important;
+}
 
 .qi-channel {
   font-size: 10px; color: var(--color-text-dimmed); flex-shrink: 0;

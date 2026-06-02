@@ -5,7 +5,7 @@
  * can iterate on the UI without needing real browsing sessions.
  */
 
-import type { QueuedReadingLog, QueuedVideoLog } from '../lib/types';
+import type { QueuedReadingLog, QueuedVideoLog, QueuedStremioLog } from '../lib/types';
 
 /** Sample video queue items for dev testing */
 export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
@@ -14,7 +14,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
     contentTitleNative: "テスト日本語チャンネル",
     contentTitleEnglish: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     time: 45,
-    date: "2026-05-24T06:24:17.252Z",
+    date: "2026-06-01T12:00:00.000Z",
     description: "【日本語】テスト動画タイトル - Episode 5",
     private: false,
     tags: [],
@@ -23,12 +23,12 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
       {
         id: "sess-v1",
         secs: 1200,
-        date: "2026-05-24T05:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "sess-v2",
         secs: 900,
-        date: "2026-05-24T06:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     mediaData: {
@@ -41,7 +41,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
     contentTitleNative: "ゲーム実況チャンネル",
     contentTitleEnglish: "https://www.youtube.com/watch?v=mcraft012",
     time: 22,
-    date: "2026-05-23T06:24:17.252Z",
+    date: "2026-06-01T12:00:00.000Z",
     description: "マインクラフト実況 #12 - YouTube",
     private: false,
     tags: [],
@@ -56,20 +56,20 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
     contentTitleNative: "Kuzuha Channel",
     contentTitleEnglish: "https://www.youtube.com/watch?v=jNVxpEiJIR4",
     time: 6,
-    date: "2026-05-24T16:04:36.531Z",
+    date: "2026-06-01T12:00:00.000Z",
     private: false,
     tags: [],
-    description: "【 Valorant 】 もってくれ体法制君90％ スクリム 3日目 【 #にじEXヴァロ teamD 】",
+    description:"【 Valorant 】 もってくれ体法制君90％ スクリム 3日目 【 #にじEXヴァロ teamD 】",
     sessions: [
       {
         id: "3e03abe7-dd44-48b0-acd3-dfbe2df72c76",
         secs: 242.28099999999998,
-        date: "2026-05-24T16:07:37.195Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "ae506e14-34db-410f-9e07-07be50a2193b",
         secs: 90.491,
-        date: "2026-05-24T16:26:25.411Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     channelId: "UCSFCh5NL4qXrAy9u-u2lX3g",
@@ -78,7 +78,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
       channelId: "UCSFCh5NL4qXrAy9u-u2lX3g",
       channelTitle: "Kuzuha Channel",
       channelImage: "https://yt3.googleusercontent.com/ytc/AIdro_kOiA-_aFW-Qz7jxl0wCPDRAKIYL7wDIgs9-iKo7NjztcA=s900-c-k-c0x00ffffff-no-rj",
-      channelDescription: "石油王に求婚され養われることを目標にバーチャルライバーを始めた吸血鬼の葛葉 (くずは) ですGive me your money or blood.- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -▼ Twitterhttps://twit..."
+      channelDescription: "石油王に求婚され養われることを目標にバーチャルライバーを始めた吸血鬼 of 葛葉 (くずは) ですGive me your money or blood.- - - - - - - - - - - - - - - - - - - - - - - - - - - - - -▼ Twitterhttps://twit..."
     }
   },
   {
@@ -86,7 +86,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
     contentTitleNative: "Teppei",
     contentTitleEnglish: "https://www.youtube.com/watch?v=JPcsLaGA7fI",
     time: 2,
-    date: "2026-05-24T16:25:17.090Z",
+    date: "2026-06-01T12:00:00.000Z",
     private: false,
     tags: [],
     description: "Nihongo con Teppei#1『語学学習について』",
@@ -94,7 +94,7 @@ export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [
       {
         id: "18c3a406-2808-403b-89af-47416dcf848b",
         secs: 90.36600000000001,
-        date: "2026-05-24T16:25:46.566Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     channelId: "UCH88l3_ltyJm67gAFzDFNRw",
@@ -118,7 +118,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     description: "転生したらスライムだった件",
     chars: 15420,
     time: 5400,
-    date: "2026-05-24T06:24:17.252Z",
+    date: "2026-06-01T12:00:00.000Z",
     volume: 3,
     private: false,
     tags: [],
@@ -127,19 +127,19 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
         id: "sess-r1",
         secs: 2400,
         chars: 8200,
-        date: "2026-05-24T04:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "sess-r2",
         secs: 1800,
         chars: 4100,
-        date: "2026-05-24T05:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "sess-r3",
         secs: 1200,
         chars: 3120,
-        date: "2026-05-24T06:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     mediaId: "86355",
@@ -164,7 +164,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     description: "薬屋のひとりごと",
     chars: 3200,
     time: 1800,
-    date: "2026-05-23T18:24:17.252Z",
+    date: "2026-06-01T12:00:00.000Z",
     volume: 1,
     private: false,
     tags: [],
@@ -173,7 +173,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
         id: "sess-r4",
         secs: 1800,
         chars: 3200,
-        date: "2026-05-23T18:24:17.252Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     originalTitle: "薬屋のひとりごと",
@@ -189,7 +189,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     chars: 2400,
     time: 12,
     volume: 19,
-    date: "2026-05-24T08:57:36.539Z",
+    date: "2026-06-01T12:00:00.000Z",
     private: false,
     tags: [],
     sessions: [
@@ -197,19 +197,19 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
         id: "f1bdbff4-faaa-4370-a97a-99484e2428a6",
         secs: 1,
         chars: 0,
-        date: "2026-05-24T08:57:36.539Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "f13cf4d1-8e4b-4e12-bed4-3445d570fca9",
         secs: 8,
         chars: 2400,
-        date: "2026-05-24T08:58:10.180Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "67c8c5a9-320d-4ac5-aaa4-b7bb716e22cc",
         secs: 3,
         chars: 0,
-        date: "2026-05-24T08:59:46.149Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     readerName: "YomiYasu Reader",
@@ -235,7 +235,7 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
     chars: 2636,
     time: 1490,
     volume: 1,
-    date: "2026-05-24T08:59:54.762Z",
+    date: "2026-06-01T12:00:00.000Z",
     private: false,
     tags: [],
     sessions: [
@@ -243,19 +243,19 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
         id: "8766550f-0971-4ada-baaa-1b50dea37480",
         secs: 764,
         chars: 1679,
-        date: "2026-05-24T09:00:57.347Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "54f8662c-5d4f-4ced-9f02-2c3da834510c",
         secs: 6,
         chars: 957,
-        date: "2026-05-24T09:51:37.023Z"
+        date: "2026-06-01T12:00:00.000Z"
       },
       {
         id: "b69a5f8d-7216-495b-9a95-ec64c2b344d5",
         secs: 720,
         chars: 0,
-        date: "2026-05-24T09:52:08.018Z"
+        date: "2026-06-01T12:00:00.000Z"
       }
     ],
     readerName: "TTU Reader",
@@ -270,5 +270,58 @@ export const MOCK_READING_QUEUE: QueuedReadingLog[] = [
       chapters: 334,
       volumes: 26
     }
+  }
+];
+
+/** Sample Stremio queue items for dev testing */
+export const MOCK_STREMIO_QUEUE: QueuedStremioLog[] = [
+  {
+    id: "mock-stremio-1",
+    type: "stremio",
+    logType: "anime",
+    contentTitleNative: "葬送のフリーレン",
+    contentTitleEnglish: "Frieren: Beyond Journey's End",
+    contentTitleRomaji: "Sousou no Frieren",
+    description: "葬送のフリーレン",
+    episodes: 2,
+    time: 48,
+    date: "2026-06-01T12:00:00.000Z",
+    private: false,
+    tags: [],
+    sessions: [
+      {
+        id: "sess-s1",
+        secs: 1440,
+        date: "2026-06-01T12:00:00.000Z",
+        season: 1,
+        episode: 1,
+        traktHistoryId: "trakt-mock-s1",
+        episodeTitle: "冒険の終わり"
+      },
+      {
+        id: "sess-s2",
+        secs: 1440,
+        date: "2026-06-01T12:00:00.000Z",
+        season: 1,
+        episode: 2,
+        traktHistoryId: "trakt-mock-s2",
+        episodeTitle: "別に魔法でなくとも..."
+      }
+    ],
+    mediaId: "154587",
+    mediaData: {
+      contentId: "154587",
+      contentTitleNative: "葬送のフリーレン",
+      contentTitleEnglish: "Frieren: Beyond Journey's End",
+      contentTitleRomaji: "Sousou no Frieren",
+      contentImage: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-n6b6Y62vSuC5.jpg",
+      coverImage: "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-n6b6Y62vSuC5.jpg",
+      type: "anime",
+      episodes: 28,
+      episodeDuration: 24
+    },
+    traktHistoryId: "trakt-mock-s1",
+    traktHistoryIds: ["trakt-mock-s1", "trakt-mock-s2"],
+    traktType: "episode"
   }
 ];

@@ -6,7 +6,7 @@
  */
 
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
-import { BADGE_ID, BADGE_LOGO_CLASS, BADGE_TIME_CLASS, createBadgeInnerHTML, shouldHideBadge } from '@/lib/ui/video-badge';
+import { BADGE_ID, BADGE_LOGO_CLASS, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { setSafeHTML } from '@/lib/utils/dom';
 import { fmtSecs } from '@/lib/utils/time';
 

@@ -82,6 +82,7 @@
     flex: 1;
     max-height: 400px;
     overflow-y: auto;
+    overflow-x: hidden !important;
     display: flex;
     flex-direction: column;
     gap: 6px;

@@ -16,9 +16,10 @@
     isStremio?: boolean;
     onRemoveSession: (sessionId: string) => void;
     onSessionChange: (sessionIdx: number, field: string, val: any) => void;
+    onSendSession?: (sessionIdx: number) => void;
   }
 
-  let { sessions, itemId, isReading, isStremio = false, onRemoveSession, onSessionChange }: Props =
+  let { sessions, itemId, isReading, isStremio = false, onRemoveSession, onSessionChange, onSendSession }: Props =
     $props();
 
   /* Track collapsed state in localStorage, reactive to itemId changes */
@@ -37,17 +38,31 @@
   function rememberEditableStart(e: FocusEvent) {
     const input = e.currentTarget as HTMLInputElement;
     input.dataset.editStart = input.value;
+    input.dataset.committed = "true"; // Default to true so click-outside saves
   }
 
   function handleEditableKeydown(e: KeyboardEvent) {
     const input = e.currentTarget as HTMLInputElement;
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
+      input.dataset.committed = "true";
       input.blur();
     } else if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
+      input.dataset.committed = "false";
       input.value = input.dataset.editStart ?? input.defaultValue;
       input.blur();
+    }
+  }
+
+  function handleEditableBlur(e: FocusEvent, sessionIdx: number, field: string) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (input.dataset.committed === "true") {
+      onSessionChange(sessionIdx, field, input.value);
+    } else {
+      input.value = input.dataset.editStart ?? input.defaultValue;
     }
   }
 </script>
@@ -73,12 +88,7 @@
                 style={`--chars-len: ${String(session.chars || 0).length};`}
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
-                onchange={(e) =>
-                  onSessionChange(
-                    i,
-                    "chars",
-                    (e.target as HTMLInputElement).value,
-                  )}
+                onblur={(e) => handleEditableBlur(e, i, "chars")}
               />
               <span class="unit">chars</span>
             {/if}
@@ -92,14 +102,9 @@
                 title="Season"
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
-                onchange={(e) =>
-                  onSessionChange(
-                    i,
-                    "season",
-                    (e.target as HTMLInputElement).value,
-                  )}
+                onblur={(e) => handleEditableBlur(e, i, "season")}
               />
-              <span class="unit">s</span>
+              <span class="unit">season</span>
               <input
                 class="ghost-num stremio-part"
                 type="number"
@@ -108,14 +113,9 @@
                 title="Episode"
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
-                onchange={(e) =>
-                  onSessionChange(
-                    i,
-                    "episode",
-                    (e.target as HTMLInputElement).value,
-                  )}
+                onblur={(e) => handleEditableBlur(e, i, "episode")}
               />
-              <span class="unit">e</span>
+              <span class="unit">episode</span>
             {/if}
 
             <input
@@ -125,14 +125,20 @@
               value={Math.max(1, Math.round(session.secs / 60))}
               onfocus={rememberEditableStart}
               onkeydown={handleEditableKeydown}
-              onchange={(e) =>
-                onSessionChange(
-                  i,
-                  "mins",
-                  (e.target as HTMLInputElement).value,
-                )}
+              onblur={(e) => handleEditableBlur(e, i, "mins")}
             />
             <span class="unit">min</span>
+
+            <button
+              type="button"
+              class="send-sess-btn"
+              title="Log session individually"
+              onclick={() => onSendSession?.(i)}
+            >
+              <svg viewBox="0 0 24 24">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
 
             <input
               class="ghost-date"
@@ -293,5 +299,29 @@
     cursor: pointer;
     padding: 0 4px;
     font-size: 12px;
+  }
+  .send-sess-btn {
+    background: none;
+    border: none;
+    color: var(--color-accent, #f0b429);
+    cursor: pointer;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.8;
+    transition: opacity 0.15s, transform 0.1s;
+    margin-left: 2px;
+  }
+  .send-sess-btn:hover {
+    opacity: 1;
+  }
+  .send-sess-btn:active {
+    transform: scale(0.9);
+  }
+  .send-sess-btn svg {
+    width: 10px;
+    height: 10px;
+    fill: currentColor !important;
   }
 </style>

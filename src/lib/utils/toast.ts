@@ -1,5 +1,7 @@
 /**
- * ── Toast Notification Utility (Deduplicated, Snappy Close & Hover Pause) ────
+ * ── Toast Notifications Manager ──────────────────────────────────────────────
+ * Renders in-page toast indicators. Safe fallback structures protect against
+ * restricted tab security constraints and ungranted cross-origin page hosts.
  */
 
 const activeToasts: Record<string, {
@@ -30,10 +32,6 @@ if (typeof document !== 'undefined') {
   }
 }
 
-/**
- * Shared normalizer to standardize symbols, phrasing, and visual layout.
- * Distinguishes contexts (single logs, bulk logs, direct sends, playlist logging).
- */
 function normalizeToast(title: string, msg: string, err = false): { normTitle: string; normMessage: string; isError: boolean } {
   let normTitle = (title || '').trim();
   let normMessage = (msg || '').trim();
@@ -42,7 +40,6 @@ function normalizeToast(title: string, msg: string, err = false): { normTitle: s
   const lowerTitle = normTitle.toLowerCase();
   const lowerMessage = normMessage.toLowerCase();
 
-  // 1. Classify error or success state
   if (
     lowerTitle.includes('fail') ||
     lowerTitle.includes('error') ||
@@ -54,7 +51,6 @@ function normalizeToast(title: string, msg: string, err = false): { normTitle: s
     isError = true;
   }
 
-  // 2. Extract message from title if message field is empty
   if (!normMessage) {
     if (lowerTitle.startsWith('failed!') || lowerTitle.startsWith('failed') || lowerTitle.startsWith('error')) {
       normMessage = normTitle.replace(/^(failed!|failed|error:?)\s*/i, '').trim();
@@ -67,93 +63,60 @@ function normalizeToast(title: string, msg: string, err = false): { normTitle: s
     }
   }
 
-  // Strip existing status symbols and whitespace from the beginning to prevent double-prepends
   normMessage = normMessage.replace(/^[✓✗⚠▸▾\s*•·~xX\-:!⚠]*\s*/i, '');
-
-  // Strip trailing punctuation for clean and consistent layout
   normMessage = normMessage.replace(/[!.]$/, '');
 
   const cleanLowerMessage = normMessage.toLowerCase();
 
-  // 3. Unify phrasing structures while strictly preserving operation distinctions
   if (cleanLowerMessage.includes('missing api key')) {
     normMessage = 'Missing API key';
     isError = true;
-  }
-  // Match Direct Send (TTU CronoDropdown direct logging bypass)
-  else if (cleanLowerMessage.includes('logged directly to nihongotracker')) {
+  } else if (cleanLowerMessage.includes('logged directly to nihongotracker')) {
     normMessage = 'Logged directly to NihongoTracker';
-  }
-  // Match Single Queue Log (Standard single-item success submissions)
-  else if (cleanLowerMessage.includes('log sent to nihongotracker')) {
+  } else if (cleanLowerMessage.includes('log sent to nihongotracker')) {
     normMessage = 'Logged to NihongoTracker';
-  }
-  // Match Local Session Save (Queued locally in cache)
-  else if (cleanLowerMessage === 'session queued') {
+  } else if (cleanLowerMessage === 'session queued') {
     normMessage = 'Session queued locally';
-  }
-  // Match Bulk Send All - Full Success
-  else if (/successfully sent all (\d+) logs/i.test(normMessage)) {
+  } else if (/successfully sent all (\d+) logs/i.test(normMessage)) {
     const match = normMessage.match(/successfully sent all (\d+) logs/i);
     if (match) {
       normMessage = `Logged all ${match[1]} queue entries to NihongoTracker`;
     }
-  }
-  // Match Bulk Send All - Partial Failure
-  else if (/sent (\d+) logs, but (\d+) failed/i.test(normMessage)) {
+  } else if (/sent (\d+) logs, but (\d+) failed/i.test(normMessage)) {
     const match = normMessage.match(/sent (\d+) logs, but (\d+) failed/i);
     if (match) {
       normMessage = `Logged ${match[1]} queue entries, but ${match[2]} failed`;
       isError = true;
     }
-  }
-  // Match Playlist Chunk Logging - Successes
-  else if (/logged (\d+)\/(\d+) videos/i.test(normMessage)) {
+  } else if (/logged (\d+)\/(\d+) videos/i.test(normMessage)) {
     const match = normMessage.match(/logged (\d+)\/(\d+) videos/i);
     if (match) {
       normMessage = `Logged ${match[1]}/${match[2]} playlist videos`;
     }
-  }
-  // Match Playlist Chunk Logging - Full Failures
-  else if (/failed to log videos \(0\/(\d+) logged\)/i.test(normMessage)) {
+  } else if (/failed to log videos \(0\/(\d+) logged\)/i.test(normMessage)) {
     const match = normMessage.match(/failed to log videos \(0\/(\d+) logged\)/i);
     if (match) {
       normMessage = `Failed to log playlist videos (0/${match[1]} logged)`;
       isError = true;
     }
-  }
-  // Match Local Session Removal from Settings Queue List
-  else if (cleanLowerMessage === 'session removed') {
+  } else if (cleanLowerMessage === 'session removed') {
     normMessage = 'Session removed from queue';
-  }
-  // Match Local Queue Entry Removal from Settings Queue List
-  else if (cleanLowerMessage === 'log removed') {
+  } else if (cleanLowerMessage === 'log removed') {
     normMessage = 'Queue entry removed';
-  }
-  // Match Theme Deletion from Appearance Settings Panel
-  else if (cleanLowerMessage === 'deleted theme') {
+  } else if (cleanLowerMessage === 'deleted theme') {
     normMessage = 'Theme deleted';
-  }
-  // Match Synced Theme Unlock Status
-  else if (cleanLowerMessage === 'synced theme unlocked') {
+  } else if (cleanLowerMessage === 'synced theme unlocked') {
     normMessage = 'Synced theme unlocked';
-  }
-  // Match Empty Selection Checks (Text Selection Handler)
-  else if (cleanLowerMessage.includes('selection had no japanese characters') || cleanLowerMessage.includes('selection has no japanese characters') || cleanLowerMessage.includes('had no japanese characters')) {
+  } else if (cleanLowerMessage.includes('selection had no japanese characters') || cleanLowerMessage.includes('selection has no japanese characters') || cleanLowerMessage.includes('had no japanese characters')) {
     normMessage = 'Selection has no Japanese characters';
     isError = true;
-  }
-  // Match Empty Playlist Scan Error (Playlist Modal Handler)
-  else if (cleanLowerMessage.includes('no valid videos found in playlist')) {
+  } else if (cleanLowerMessage.includes('no valid videos found in playlist')) {
     normMessage = 'No valid videos found in playlist';
     isError = true;
-  }
-  // Match AniList Linkage Clear Actions
-  else if (cleanLowerMessage.includes('anilist match unlinked')) {
+  } else if (cleanLowerMessage.includes('anilist match unlinked')) {
     normMessage = 'AniList match unlinked';
   }
 
-  // 4. Force uniform titles and prefix with correct indicators
   if (isError) {
     normTitle = 'Error';
     normMessage = `⚠ ${normMessage}`;
@@ -165,15 +128,10 @@ function normalizeToast(title: string, msg: string, err = false): { normTitle: s
   return { normTitle, normMessage, isError };
 }
 
-/**
- * Show a toast notification in the current page.
- */
 export function showToast(title: string, msg: string, err = false): void {
   if (typeof document === 'undefined') return;
-
   if (window.self !== window.top) return;
 
-  // Apply centralized normalization logic
   const normalized = normalizeToast(title, msg, err);
   const normTitle = normalized.normTitle;
   const normMessage = normalized.normMessage;
@@ -188,17 +146,14 @@ export function showToast(title: string, msg: string, err = false): void {
   if (existing) {
     const pingDetail = { handled: false };
     existing.dispatchEvent(new CustomEvent('nt-toast-ping', { detail: pingDetail }));
-
     if (pingDetail.handled) {
       existing.dispatchEvent(new CustomEvent('nt-toast-reset', { detail: { timestamp: Date.now() } }));
       return;
     }
-
     existing.remove();
   }
 
   let container = document.getElementById('nt-toast-container');
-
   if (!container) {
     container = document.createElement('div');
     container.id = 'nt-toast-container';
@@ -223,45 +178,25 @@ export function showToast(title: string, msg: string, err = false): void {
     style.textContent = `
     @keyframes nt-toast-deplete { from { width: 100%; } to { width: 0%; } }
     @keyframes nt-toast-slide-in { from { transform: translateY(15px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    
-    #nt-toast-container {
-      writing-mode: horizontal-tb !important;
-      direction: ltr !important;
-    }
+    #nt-toast-container { writing-mode: horizontal-tb !important; direction: ltr !important; }
     .nt-toast {
-      pointer-events: auto !important;
-      z-index: 2147483647 !important;
-      position: relative; overflow: hidden;
-      background: #0b1c0e !important;
-      color: #3ddc84 !important; 
-      border: 1px solid #16351d !important;
-      border-radius: 6px !important; padding: 12px 16px 16px 16px !important;
-      font-family: var(--mono, monospace) !important; font-size: 13px !important;
-      box-shadow: 0 10px 30px rgba(0,0,0,.5) !important; width: 280px !important; box-sizing: border-box !important;
-      display: flex !important; justify-content: space-between !important; align-items: flex-start !important; gap: 12px !important;
-      transition: opacity 0.15s, transform 0.15s !important;
-      animation: nt-toast-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
-      direction: ltr !important; text-align: left !important; line-height: 1.4 !important;
-      writing-mode: horizontal-tb !important;
-      flex-direction: row !important;
+      pointer-events: auto !important; z-index: 2147483647 !important; position: relative; overflow: hidden;
+      background: #0b1c0e !important; color: #3ddc84 !important; border: 1px solid #16351d !important;
+      border-radius: 6px !important; padding: 12px 16px 16px 16px !important; font-family: var(--mono, monospace) !important;
+      font-size: 13px !important; box-shadow: 0 10px 30px rgba(0,0,0,.5) !important; width: 280px !important;
+      box-sizing: border-box !important; display: flex !important; justify-content: space-between !important;
+      align-items: flex-start !important; gap: 12px !important; transition: opacity 0.15s, transform 0.15s !important;
+      animation: nt-toast-slide-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards !important; direction: ltr !important;
+      text-align: left !important; line-height: 1.4 !important; writing-mode: horizontal-tb !important; flex-direction: row !important;
     }
-    .nt-toast.nt-err { 
-      background: #1d0a0a !important;
-      color: #f0706a !important; 
-      border-color: #3d1414 !important;
-    }
+    .nt-toast.nt-err { background: #1d0a0a !important; color: #f0706a !important; border-color: #3d1414 !important; }
     .nt-toast-bar { position: absolute; bottom: 0; left: 0; height: 3px; background: currentColor; opacity: 0.6; animation: nt-toast-deplete 3s linear forwards; }
     .nt-toast-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 16px; line-height: 1; padding: 0; opacity: 0.6; transition: opacity 0.2s; font-family: sans-serif; }
     .nt-toast-close:hover { opacity: 1; }
     .nt-toast-content { display: flex; flex-direction: column; gap: 4px; flex: 1; word-break: break-word; }
     .nt-toast-title { font-weight: bold; font-family: var(--sans, system-ui, -apple-system, sans-serif) !important; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
     .nt-toast-msg { opacity: 0.9; font-family: var(--mono, monospace) !important; font-size: 11px; }
-
-    #nt-toast-container .nt-toast.paused,
-    #nt-toast-container .nt-toast.paused * {
-      animation-play-state: paused !important;
-      -webkit-animation-play-state: paused !important;
-    }
+    #nt-toast-container .nt-toast.paused, #nt-toast-container .nt-toast.paused * { animation-play-state: paused !important; -webkit-animation-play-state: paused !important; }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -299,7 +234,6 @@ export function showToast(title: string, msg: string, err = false): void {
   toast.appendChild(bar);
   container.appendChild(toast);
 
-  let isPaused = false;
   let timeLeft = 3000;
   let lastSpawnTime = now;
   let startTime = now;
@@ -308,9 +242,7 @@ export function showToast(title: string, msg: string, err = false): void {
   const startTimer = () => {
     if (timeoutId) clearTimeout(timeoutId);
     startTime = Date.now();
-    timeoutId = setTimeout(() => {
-      closeToast();
-    }, timeLeft);
+    timeoutId = setTimeout(() => { closeToast(); }, timeLeft);
   };
 
   const pauseTimer = () => {
@@ -330,16 +262,13 @@ export function showToast(title: string, msg: string, err = false): void {
 
   const resetTimer = () => {
     timeLeft = 3000;
-    isPaused = false;
     toast.classList.remove('paused');
-
     const barElement = toast.querySelector('.nt-toast-bar') as HTMLElement;
     if (barElement) {
       barElement.style.animation = 'none';
       void barElement.offsetHeight;
       barElement.style.animation = '';
     }
-
     startTimer();
   };
 
@@ -350,17 +279,12 @@ export function showToast(title: string, msg: string, err = false): void {
   toast.addEventListener('nt-toast-reset', (e: any) => {
     const eventTimestamp = e.detail?.timestamp || Date.now();
     const elapsed = eventTimestamp - lastSpawnTime;
-
-    if (elapsed < 300) {
-      return;
-    }
-
+    if (elapsed < 300) return;
     lastSpawnTime = eventTimestamp;
     resetTimer();
   });
 
   activeToasts[key] = { toast, timestamp: now, resetTimer };
-
   startTimer();
 
   closeBtn.addEventListener('click', (e) => {
@@ -369,24 +293,18 @@ export function showToast(title: string, msg: string, err = false): void {
   });
 
   toast.addEventListener('mouseenter', () => {
-    isPaused = true;
     toast.classList.add('paused');
     pauseTimer();
   });
 
   toast.addEventListener('mouseleave', () => {
-    isPaused = false;
     toast.classList.remove('paused');
     startTimer();
   });
 }
 
-/**
- * System-wide user notification helper.
- */
 export function notify(title: string, message: string): void {
   try {
-    // Apply centralized normalization logic
     const normalized = normalizeToast(title, message);
     const normTitle = normalized.normTitle;
     const normMessage = normalized.normMessage;
@@ -432,7 +350,7 @@ export function notify(title: string, message: string): void {
       }
     }
   } catch (_err) {
-    /* Safe guard */
+    // Fail silently
   }
 }
 
@@ -460,6 +378,7 @@ function relayToastToActiveTab(title: string, message: string, isError: boolean)
 
       if (isRestricted) return;
 
+      // Safe permissive programmatic fallback dispatch sequence
       if (browser.scripting && browser.scripting.executeScript && !url.startsWith('chrome-extension://') && !url.startsWith('moz-extension://')) {
         browser.scripting.executeScript({
           target: { tabId: tab.id },

@@ -1,3 +1,9 @@
+/**
+ * ── WXT Configuration File ──────────────────────────────────────────────────
+ * Central build and packing configuration for the browser extension.
+ * WXT dynamically reads package version, eliminating hardcoded desync risks.
+ */
+
 import fs from 'fs';
 import path from 'path';
 import { defineConfig } from 'wxt';
@@ -15,7 +21,6 @@ try {
       const [key, ...valueParts] = trimmedLine.split('=');
       const value = valueParts.join('=').trim();
       if (key) {
-        // Assign to process.env and strip wrapping quotes
         process.env[key.trim()] = value.replace(/^["']|["']$/g, '');
       }
     }
@@ -24,16 +29,13 @@ try {
   // Fall back silently if the .env file is missing or unreadable
 }
 
-// Retrieve the active target browser (defaults to 'chrome' if undefined)
 const currentBrowser = process.env.WXT_BROWSER || 'chrome';
 const isFirefox = currentBrowser === 'firefox';
 const isChromium = ['chrome', 'edge', 'opera'].includes(currentBrowser);
 
-// Profile paths definitions
 const firefoxProfilePath = path.resolve(process.cwd(), '.wxt/firefox-profile');
 const chromiumProfilePath = path.resolve(process.cwd(), `.wxt/${currentBrowser}-profile`);
 
-// Ensure profile directories exist so that web-ext-run does not mistake them for profile names
 try {
   if (isFirefox && !fs.existsSync(firefoxProfilePath)) {
     fs.mkdirSync(firefoxProfilePath, { recursive: true });
@@ -42,15 +44,12 @@ try {
     fs.mkdirSync(chromiumProfilePath, { recursive: true });
   }
 } catch (error) {
-  // Fall back silently if directory creation fails
+  // Fall back silently
 }
 
 export default defineConfig({
   srcDir: 'src',
-
-  /* ── Target browser for development/builds ──────────────────── */
   browser: currentBrowser,
-
   modules: ['@wxt-dev/module-svelte'],
 
   svelte: {
@@ -62,16 +61,9 @@ export default defineConfig({
   },
 
   webExt: {
-    // Keep profile changes across restarts for both Firefox and Chromium browsers
     keepProfileChanges: true,
-
-    ...(isFirefox && {
-      firefoxProfile: firefoxProfilePath,
-    }),
-    ...(isChromium && {
-      chromiumProfile: chromiumProfilePath,
-    }),
-
+    ...(isFirefox && { firefoxProfile: firefoxProfilePath }),
+    ...(isChromium && { chromiumProfile: chromiumProfilePath }),
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',
       'https://www.youtube.com/watch?v=JPcsLaGA7fI&list=PLI76y3FWv18CrvaxtcS5QcAb7qaUQHtmB',
@@ -82,19 +74,24 @@ export default defineConfig({
     ],
   },
 
-  /* ── Extension manifest configuration ──────────────────────── */
   manifest: {
     name: 'NihongoAutoTracker',
-    description:
-      'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
-    version: '4.0.8', // DO NOT CHANGE THIS MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY
-    permissions: ['storage', 'contextMenus', 'notifications', 'tabs', 'alarms'],
+    description: 'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
+    // Version is omitted here so WXT automatically uses package.json as single source of truth
+    permissions: [
+      'storage',
+      'contextMenus',
+      'notifications',
+      'tabs',
+      'alarms',
+      'scripting',
+      'activeTab'
+    ],
     host_permissions: [
       'https://nihongotracker.app/*',
       'https://*.nihongotracker.app/*',
       'https://api.trakt.tv/*',
     ],
-
     icons: {
       "16": "icon/16.png",
       "32": "icon/32.png",
@@ -102,7 +99,6 @@ export default defineConfig({
       "96": "icon/96.png",
       "128": "icon/128.png"
     },
-
     action: {
       default_icon: {
         "16": "icon/16.png",
@@ -111,14 +107,13 @@ export default defineConfig({
         "96": "icon/96.png",
         "128": "icon/128.png"
       },
-      // @ts-ignore - Tells Firefox to anchor this button on the navigation bar (toolbar)
+      // @ts-ignore
       default_area: 'navbar',
     },
-
     browser_specific_settings: {
       gecko: {
         id: 'nihongo-auto-tracker@nta.com',
-        // @ts-ignore — Firefox-specific field not in WXT type definitions
+        // @ts-ignore
         data_collection_permissions: {
           required: ['none'],
         },

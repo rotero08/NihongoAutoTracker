@@ -1,6 +1,12 @@
 <!-- SettingsQueueItem.svelte -->
 
 <script lang="ts">
+  /**
+   * ── SettingsQueueItem.svelte ────────────────────────────────────────────────
+   * A single queued immersion entry inside the advanced dashboard settings list.
+   * Restores the exact original inline collapsible sessions markup and layout.
+   */
+
   import {
     videoQueueStorage,
     readingQueueStorage,
@@ -42,6 +48,7 @@
   let sending = $state(false);
   let searchDropdown: SearchDropdown | undefined = $state(undefined);
   let isUnlinkHovered = $state(false);
+  let titleInputEl = $state<HTMLInputElement | undefined>(undefined);
 
   /* ── State for Title & Inline Volume Input ────────────────────── */
   let titleValue = $state("");
@@ -113,6 +120,12 @@
     );
   }
 
+  /* Custom actions helper to handle dynamic focus state */
+  function autofocus(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
   /* ── Atomic persistence helper ── */
   async function saveItem(updatedFields: Partial<any>) {
     if (isRead) {
@@ -182,9 +195,6 @@
     titleValue = val;
 
     if (isRead || isStremio) {
-      if (item.mediaId && item.mediaId !== "web-reading") {
-        saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
-      }
       clearTimeout(debounceTimer);
       if (val.trim().length < 2) {
         searchDropdown?.close();
@@ -203,7 +213,7 @@
   function handleBlur() {
     blurTimeout = setTimeout(() => {
       searchDropdown?.close();
-    }, 200);
+    }, 10);
   }
 
   function handleFocus() {
@@ -216,27 +226,63 @@
   function rememberEditableStart(e: FocusEvent) {
     const input = e.currentTarget as HTMLInputElement;
     input.dataset.editStart = input.value;
+    input.dataset.committed = "false";
+    input.dataset.isMatching = "false";
   }
 
   function handleEditableKeydown(e: KeyboardEvent) {
     const input = e.currentTarget as HTMLInputElement;
     if (e.key === "Enter") {
       e.preventDefault();
+      e.stopPropagation();
+      input.dataset.committed = "true";
       input.blur();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      input.value = input.dataset.editStart ?? input.defaultValue;
-      if (input.classList.contains("qi-desc")) {
-        titleValue = input.value;
-        searchDropdown?.close();
-      }
+      e.stopPropagation();
+      input.dataset.committed = "false";
+      revertInput(input);
       input.blur();
     }
   }
 
-  async function handleTitleChange(e: Event) {
-    const val = (e.target as HTMLInputElement).value;
-    await saveItem(isStremio ? { description: val, contentTitleNative: val } : { description: val });
+  function revertInput(input: HTMLInputElement) {
+    const startVal = input.dataset.editStart ?? input.defaultValue;
+    input.value = startVal;
+    if (input.classList.contains("qi-desc")) {
+      titleValue = startVal;
+      searchDropdown?.close();
+    }
+  }
+
+  function handleEditableBlur(e: FocusEvent, field: string, saveFn: (val: any) => void) {
+    const input = e.currentTarget as HTMLInputElement;
+
+    searchDropdown?.close();
+
+    if (input.dataset.isMatching === "true") {
+      saveFn(input.value);
+      return;
+    }
+
+    if (isLinked && (field === "description" || field === "contentTitleNative")) {
+      input.dataset.committed = "false";
+      revertInput(input);
+      return;
+    }
+
+    if (input.dataset.committed === "true") {
+      // Unmatch on final change commit to title fields if text has actually changed [3]
+      if (field === "description" || field === "contentTitleNative") {
+        const changed = input.value !== input.dataset.editStart;
+        if (changed && isLinked && input.dataset.isMatching !== "true") {
+          saveItem({ mediaId: isRead ? "web-reading" : undefined, mediaData: undefined });
+        }
+      }
+      saveFn(input.value);
+    } else {
+      revertInput(input);
+    }
   }
 
   async function handleSearchSelect(result: AniListSearchResult) {
@@ -315,19 +361,6 @@
   }
 
   /* Characters spin navigation */
-  async function handleCharsChange(e: Event) {
-    const inputVal = Math.max(
-      0,
-      Number((e.target as HTMLInputElement).value) || 0,
-    );
-    const sumChars = sessions.reduce(
-      (a: number, b: any) => a + (b.chars || 0),
-      0,
-    );
-    const val = Math.max(sumChars, inputVal);
-    await saveItem({ chars: val });
-  }
-
   async function adjustChars(amt: number) {
     const current = Number(item.chars || 0);
     const sumChars = sessions.reduce(
@@ -339,20 +372,6 @@
   }
 
   /* Minutes spin navigation */
-  async function handleMinsChange(e: Event) {
-    const inputVal = Math.max(
-      1,
-      Number((e.target as HTMLInputElement).value) || 1,
-    );
-    const sumSecs = sessions.reduce(
-      (a: number, b: any) => a + (b.secs || 0),
-      0,
-    );
-    const sumMins = Math.max(1, Math.round(sumSecs / 60));
-    const val = Math.max(sumMins, inputVal);
-    await saveItem({ time: isRead ? val * 60 : val });
-  }
-
   async function adjustMins(amt: number) {
     const current = displayMins;
     const sumSecs = sessions.reduce(
@@ -450,7 +469,7 @@
         }
 
         const sumSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + (b.secs || 0),
+          (a: number, b: any) => a + b.secs,
           0,
         );
         entry.time = Math.max(1, Math.round(sumSecs / 60));
@@ -541,7 +560,7 @@
         const totalSecs = entry.sessions.reduce(
           (a: number, b: any) => a + b.secs,
           0,
-        );
+          );
         entry.time = Math.max(1, Math.round(totalSecs / 60));
         entry.episodes = entry.sessions.length || 1;
 
@@ -573,6 +592,100 @@
 
     onStatus("✓ Session removed");
     onRefresh();
+  }
+
+  async function handleSendSession(sessionIdx: number) {
+    const session = sessions[sessionIdx];
+    if (!session) return;
+
+    sending = true;
+    const desc = isStremio
+      ? item.mediaData?.contentTitleNative || item.contentTitleNative || titleValue
+      : titleValue || (isRead ? item.mediaData?.contentTitleNative || item.contentTitleNative : item.contentTitleNative);
+    const apiTitle = type === "video" ? stripVideoTitle(desc) : desc;
+
+    const payload: any = {
+      type: isStremio ? item.logType || "anime" : type,
+      description: apiTitle,
+      time: Math.max(1, Math.round((session.secs || 0) / 60)),
+      date: new Date(session.date).toISOString(),
+      chars: isRead ? session.chars || 0 : 0,
+      episodes: isStremio ? 1 : 0,
+      pages: 0,
+      unknownDate: false,
+      private: false,
+      mediaId: isRead
+        ? item.mediaId || "web-reading"
+        : isStremio
+          ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
+          : item.mediaData?.channelId || item.channelId || "web-video",
+      mediaData: item.mediaData || {},
+    };
+    if (isRead) {
+      payload.volume = Math.max(1, Number(item.volume || 1));
+    }
+
+    // Set silent = true to avoid double toasts [4]
+    const result = await submitLog(payload, true);
+    if (result?.success) {
+      if (isRead) {
+        await updateReadingQueueAtomic((queue) => {
+          const idx = queue.findIndex((x) => x.id === item.id);
+          if (idx === -1) return queue;
+          const entry = JSON.parse(JSON.stringify(queue[idx]));
+          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
+          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
+          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+          entry.time = totalSecs;
+          entry.chars = entry.sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0);
+          const nextQueue = [...queue];
+          nextQueue[idx] = entry;
+          return nextQueue;
+        });
+      } else if (isStremio) {
+        await updateStremioQueueAtomic((queue) => {
+          const idx = queue.findIndex((x) => x.id === item.id);
+          if (idx === -1) return queue;
+          const entry = JSON.parse(JSON.stringify(queue[idx]));
+          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
+          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
+          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+          entry.time = Math.max(1, Math.round(totalSecs / 60));
+          entry.episodes = entry.sessions.length || 1;
+          const nextQueue = [...queue];
+          nextQueue[idx] = entry;
+          return nextQueue;
+        });
+      } else {
+        await updateVideoQueueAtomic((queue) => {
+          const idx = queue.findIndex((x) => x.id === item.id);
+          if (idx === -1) return queue;
+          const entry = JSON.parse(JSON.stringify(queue[idx]));
+          entry.sessions = (entry.sessions ?? []).filter((s: any) => s.id !== session.id);
+          if (entry.sessions.length === 0) return queue.filter((x) => x.id !== item.id);
+          const totalSecs = entry.sessions.reduce((a: number, b: any) => a + b.secs, 0);
+          entry.time = Math.round(totalSecs / 60);
+          const nextQueue = [...queue];
+          nextQueue[idx] = entry;
+          return nextQueue;
+        });
+      }
+      sending = false; // Restore brightness instantly [4]
+      onRefresh();
+      onStatus("✓ Session logged successfully");
+    } else {
+      sending = false;
+      onStatus(`⚠ Failed: ${result?.error || "Unknown error"}`, true);
+    }
+  }
+
+  function handleSessionLocalBlur(e: FocusEvent, sessionIdx: number, field: string) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (input.dataset.committed === "true") {
+      handleSessionChange(sessionIdx, field, input.value);
+    } else {
+      input.value = input.dataset.editStart ?? input.defaultValue;
+    }
   }
 
   function getItemPayloads(current: any, type: "reading" | "video" | "stremio") {
@@ -638,7 +751,7 @@
           : isStremio
             ? current.mediaId || current.mediaData?.contentId || `trakt:${current.traktHistoryId}`
             : current.mediaData?.channelId || current.channelId || "web-video",
-        mediaData: current.mediaData || {},
+          mediaData: current.mediaData || {},
       };
       if (isRead) {
         payload.volume = Math.max(1, Number(current.volume || 1));
@@ -790,14 +903,17 @@
         </svg>
       {/if}
       <input
+        bind:this={titleInputEl}
         class="qi-desc"
         class:searchable={isRead || isStremio}
         type="text"
         value={titleValue}
         placeholder={isRead || isStremio ? "Search AniList..." : "Video Title"}
         oninput={handleTitleInput}
-        onchange={handleTitleChange}
-        onblur={handleBlur}
+        onblur={(e) => {
+          handleBlur();
+          handleEditableBlur(e, isStremio ? "contentTitleNative" : "description", (val) => saveItem(isStremio ? { description: val, contentTitleNative: val } : { description: val }));
+        }}
         onfocus={(e) => {
           rememberEditableStart(e);
           handleFocus();
@@ -812,21 +928,31 @@
             class="qi-link-status"
             title="Unlink AniList match"
             onclick={handleUnlink}
-            onmouseenter={() => (isUnlinkHovered = true)}
-            onmouseleave={() => (isUnlinkHovered = false)}
-            style={isUnlinkHovered
-              ? "color: var(--color-error)"
-              : "color: var(--color-success)"}
           >
-            {isUnlinkHovered ? "✗" : "✓"}
+            <svg class="broken-icon" style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              <path d="M10 13a5 5 0 0 0 7.54.54l0.8-0.8" />
+              <path d="M19.74 11.34l0.8-0.8a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <line x1="18.5" y1="8.5" x2="19.5" y2="5.5" stroke-width="1.8" />
+              <line x1="21.5" y1="10.5" x2="24.5" y2="10.5" stroke-width="1.8" />
+              <line x1="20.5" y1="8.5" x2="23" y2="6.5" stroke-width="1.8" />
+            </svg>
+            <svg class="connected-icon" style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
           </button>
         {:else}
           <span
             class="qi-link-status video-matched"
             title="Matched"
-            style="cursor:default; color:var(--color-success); position:absolute; right:8px; top:50%; transform:translateY(-50%)"
-            >✓</span
+            style="cursor:default; color:var(--color-success, #3ddc84) !important; position:absolute; right:8px; top:50%; transform:translateY(-50%)"
           >
+            <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+          </span>
         {/if}
       {/if}
 
@@ -835,6 +961,12 @@
           bind:this={searchDropdown}
           searchType={isStremio ? stremioSearchType : "reading"}
           onSelect={handleSearchSelect}
+          onMouseDown={() => {
+            if (titleInputEl) {
+              titleInputEl.dataset.committed = "true";
+              titleInputEl.dataset.isMatching = "true";
+            }
+          }}
         />
       {/if}
     </div>
@@ -852,6 +984,7 @@
             onkeydown={handleVolumeKey}
             onblur={commitVolume}
             aria-label="Volume number"
+            use:autofocus
           />
         {:else}
           <button
@@ -872,7 +1005,7 @@
             value={item.chars || 0}
             min="0"
             style={`--chars-len: ${String(item.chars || 0).length};`}
-            onchange={handleCharsChange}
+            onblur={(e) => handleEditableBlur(e, "chars", (val) => saveItem({ chars: Math.max(0, Number(val) || 0) }))}
             onfocus={rememberEditableStart}
             onkeydown={handleEditableKeydown}
             aria-label="Character count"
@@ -906,35 +1039,6 @@
         </div>
       {/if}
 
-      {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
-        <div class="qi-spin-group">
-          <input
-            class="qi-mins"
-            type="number"
-            value={Math.max(1, Number(item.season || 1))}
-            min="1"
-            onchange={(e) => saveItem({ season: Math.max(1, Number((e.target as HTMLInputElement).value) || 1) })}
-            onfocus={rememberEditableStart}
-            onkeydown={handleEditableKeydown}
-            aria-label="Season number"
-          />
-          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;">season</span>
-        </div>
-        <div class="qi-spin-group">
-          <input
-            class="qi-mins"
-            type="number"
-            value={Math.max(1, Number(item.episode || 1))}
-            min="1"
-            onchange={(e) => saveItem({ episode: Math.max(1, Number((e.target as HTMLInputElement).value) || 1) })}
-            onfocus={rememberEditableStart}
-            onkeydown={handleEditableKeydown}
-            aria-label="Episode number"
-          />
-          <span style="font-size:10px; color:var(--color-text-muted); padding-right:2px;">ep</span>
-        </div>
-      {/if}
-
       <!-- Minutes Spinner Group -->
       <div class="qi-spin-group">
         <input
@@ -942,7 +1046,7 @@
           type="number"
           value={displayMins}
           min="1"
-          onchange={handleMinsChange}
+          onblur={(e) => handleEditableBlur(e, "time", (val) => saveItem({ time: isRead ? Math.max(1, Number(val) || 1) * 60 : Math.max(1, Number(val) || 1) }))}
           onfocus={rememberEditableStart}
           onkeydown={handleEditableKeydown}
           aria-label="Minutes duration"
@@ -997,6 +1101,32 @@
         />
   </div>
 
+  {#if isStremio && sessions.length <= 1 && item.traktType === "episode"}
+    <div class="qi-row stremio-ep-meta">
+      <span>Season</span>
+      <input
+        type="number"
+        min="1"
+        value={Math.max(1, Number(item.season || 1))}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
+        onblur={(e) => handleEditableBlur(e, "season", (val) => saveItem({ season: Math.max(1, Number(val) || 1) }))}
+        aria-label="Season"
+      />
+      <span style="color: var(--color-border, #1c2333); margin: 0 6px;">·</span>
+      <span>Episode</span>
+      <input
+        type="number"
+        min="1"
+        value={Math.max(1, Number(item.episode || 1))}
+        onfocus={rememberEditableStart}
+        onkeydown={handleEditableKeydown}
+        onblur={(e) => handleEditableBlur(e, "episode", (val) => saveItem({ episode: Math.max(1, Number(val) || 1) }))}
+        aria-label="Episode"
+      />
+    </div>
+  {/if}
+
   <!-- Collapsible Sessions list -->
   {#if sessions.length > 1}
     <div class="qi-sessions">
@@ -1021,34 +1151,24 @@
                   class="qi-session-mins"
                   type="number"
                   value={Math.max(1, Number(session.season || 1))}
-                  min="1"
+                  min="1; width: 18px;"
                   onfocus={rememberEditableStart}
                   onkeydown={handleEditableKeydown}
-                  onchange={(e) =>
-                    handleSessionChange(
-                      i,
-                      "season",
-                      (e.target as HTMLInputElement).value,
-                    )}
+                  onblur={(e) => handleSessionLocalBlur(e, i, "season")}
                   aria-label={`Session ${i + 1} season`}
                 />
-                <span style="font-size:10px; color:var(--color-text-muted);">s</span>
+                <span style="font-size:10px; color:var(--color-text-muted);">season</span>
                 <input
                   class="qi-session-mins"
                   type="number"
                   value={Math.max(1, Number(session.episode || 1))}
-                  min="1"
+                  min="1; width: 18px;"
                   onfocus={rememberEditableStart}
                   onkeydown={handleEditableKeydown}
-                  onchange={(e) =>
-                    handleSessionChange(
-                      i,
-                      "episode",
-                      (e.target as HTMLInputElement).value,
-                    )}
+                  onblur={(e) => handleSessionLocalBlur(e, i, "episode")}
                   aria-label={`Session ${i + 1} episode`}
                 />
-                <span style="font-size:10px; color:var(--color-text-muted);">e</span>
+                <span style="font-size:10px; color:var(--color-text-muted);">episode</span>
               {/if}
 
               {#if isRead}
@@ -1059,12 +1179,7 @@
                   style={`--chars-len: ${String(session.chars || 0).length};`}
                   onfocus={rememberEditableStart}
                   onkeydown={handleEditableKeydown}
-                  onchange={(e) =>
-                    handleSessionChange(
-                      i,
-                      "chars",
-                      (e.target as HTMLInputElement).value,
-                    )}
+                  onblur={(e) => handleSessionLocalBlur(e, i, "chars")}
                   aria-label={`Session ${i + 1} characters`}
                 />
                 <span style="font-size:10px; color:var(--color-text-muted);"
@@ -1079,21 +1194,27 @@
                 min="1"
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
-                onchange={(e) =>
-                  handleSessionChange(
-                    i,
-                    "mins",
-                    (e.target as HTMLInputElement).value,
-                  )}
+                onblur={(e) => handleSessionLocalBlur(e, i, "mins")}
                 aria-label={`Session ${i + 1} minutes`}
               />
-              <span style="font-size:10px; color:var(--color-text-muted);"
-                >min</span
+              <span style="font-size:10px; color:var(--color-text-muted);">min</span>
+
+              <button
+                type="button"
+                class="qi-session-remove send-sess-btn"
+                style="color: var(--color-accent) !important; padding: 0 4px !important; margin-left: 2px;"
+                title="Log session individually"
+                onclick={() => handleSendSession(i)}
               >
+                <svg style="width: 10px; height: 10px; fill: currentColor !important;" viewBox="0 0 24 24">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+              </button>
 
               <input
                 type="datetime-local"
                 class="qi-session-date-input"
+                style="flex: unset; width: 145px; margin-left: auto;"
                 value={toLocalDT(session.date)}
                 onfocus={rememberEditableStart}
                 onkeydown={handleEditableKeydown}
@@ -1149,5 +1270,74 @@
   .qi-session-remove:hover {
     color: var(--color-error) !important;
     background: rgba(240, 112, 106, 0.08) !important;
+  }
+  .qi-link-status {
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--color-success, #3ddc84) !important;
+    font-size: 12px;
+    cursor: pointer;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    transition: color 0.15s;
+    font-weight: bold;
+  }
+  .qi-link-status .broken-icon {
+    display: none;
+  }
+  .qi-link-status .connected-icon {
+    display: block;
+  }
+  .qi-link-status:hover {
+    color: var(--color-error, #f0706a) !important;
+  }
+  .qi-link-status:hover .broken-icon {
+    display: block;
+  }
+  .qi-link-status:hover .connected-icon {
+    display: none;
+  }
+  .stremio-ep-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--color-text-dimmed, #7a8ca5);
+    margin-top: 6px;
+    margin-bottom: 6px;
+    font-family: var(--font-mono, monospace);
+  }
+  .stremio-ep-meta span {
+    font-weight: normal;
+    opacity: 0.85;
+  }
+  .stremio-ep-meta input {
+    width: 32px;
+    text-align: center;
+    color: var(--color-accent, #f0b429);
+    font-weight: bold;
+    background: none;
+    border: none;
+    border-bottom: 1px dashed var(--color-border, #1c2333);
+    padding: 0 2px;
+    margin: 0;
+    outline: none;
+    font-family: inherit;
+    font-size: inherit;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .stremio-ep-meta input:hover {
+    border-bottom-color: var(--color-accent, #f0b429);
+    border-bottom-style: solid;
+  }
+  .stremio-ep-meta input:focus {
+    border-bottom-color: var(--color-accent, #f0b429);
+    border-bottom-style: solid;
+    background: rgba(255, 255, 255, 0.04);
   }
 </style>

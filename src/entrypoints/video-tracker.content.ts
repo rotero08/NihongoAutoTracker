@@ -1,6 +1,8 @@
 /**
  * ── Video Tracker Content Script ─────────────────────────────────────────────
+ * Binds browser player event loops, watched threshold aggregators, and manual modals.
  */
+
 import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
@@ -8,13 +10,12 @@ import { submitLog } from '@/lib/api/nihongotracker';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
-import { showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
+import { showPlaylistSelectorModal, cleanupPlaylistModal } from '@/lib/ui/playlist-modal';
 import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
-import { setSafeHTML } from '@/lib/utils/dom';
-import { PlayerTrackerEngine } from '@/lib/utils/player-tracker-engine';
+import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
 import {
@@ -24,7 +25,6 @@ import {
 } from '@/lib/utils/youtube-extraction';
 
 let cachedConfig: any = {};
-
 let isMusicVideoCached = false;
 let isJapaneseVideoCached = false;
 let metadataResolved = false;
@@ -32,7 +32,6 @@ let lastAnalyzedUrl = '';
 let lastAnalyzedTitle = '';
 let channelPollInterval: any = null;
 
-// Layout guard reference variables to prevent redundant DOM updates and layout thrashing
 let lastRenderedCurrentSecs = -1;
 let lastRenderedTotalSecs = -1;
 let lastRenderedUrl = '';
@@ -47,29 +46,15 @@ function resolvePageLanguageAndType() {
   const adapter = getActiveVideoAdapter();
   if (!adapter) return;
 
-  // We keep re-evaluating layout elements if we haven't matched Japanese yet to ensure we support slow-loading live streams
   if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved && isJapaneseVideoCached) {
     return;
   }
-
-  const isGenericTitle = currentTitle === 'YouTube' || currentTitle === '';
 
   isMusicVideoCached = adapter.isMusic();
   isJapaneseVideoCached = adapter.isLikelyJapanese();
   lastAnalyzedUrl = currentUrl;
   lastAnalyzedTitle = currentTitle;
-
-  metadataResolved = !isGenericTitle;
-
-  // Swapped noisy storage logs with compile-time dead-code eliminated console logs
-  if (import.meta.env.DEV) {
-    console.log(`[NAT DEV - VideoTracker] Resolved video classification metadata`, {
-      title: currentTitle,
-      isMusic: isMusicVideoCached,
-      isJapanese: isJapaneseVideoCached,
-      resolved: metadataResolved
-    });
-  }
+  metadataResolved = currentTitle !== 'YouTube' && currentTitle !== '';
 }
 
 let _adPlayingCached = false;
@@ -92,13 +77,11 @@ function isAdPlaying(): boolean {
 }
 
 const engine = new PlayerTrackerEngine(
-  (currentSecs, totalSecs) => {
+  (currentSecs: number, totalSecs: number) => {
     if (!trackedVideo || !currentUrl || isYouTubeShorts()) return;
-
     const roundedCurrent = Math.floor(currentSecs);
     const roundedTotal = Math.floor(totalSecs);
 
-    // If values have not changed and the URL is the same, skip rendering to avoid layout thrashing
     if (roundedCurrent === lastRenderedCurrentSecs && roundedTotal === lastRenderedTotalSecs && currentUrl === lastRenderedUrl) {
       return;
     }
@@ -159,9 +142,7 @@ async function handleBadgeClick() {
   if (isYouTubeShorts()) return;
   const existingPopup = document.getElementById('nt-modal-popup');
   if (existingPopup) {
-    const closer = (existingPopup as any).__ntCloseModal as ((submitted: boolean) => void) | undefined;
-    if (typeof closer === 'function') closer(false);
-    else existingPopup.remove();
+    existingPopup.remove();
     state.isManualLogging = false;
     return;
   }
@@ -203,11 +184,11 @@ async function handleBadgeClick() {
       : engine.getTotal(),
     showTotal: liveShowTotal,
     channelId,
-    onToggleShowTotal: async (v) => {
+    onToggleShowTotal: async (v: boolean) => {
       const c = await configStorage.getValue() as any;
       await configStorage.setValue({ ...c, showTotalInBadge: v });
     }
-  }, async final => {
+  }, async (final: any) => {
     try {
       engine.setHasTriggered(true);
       const mediaData = await getChannelMediaData(channelId, final.title);
@@ -235,7 +216,7 @@ async function handleBadgeClick() {
     } catch (err) {
       engine.setHasTriggered(false);
     }
-  }, (submitted) => {
+  }, (submitted: boolean) => {
     state.isManualLogging = false;
     if (!submitted) engine.setHasTriggered(false);
   });
@@ -252,7 +233,6 @@ function unbindActiveVideoListeners() {
     boundVideoListeners = {};
     activeVideoElement = null;
   }
-  // Clear engine references and polling intervals to prevent memory leaks
   engine.clearVideoElement();
   if (channelPollInterval) {
     clearInterval(channelPollInterval);
@@ -274,10 +254,6 @@ const attach = (vid: HTMLVideoElement) => {
 
   if (currentUrl === cleanedHref && trackedVideo === vid) {
     return;
-  }
-
-  if (import.meta.env.DEV) {
-    console.log(`[NAT DEV - VideoTracker] New Video Context Detected`, { url: cleanedHref });
   }
 
   clearExtractionCaches();
@@ -308,30 +284,21 @@ const attach = (vid: HTMLVideoElement) => {
     if (isAdPlaying() || isYouTubeShorts()) return;
     engine.startPlayClock(vid);
   };
-
   const onPlay = () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
     engine.startPlayClock(vid);
     if (vid.currentTime < 5) engine.setHasTriggered(false);
   };
-
   const onPause = () => { engine.flushPlayClock(); };
   const onWaiting = () => { engine.flushPlayClock(); };
-
-  const onSeeking = () => {
-    engine.handleSeeking();
-  };
-
+  const onSeeking = () => { engine.handleSeeking(); };
   const onSeeked = () => {
     if (isYouTubeShorts()) return;
     if (vid.currentTime < 5) engine.setHasTriggered(false);
     engine.handleSeeked(vid);
   };
-
   const onTimeUpdate = async () => {
     if (isYouTubeShorts()) return;
-
-    // Fast Path: Update the badge instantly on every single timeupdate event to eliminate input lag
     engine.updateBadgeLive(vid);
 
     const now = performance.now();
@@ -343,11 +310,8 @@ const attach = (vid: HTMLVideoElement) => {
       document.getElementById(BADGE_ID)?.remove();
       return;
     }
-
-    // Slow Path: Handle database entries and threshold logging safely on a throttled interval
     await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
   };
-
   const onEnded = async () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
     engine.flushPlayClock();
@@ -361,7 +325,6 @@ const attach = (vid: HTMLVideoElement) => {
       resetSession();
     }
   };
-
   const onEmptied = async () => {
     engine.flushPlayClock();
     const urlNow = cleanUrl(window.location.href);
@@ -376,15 +339,8 @@ const attach = (vid: HTMLVideoElement) => {
   };
 
   boundVideoListeners = {
-    playing: onPlaying,
-    play: onPlay,
-    pause: onPause,
-    waiting: onWaiting,
-    seeking: onSeeking,
-    seeked: onSeeked,
-    timeupdate: onTimeUpdate,
-    ended: onEnded,
-    emptied: onEmptied
+    playing: onPlaying, play: onPlay, pause: onPause, waiting: onWaiting,
+    seeking: onSeeking, seeked: onSeeked, timeupdate: onTimeUpdate, ended: onEnded, emptied: onEmptied
   };
 
   for (const [event, listener] of Object.entries(boundVideoListeners)) {
@@ -402,20 +358,12 @@ const attach = (vid: HTMLVideoElement) => {
     let updated = false;
     if (foundId && foundId !== channelId) {
       channelId = foundId;
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - VideoTracker] Channel ID Discovered`, { channelId: foundId });
-      }
       updated = true;
     }
-
     if (foundName && foundName !== cachedChannelName) {
       cachedChannelName = foundName;
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - VideoTracker] Channel Name Discovered`, { channelName: foundName });
-      }
       updated = true;
     }
-
     if (updated && trackedVideo) {
       badgeRenderer.ensureCounter(
         engine.getLiveWatched(),
@@ -472,62 +420,58 @@ const attach = (vid: HTMLVideoElement) => {
 function isPlaylistOrPodcastPage(): boolean {
   const pathname = window.location.pathname;
   const href = window.location.href;
-
-  const isChannelRoute = pathname.startsWith('/@') ||
-    pathname.startsWith('/channel/') ||
-    pathname.startsWith('/c/') ||
-    pathname.startsWith('/user/');
-
-  if (isChannelRoute && !href.includes('list=')) {
-    return false;
-  }
-
-  return href.includes('list=') ||
-    pathname.startsWith('/playlist') ||
-    !!document.querySelector('ytd-playlist-header-renderer, ytd-playlist-panel-renderer');
+  const isChannelRoute = pathname.startsWith('/@') || pathname.startsWith('/channel/') || pathname.startsWith('/c/') || pathname.startsWith('/user/');
+  if (isChannelRoute && !href.includes('list=')) return false;
+  return href.includes('list=') || pathname.startsWith('/playlist') || !!document.querySelector('ytd-playlist-header-renderer, ytd-playlist-panel-renderer');
 }
 
+/**
+ * Resolves the target playlist header or panels.
+ * Sequential search filters guarantee that only a single active container is ever returned,
+ * preventing double-button rendering errors on YouTube SPA page transitions.
+ */
 function getActivePlaylistContainers(): HTMLElement[] {
-  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) {
-    return [];
+  if (!isPlaylistOrPodcastPage() || isYouTubeShorts()) return [];
+
+  // Watch page with side panel playlist
+  const panelContainer = document.querySelector('ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed') as HTMLElement;
+  if (panelContainer) {
+    return [panelContainer];
   }
 
-  const classicSel = 'ytd-playlist-header-renderer .metadata-buttons-wrapper';
-  const modernHeaderSel = 'yt-page-header-renderer yt-flexible-actions-view-model, yt-page-header-view-model yt-flexible-actions-view-model, yt-page-header-renderer ytd-menu-renderer, ytd-playlist-header-renderer ytd-menu-renderer';
-  const panelSel = 'ytd-playlist-panel-renderer #playlist-action-menu #top-level-buttons-computed';
+  // Main playlist details page
+  const selectors = [
+    'yt-page-header-renderer yt-flexible-actions-view-model',
+    'yt-page-header-view-model yt-flexible-actions-view-model',
+    'ytd-playlist-header-renderer ytd-menu-renderer',
+    'ytd-playlist-header-renderer .metadata-buttons-wrapper'
+  ];
 
-  const containers: HTMLElement[] = [];
-  const selectors = `${classicSel}, ${modernHeaderSel}, ${panelSel}`;
-  const matches = document.querySelectorAll(selectors);
-
-  for (let i = 0; i < matches.length; i++) {
-    const el = matches[i];
-    if (el instanceof HTMLElement) {
-      if (el.offsetWidth > 0 || el.offsetHeight > 0) {
-        containers.push(el);
-      }
+  for (const selector of selectors) {
+    const container = document.querySelector(selector) as HTMLElement;
+    if (container && (container.offsetWidth > 0 || container.offsetHeight > 0)) {
+      return [container]; // Returns only the first visible match sequentially
     }
   }
-  return containers;
+
+  return [];
 }
 
 function runPlaylistInjection(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname;
-  if (!host.includes('youtube.com') && !host.includes('youtu.be')) {
-    return false;
-  }
-  if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || cachedConfig.hidePlaylistBadgeIcon === true || isYouTubeShorts()) {
-    return false;
+  if (!host.includes('youtube.com') && !host.includes('youtu.be')) return false;
+  if (!cachedConfig || cachedConfig.enablePlaylistLogger === false || cachedConfig.hidePlaylistBadgeIcon === true || isYouTubeShorts()) return false;
+
+  // Single Page Check: If a playlist badge exists on the page, don't inject another one
+  if (document.querySelector('.nt-playlist-logger')) {
+    return true;
   }
 
   const targets = getActivePlaylistContainers();
-  if (targets.length === 0) {
-    return false;
-  }
+  if (targets.length === 0) return false;
 
   let injectedAny = false;
-
   for (const targetContainer of targets) {
     if (targetContainer.querySelector('.nt-playlist-logger')) {
       injectedAny = true;
@@ -537,49 +481,36 @@ function runPlaylistInjection(): boolean {
     try {
       const btn = document.createElement('button');
       btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-      setSafeHTML(btn, `
+      btn.innerHTML = `
         <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24" fill="var(--nt-accent, #F5B831)">
           <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z"/>
         </svg>
-      `);
+      `;
 
       Object.assign(btn.style, {
-        background: 'transparent',
-        border: 'none',
-        cursor: 'pointer',
-        margin: '0 4px',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '40px',
-        height: '40px',
-        borderRadius: '50%',
-        transition: 'background-color 0.2s',
-        filter: 'none !important',
-        boxShadow: 'none !important',
-        flexShrink: '0'
+        background: 'transparent', border: 'none', cursor: 'pointer', margin: '0 4px',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '40px',
+        height: '40px', borderRadius: '50%', transition: 'background-color 0.2s',
+        filter: 'none !important', boxShadow: 'none !important', flexShrink: '0'
       });
 
       btn.onmouseenter = () => btn.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
       btn.onmouseleave = () => btn.style.backgroundColor = 'transparent';
       btn.onclick = (e) => {
+        // Blocks event propagation to avoid re-triggering YouTube mutations on click
+        e.preventDefault();
         e.stopPropagation();
 
         const existingPlaylistModal = document.getElementById('nt-playlist-modal');
         if (existingPlaylistModal) {
-          const closer = (existingPlaylistModal as any).__ntCloseModal as (() => void) | undefined;
-          if (typeof closer === 'function') closer();
-          else existingPlaylistModal.remove();
+          cleanupPlaylistModal();
           return;
         }
-
         const isInline = targetContainer.closest('ytd-playlist-panel-renderer') !== null;
         showPlaylistSelectorModal(btn, isInline, cachedConfig.theme);
       };
 
-      const overflowNode = targetContainer.querySelector(
-        'yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child'
-      );
+      const overflowNode = targetContainer.querySelector('yt-button-view-model:last-child, ytd-menu-renderer:last-child, button:last-child, [class*="button"]:last-child');
       if (overflowNode && overflowNode.parentElement === targetContainer) {
         targetContainer.insertBefore(btn, overflowNode);
       } else {
@@ -590,7 +521,6 @@ function runPlaylistInjection(): boolean {
       addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
     }
   }
-
   return injectedAny;
 }
 
@@ -601,9 +531,7 @@ function runVideoInjection() {
   }
   const vid = document.querySelector<HTMLVideoElement>('video');
   if (vid) {
-    try {
-      attach(vid);
-    } catch (err) { }
+    try { attach(vid); } catch (err) {}
   }
 }
 
@@ -627,11 +555,8 @@ export default defineContentScript({
       if (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom') {
         const themeId = theme.replace('custom_', '').replace('custom-', '');
         const targetTheme = (c.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
-        if (targetTheme) {
-          customColors = targetTheme.colors;
-        } else if (c.customColors) {
-          customColors = c.customColors;
-        }
+        if (targetTheme) customColors = targetTheme.colors;
+        else if (c.customColors) customColors = c.customColors;
       }
       applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
       const activeTheme = getTheme(theme);
@@ -643,67 +568,43 @@ export default defineContentScript({
     window.addEventListener('play', (e) => {
       if (isYouTubeShorts()) return;
       const target = e.target as HTMLVideoElement;
-      if (target && target.tagName === 'VIDEO') {
-        attach(target);
-      }
+      if (target && target.tagName === 'VIDEO') attach(target);
     }, true);
 
     window.addEventListener('playing', (e) => {
       if (isYouTubeShorts()) return;
       const target = e.target as HTMLVideoElement;
-      if (target && target.tagName === 'VIDEO') {
-        attach(target);
-      }
+      if (target && target.tagName === 'VIDEO') attach(target);
     }, true);
 
-    // Active state-checking healing thread to recover play clocks suspended by backgrounding or transient buffer drops
     let healingLoopTimer: any = null;
-
     const startHealingLoop = (intervalTime = 1000) => {
-      if (healingLoopTimer) {
-        clearInterval(healingLoopTimer);
-      }
+      if (healingLoopTimer) clearInterval(healingLoopTimer);
       healingLoopTimer = setInterval(() => {
         const currentHref = cleanUrl(window.location.href);
         if (!isYouTubeShorts() && (currentHref.includes('watch') || !window.location.hostname.includes('youtube.com'))) {
           const vid = document.querySelector<HTMLVideoElement>('video');
           if (vid) {
             if (trackedVideo !== vid || currentUrl !== currentHref) {
-              if (import.meta.env.DEV) {
-                console.log(`[NAT DEV - VideoTracker] Standard polling loop: active video shift detected.`);
-              }
               attach(vid);
             } else {
-              // Keep the badge ticking smoothly on every polling loop interval
-              if (!vid.paused && !vid.ended && !isAdPlaying()) {
-                engine.updateBadgeLive(vid);
-              }
+              if (!vid.paused && !vid.ended && !isAdPlaying()) engine.updateBadgeLive(vid);
             }
           }
         }
-
         if (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying() && !isYouTubeShorts()) {
-          if (engine.getPlayClockStart() < 0 && !engine.getIsUserSeeking()) {
-            engine.startPlayClock(trackedVideo);
-          }
+          if (engine.getPlayClockStart() < 0 && !engine.getIsUserSeeking()) engine.startPlayClock(trackedVideo);
         } else if (trackedVideo && (trackedVideo.paused || trackedVideo.ended || isAdPlaying() || isYouTubeShorts())) {
-          if (engine.getPlayClockStart() >= 0) {
-            engine.flushPlayClock();
-          }
+          if (engine.getPlayClockStart() >= 0) engine.flushPlayClock();
         }
       }, intervalTime);
     };
 
-    // Initialize healing loop
     startHealingLoop(1000);
 
-    // Manage healing loop throttling behavior on visibility shifts
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        startHealingLoop(5000);
-      } else {
-        startHealingLoop(1000);
-      }
+      if (document.visibilityState === 'hidden') startHealingLoop(5000);
+      else startHealingLoop(1000);
     });
 
     let pageObserver: MutationObserver | null = null;
@@ -714,6 +615,8 @@ export default defineContentScript({
         document.getElementById(BADGE_ID)?.remove();
         return;
       }
+      
+      // Clean up past observers to resolve memory leak risks
       if (pageObserver) {
         pageObserver.disconnect();
         pageObserver = null;
@@ -724,7 +627,6 @@ export default defineContentScript({
       }
 
       const activeUrlOnNavigation = window.location.href;
-
       runVideoInjection();
       runPlaylistInjection();
 
@@ -732,10 +634,7 @@ export default defineContentScript({
       let rafPending = false;
 
       pageObserver = new MutationObserver((mutations) => {
-        if (window.location.href !== activeUrlOnNavigation) {
-          return;
-        }
-
+        if (window.location.href !== activeUrlOnNavigation) return;
         let isRelevant = false;
         const len = mutations.length;
         for (let i = 0; i < len; i++) {
@@ -745,11 +644,7 @@ export default defineContentScript({
             const node = added[j];
             if (node instanceof HTMLElement) {
               const nodeName = node.nodeName;
-              if (
-                nodeName.includes('-') ||
-                node.id === 'playlist-action-menu' ||
-                node.id === 'top-level-buttons-computed'
-              ) {
+              if (nodeName.includes('-') || node.id === 'playlist-action-menu' || node.id === 'top-level-buttons-computed') {
                 isRelevant = true;
                 break;
               }
@@ -757,7 +652,6 @@ export default defineContentScript({
           }
           if (isRelevant) break;
         }
-
         if (!isRelevant) return;
         if (rafPending) return;
 
@@ -781,17 +675,17 @@ export default defineContentScript({
 
     startTargetedObserver();
 
+    // Bind navigation hooks directly on script execution boundaries
     window.addEventListener('yt-navigate-finish', startTargetedObserver);
 
     window.addEventListener('yt-navigate-start', () => {
-      window.removeEventListener('yt-navigate-finish', startTargetedObserver);
       clearExtractionCaches();
-      document.getElementById('nt-playlist-modal')?.remove();
+      cleanupPlaylistModal();
       document.getElementById('nt-modal-popup')?.remove();
+      document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
       engine.flushPlayClock();
       unbindActiveVideoListeners();
       trackedVideo = null;
-      window.addEventListener('yt-navigate-finish', startTargetedObserver);
     });
 
     configStorage.watch((newCfg) => {
@@ -803,9 +697,8 @@ export default defineContentScript({
         if (badge && trackedVideo) {
           resolvePageLanguageAndType();
           const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();
-          if (shouldHide) {
-            badge.remove();
-          } else {
+          if (shouldHide) badge.remove();
+          else {
             badgeRenderer.ensureCounter(
               engine.getLiveWatched(),
               engine.getTotal(),
@@ -822,9 +715,7 @@ export default defineContentScript({
 
         if (newCfg.enablePlaylistLogger === false || newCfg.hidePlaylistBadgeIcon === true) {
           document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
-        } else {
-          runPlaylistInjection();
-        }
+        } else runPlaylistInjection();
       }
     });
 
@@ -832,9 +723,7 @@ export default defineContentScript({
       if (isYouTubeShorts()) return;
       const clean = cleanUrl(window.location.href);
       if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
-        if (engine.getLastSyncSecs() > 0) {
-          resetSession();
-        }
+        if (engine.getLastSyncSecs() > 0) resetSession();
       }
     });
   },

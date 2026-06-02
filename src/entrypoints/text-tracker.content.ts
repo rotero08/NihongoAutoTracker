@@ -1,9 +1,11 @@
 /**
  * ── Text Tracker Content Script ──────────────────────────────────────────────
+ * Monitors page focus, scrolls, and manages the in-page reading overlay timer.
  */
+
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
-import TtuChronoDropdown from '@/components/TtuChronoDropdown.svelte';
+import TtuChronoDropdown from '@/components/reader/TtuChronoDropdown.svelte';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
@@ -21,11 +23,11 @@ import {
   updatePauseIconState
 } from '@/lib/ui/reader-overlay';
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
-import { DOMMutationStabilizer } from '@/lib/utils/dom-mutation-stabilizer';
-import { OverlayController } from '@/lib/utils/overlay-controller';
+import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
+import { OverlayController } from '@/lib/core/overlay-controller';
 import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
-import { TimerEngine } from '@/lib/utils/timer'; // Class unified
+import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
 import { mount, unmount } from 'svelte';
 
@@ -40,42 +42,33 @@ const isRelevantFrame = typeof window !== 'undefined' && typeof window.location 
 let currentConfig: any = {};
 let isAnalyzingPage = false;
 let cachedIsJapanese: boolean | null = null;
-
 let progressObserver: MutationObserver | null = null;
 let scrollTimeout: any = null;
 let isChronoInitializing = false;
-
 let mountedChronoComponent: any = null;
-
 let _readingViewCache: boolean | null = null;
 let _readingViewCacheTime = 0;
-const READING_VIEW_CACHE_TTL = 500; // ms
+const READING_VIEW_CACHE_TTL = 500;
 let _wasReadingViewActive = false;
-
 let _insertPointCache: { el: Element; pos: InsertPosition } | null = null;
-
 let _mutationRafScheduled = false;
 let _mutationTimeout: any = null;
 let _instantThemeSyncScheduled = false;
 let _lastSectionCheckTime = 0;
 let _transitionGraceUntil = 0;
-
 let _lastRecalculateTime = 0;
 const RECALCULATE_THROTTLE_MS = 250;
-
 let hasSyncedThisSession = false;
-let _cachedAutoSave: boolean = true;
-
-// Throttling storage write states to eliminate continuous cross-process serialization overhead
+let _cachedAutoSave = true;
 let _lastStorageWriteTime = 0;
-const STORAGE_WRITE_THROTTLE_MS = 10000; // 10 seconds
-
+const STORAGE_WRITE_THROTTLE_MS = 10000;
 let _lastThemeSyncTime = 0;
 const THEME_SYNC_THROTTLE_MS = 250;
-
-// Yatsu settings sidebar tracking states
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
+
+// Shared Iframe cache variable resolving Cross-Origin DOM blocks securely
+let cachedActiveTabTitle = "";
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
@@ -89,33 +82,20 @@ const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
       btn.style.setProperty('opacity', '0.6', 'important');
       btn.style.setProperty('pointer-events', 'auto', 'important');
       btn.style.setProperty('cursor', 'help', 'important');
-
       if (!tooltip && wrapper) {
         tooltip = document.createElement('div');
         tooltip.className = 'nt-chrono-tooltip';
         Object.assign(tooltip.style, {
-          position: 'absolute',
-          bottom: '38px',
-          left: '0',
-          transform: 'translateY(5px)',
-          background: 'rgba(20, 20, 25, 0.95)',
-          color: '#f5a623',
-          padding: '6px 12px',
-          borderRadius: '4px',
-          fontSize: '11px',
-          whiteSpace: 'nowrap',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
-          border: '1px solid rgba(245, 166, 35, 0.3)',
-          zIndex: '10000',
-          opacity: '0',
-          pointerEvents: 'none',
+          position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
+          background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+          borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+          zIndex: '10000', opacity: '0', pointerEvents: 'none',
           transition: 'opacity 0.2s ease, transform 0.2s ease'
         });
         wrapper.appendChild(tooltip);
       }
-      if (tooltip) {
-        tooltip.textContent = message || 'Waiting for Jiten to finish processing layout...';
-      }
+      if (tooltip) tooltip.textContent = message || 'Waiting for Jiten to finish processing layout...';
     } else {
       btn.classList.remove('nt-btn-suspended');
       btn.style.removeProperty('opacity');
@@ -130,7 +110,6 @@ const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
 const updateDropdownOverlayState = (active: boolean, message?: string) => {
   const dropdown = document.getElementById('nt-ttu-dropdown');
   if (!dropdown) return;
-
   const overlay = dropdown.querySelector('.nt-stabilize-overlay') as HTMLElement | null;
   if (active) {
     dropdown.style.setProperty('pointer-events', 'none', 'important');
@@ -138,23 +117,11 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
       const newOverlay = document.createElement('div');
       newOverlay.className = 'nt-stabilize-overlay';
       Object.assign(newOverlay.style, {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        right: '0',
-        bottom: '0',
-        background: 'rgba(15, 15, 20, 0.75)',
-        backdropFilter: 'blur(2.5px)',
-        webkitBackdropFilter: 'blur(2.5px)',
-        color: '#aaa',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: '11px',
-        textalign: 'center',
-        padding: '16px',
-        borderRadius: '8px',
-        zIndex: '9999'
+        position: 'absolute', top: '0', left: '0', right: '0', bottom: '0',
+        background: 'rgba(15, 15, 20, 0.75)', backdropFilter: 'blur(2.5px)',
+        webkitBackdropFilter: 'blur(2.5px)', color: '#aaa', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontSize: '11px',
+        textAlign: 'center', padding: '16px', borderRadius: '8px', zIndex: '9999'
       } as any);
       dropdown.appendChild(newOverlay);
       newOverlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
@@ -187,21 +154,11 @@ const stabilizer = new DOMMutationStabilizer(
           tooltip = document.createElement('div');
           tooltip.className = 'nt-chrono-tooltip';
           Object.assign(tooltip.style, {
-            position: 'absolute',
-            bottom: '38px',
-            left: '0',
-            transform: 'translateY(5px)',
-            background: 'rgba(20, 20, 25, 0.95)',
-            color: '#f5a623',
-            padding: '6px 12px',
-            borderRadius: '4px',
-            fontSize: '11px',
-            whiteSpace: 'nowrap',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
-            border: '1px solid rgba(245, 166, 35, 0.3)',
-            zIndex: '10000',
-            opacity: '0',
-            pointerEvents: 'none',
+            position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
+            background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+            borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+            zIndex: '10000', opacity: '0', pointerEvents: 'none',
             transition: 'opacity 0.2s ease, transform 0.2s ease'
           });
           wrapper.appendChild(tooltip);
@@ -254,7 +211,6 @@ const ttuState = new Proxy({
       target.running = isRunning;
       if (wasRunning && !isRunning) {
         stabilizer.handleTimerPaused();
-        // Force synchronous storage write on pause to prevent any visual data latency
         if (getReaderConfig(currentConfig).autoSave !== false) {
           liveSyncQueue(true);
         }
@@ -288,13 +244,30 @@ const ttuState = new Proxy({
 
 let isSyncing = false;
 
+// Query the background frame title cache asynchronously to resolve CORS exceptions securely
+function updateCachedActiveTabTitle() {
+  if (window.self !== window.top) {
+    browser.runtime.sendMessage({ action: "GET_ACTIVE_TAB_TITLE" })
+      .then((response) => {
+        if (response?.title) cachedActiveTabTitle = response.title;
+      })
+      .catch(() => {});
+  }
+}
+
 function getTTUTitle() {
   let title = document.title;
   try {
-    if (window.self !== window.top && window.top) {
-      title = window.top.document.title || title;
+    if (window.self !== window.top) {
+      if (cachedActiveTabTitle) {
+        title = cachedActiveTabTitle;
+      } else if (window.top) {
+        title = window.top.document.title || title;
+      }
     }
-  } catch (e) { }
+  } catch (e) {
+    if (cachedActiveTabTitle) title = cachedActiveTabTitle;
+  }
   title = title.replace(/\s*\|\s*(ッツ Ebook Reader|Yatsu Reader|YomiYasu Reader)\s*/i, '');
   title = title.replace(/\s*[–—-]\s*ttu.*$/i, '');
   title = title.replace(/^YomiYasu\s*-\s*/i, '');
@@ -307,10 +280,6 @@ function parseTitleWithConfig(docTitle: string) {
 
 let lastLoggedPaginatedMode: boolean | null = null;
 
-
-
-
-// Cleaned reader name lookup
 function getReaderName() {
   const adapter = getActiveReaderAdapter();
   return adapter ? adapter.name : 'Reader';
@@ -349,7 +318,7 @@ function isReadingViewActive(): boolean {
 
 function invalidateReadingViewCache() {
   _readingViewCache = null;
-  _insertPointCache = null; // Ensure stale insert points are fully cleared on route transitions!
+  _insertPointCache = null;
   clearExtractorCache();
 }
 
@@ -364,7 +333,7 @@ function safelySetAdapterName(adapter: any, name: string | null) {
   } catch (e) {
     try {
       adapter.name = name;
-    } catch (err) { }
+    } catch (err) {}
   }
 }
 
@@ -388,13 +357,9 @@ function getActiveThemeConfig(cfg: any) {
 
 async function liveSyncQueue(force = false) {
   if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
-
   const now = Date.now();
-  if (!force && (now - _lastStorageWriteTime < STORAGE_WRITE_THROTTLE_MS)) {
-    return;
-  }
+  if (!force && (now - _lastStorageWriteTime < STORAGE_WRITE_THROTTLE_MS)) return;
   _lastStorageWriteTime = now;
-
   isSyncing = true;
 
   try {
@@ -414,20 +379,12 @@ async function liveSyncQueue(force = false) {
         return qParsed.query === parsedTitle && (qParsed.volume || 1) === targetVolume;
       });
 
-      // Swapped disk storage logging for a lightweight compiler-optimized development warning
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - TextTracker] liveSyncQueue executed`, { rawTitle, parsedTitle, timeMs: ttuState.timeMs, chars: ttuState.chars });
-      }
-
       if (!existing) {
         existing = {
           id: crypto.randomUUID(), type: 'reading',
-          contentTitleNative: parsedTitle,
-          contentTitleEnglish: '',
-          originalTitle: rawTitle,
-          description: parsedTitle,
-          chars: ttuState.chars, time: secs,
-          volume: targetVolume,
+          contentTitleNative: parsedTitle, contentTitleEnglish: '',
+          originalTitle: rawTitle, description: parsedTitle,
+          chars: ttuState.chars, time: secs, volume: targetVolume,
           date: dateStr, private: false, tags: [],
           sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
           readerName: getReaderName()
@@ -436,17 +393,14 @@ async function liveSyncQueue(force = false) {
       } else {
         existing.originalTitle = existing.originalTitle || rawTitle;
         existing.readerName = getReaderName();
-
         if (!existing.mediaId || existing.mediaId === 'web-reading') {
           existing.contentTitleNative = existing.contentTitleNative || parsedTitle;
           if (targetVolume !== undefined && !existing.volume) {
             existing.volume = targetVolume;
           }
         }
-
         existing.sessions = existing.sessions || [];
         const sIdx = existing.sessions.findIndex((s: any) => s.id === ttuState.id);
-
         if (sIdx >= 0) {
           existing.sessions[sIdx].secs = secs;
           existing.sessions[sIdx].chars = ttuState.chars;
@@ -454,7 +408,6 @@ async function liveSyncQueue(force = false) {
         } else {
           existing.sessions.push({ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr });
         }
-
         existing.chars = existing.sessions.reduce((acc: any, s: any) => acc + s.chars, 0);
         existing.time = existing.sessions.reduce((acc: any, s: any) => acc + s.secs, 0);
       }
@@ -467,10 +420,8 @@ async function liveSyncQueue(force = false) {
         existing.contentTitleEnglish = linkedMedia.mediaData.contentTitleEnglish || existing.contentTitleEnglish;
         existing.description = linkedMedia.mediaData.contentTitleNative || existing.contentTitleNative;
       }
-
       return queue;
     });
-
     hasSyncedThisSession = true;
   } finally {
     isSyncing = false;
@@ -479,10 +430,6 @@ async function liveSyncQueue(force = false) {
 
 async function saveSessionAndQueue() {
   if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
-
-  // Direct manual save -> persistent log inside active RAM storage
-  await addDebugLog('INFO', 'TextTracker', `Saving explicit TTU session`, { chars: ttuState.chars, timeMs: ttuState.timeMs });
-
   const title = getTTUTitle();
   const dateStr = new Date().toISOString();
   const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
@@ -492,7 +439,7 @@ async function saveSessionAndQueue() {
   history[title].push(sessionLog);
   await ttuHistoryStorage.setValue(history);
 
-  await liveSyncQueue(true); // Force sync immediately on explicit save actions
+  await liveSyncQueue(true);
 
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
@@ -513,10 +460,7 @@ async function saveSessionAndQueue() {
 
 function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   if (typeof document === 'undefined') return null;
-
-  if (_insertPointCache && _insertPointCache.el.isConnected) {
-    return _insertPointCache;
-  }
+  if (_insertPointCache && _insertPointCache.el.isConnected) return _insertPointCache;
 
   const footer = document.getElementById('ttu-page-footer');
   if (footer) {
@@ -541,20 +485,16 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
     const pt = adapter.findInsertPoint();
     if (pt) { _insertPointCache = pt; return _insertPointCache; }
   }
-
   _insertPointCache = null;
   return null;
 }
 
 function recalculateChars() {
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
-
   const now = Date.now();
   if (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS) {
     if (scrollTimeout) clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      recalculateChars();
-    }, RECALCULATE_THROTTLE_MS);
+    scrollTimeout = setTimeout(() => { recalculateChars(); }, RECALCULATE_THROTTLE_MS);
     return;
   }
   _lastRecalculateTime = now;
@@ -566,35 +506,19 @@ function recalculateChars() {
     return;
   }
 
-
-
-
-
-
-
   const adapter = getActiveReaderAdapter();
   const current = adapter ? adapter.extractCharCount() : null;
   if (current !== null) {
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
     }
-
     if (Date.now() < _transitionGraceUntil) {
       stateRefs.globalSessionStartChar = current;
       return;
     }
-
     let diff = current - stateRefs.globalSessionStartChar;
     if (diff < 0) diff = 0;
-
-    let calculatedChars = diff + stateRefs.globalManualCharOffset;
-
-
-
-
-
-    ttuState.chars = calculatedChars;
-
+    ttuState.chars = diff + stateRefs.globalManualCharOffset;
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
   }
@@ -602,16 +526,13 @@ function recalculateChars() {
 
 function setupProgressObserver() {
   if (progressObserver) return;
-
   const target = document.querySelector('div[title="Click to copy Progress"]');
   if (!target) return;
-
   progressObserver = new MutationObserver(() => {
     if (ttuState.running && isReadingViewActive()) {
       recalculateChars();
     }
   });
-
   progressObserver.observe(target, { childList: true, characterData: true, subtree: true });
 }
 
@@ -624,7 +545,7 @@ function runInstantThemeSync() {
   }
   const activeTheme = getActiveThemeName(activeThemeCfg);
   if (activeTheme === 'match-reader' || activeTheme.startsWith('custom-') || activeTheme.startsWith('custom_') || activeTheme === 'custom') {
-    applyActiveTheme(activeThemeCfg).catch(() => { });
+    applyActiveTheme(activeThemeCfg).catch(() => {});
   }
   if (adapter && originalName) {
     safelySetAdapterName(adapter, originalName);
@@ -633,7 +554,6 @@ function runInstantThemeSync() {
 
 function scheduleInstantThemeSync() {
   if (_instantThemeSyncScheduled) return;
-
   const now = Date.now();
   const timeSinceLastSync = now - _lastThemeSyncTime;
 
@@ -641,9 +561,7 @@ function scheduleInstantThemeSync() {
     _instantThemeSyncScheduled = true;
     setTimeout(() => {
       _instantThemeSyncScheduled = false;
-      if ((window as any).__nt_applying_theme__) {
-        return;
-      }
+      if ((window as any).__nt_applying_theme__) return;
       _lastThemeSyncTime = Date.now();
       runInstantThemeSync();
     }, THEME_SYNC_THROTTLE_MS - timeSinceLastSync);
@@ -653,9 +571,7 @@ function scheduleInstantThemeSync() {
   _instantThemeSyncScheduled = true;
   requestAnimationFrame(() => {
     _instantThemeSyncScheduled = false;
-    if ((window as any).__nt_applying_theme__) {
-      return;
-    }
+    if ((window as any).__nt_applying_theme__) return;
     _lastThemeSyncTime = Date.now();
     runInstantThemeSync();
   });
@@ -663,66 +579,41 @@ function scheduleInstantThemeSync() {
 
 function isYatsuSidebarOpen(): boolean {
   if (window.location.hostname !== 'app.yatsu.moe') return false;
-
   const body = document.body;
   if (!body) return false;
 
-  const els = body.querySelectorAll(
-    'aside, [role="dialog"], [class*="drawer"], [class*="modal"], [class*="backdrop"], [class*="overlay"]'
-  );
-
+  const els = body.querySelectorAll('aside, [role="dialog"], [class*="drawer"], [class*="modal"], [class*="backdrop"], [class*="overlay"]');
   for (let i = 0; i < els.length; i++) {
     const el = els[i];
     const id = el.id;
-    if (
-      id === 'nt-ttu-chrono-wrapper' ||
-      id === 'nt-overlay' ||
-      id === 'nt-toast-container' ||
-      el.classList.contains('nt-toast') ||
-      el.closest('#nt-ttu-chrono-wrapper') ||
-      el.closest('#nt-overlay')
-    ) {
+    if (id === 'nt-ttu-chrono-wrapper' || id === 'nt-overlay' || id === 'nt-toast-container' || el.classList.contains('nt-toast') || el.closest('#nt-ttu-chrono-wrapper') || el.closest('#nt-overlay')) {
       continue;
     }
-
-    if ((el as HTMLElement).offsetParent !== null || el.getAttribute('aria-hidden') !== 'true') {
-      return true;
-    }
+    if ((el as HTMLElement).offsetParent !== null || el.getAttribute('aria-hidden') !== 'true') return true;
   }
-
   return false;
 }
 
-
 async function setupTTUChronometer() {
   if (isChronoInitializing) return;
-
   const active = isReadingViewActive();
   if (!active) {
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) {
-      wrapper.remove();
-    }
+    if (wrapper) wrapper.remove();
     return;
   }
-  if (document.getElementById('nt-ttu-chrono-wrapper')) {
-    return;
-  }
+  if (document.getElementById('nt-ttu-chrono-wrapper')) return;
 
   isChronoInitializing = true;
   try {
     const pt = findTTUInsertPoint();
-    if (!pt) {
-      return;
-    }
+    if (!pt) return;
 
     const wrapper = document.createElement('div');
     wrapper.id = 'nt-ttu-chrono-wrapper';
 
     const isFloating = !document.getElementById('ttu-page-footer') && !document.querySelector('div[title="Click to copy Progress"]');
-    if (isFloating) {
-      wrapper.classList.add('nt-floating');
-    }
+    if (isFloating) wrapper.classList.add('nt-floating');
 
     pt.el.insertAdjacentElement(pt.pos, wrapper);
 
@@ -737,10 +628,7 @@ async function setupTTUChronometer() {
         getReaderName,
         getCurrentReaderConfig: () => {
           const rCfg = getReaderConfig(currentConfig) || {};
-          return {
-            ...rCfg,
-            hideUnavailableActions: currentConfig.hideUnavailableActions ?? false
-          };
+          return { ...rCfg, hideUnavailableActions: currentConfig.hideUnavailableActions ?? false };
         },
         liveSyncQueue: (force = false) => liveSyncQueue(force),
         saveSessionAndQueue,
@@ -750,18 +638,13 @@ async function setupTTUChronometer() {
     setupProgressObserver();
     stabilizer.runGracePeriodIfJiten();
 
-    if ((window as any).ntChronoInterval) {
-      clearInterval((window as any).ntChronoInterval);
-    }
+    if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
 
     (window as any).ntChronoInterval = setInterval(() => {
       if (document.hidden) {
-        if (ttuState.running) {
-          stateRefs.globalLastTick = Date.now();
-        }
+        if (ttuState.running) stateRefs.globalLastTick = Date.now();
         return;
       }
-
       if (!isReadingViewActive()) {
         if (ttuState.running) {
           ttuState.running = false;
@@ -771,7 +654,6 @@ async function setupTTUChronometer() {
         return;
       }
 
-      // Check and handle Yatsu sidebar timer pausing
       if (window.location.hostname === 'app.yatsu.moe') {
         const sidebarOpen = isYatsuSidebarOpen();
         if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen) {
@@ -794,33 +676,22 @@ async function setupTTUChronometer() {
       if (ttuState.running && !stabilizer.getGracePeriodActive()) {
         const now = Date.now();
         const elapsed = now - stateRefs.globalLastTick;
-
         ttuState.timeMs += elapsed;
 
         const dropdown = document.getElementById('nt-ttu-dropdown');
         const isDropdownOpen = !!(dropdown && dropdown.classList.contains('open'));
 
-        if (stabilizer.getSilentGraceActive()) {
-          // Suspend checks
-        } else if (isDropdownOpen) {
+        if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
             const { current } = charData;
-
             if (stateRefs.globalSessionStartChar === -1) {
               stateRefs.globalSessionStartChar = current;
             }
-
             if (now >= _transitionGraceUntil) {
               let diff = current - stateRefs.globalSessionStartChar;
               if (diff < 0) diff = 0;
-
               ttuState.chars = diff + stateRefs.globalManualCharOffset;
-
-
-
-
-
             } else {
               stateRefs.globalSessionStartChar = current;
             }
@@ -830,14 +701,10 @@ async function setupTTUChronometer() {
 
         const lastSec = Math.floor((ttuState.timeMs - elapsed) / 1000);
         const currSec = Math.floor(ttuState.timeMs / 1000);
-
         if (currSec !== lastSec) {
           const wr = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wr) {
-            wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-          }
+          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
-
         if (_cachedAutoSave !== false) liveSyncQueue();
       }
     }, 200);
@@ -850,16 +717,10 @@ function isTargetInIgnoredContainer(target: HTMLElement): boolean {
   let el: HTMLElement | null = target;
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   const overlay = document.getElementById('nt-overlay');
-
   while (el) {
     if (el === wrapper || el === overlay) return true;
     const cl = el.className;
-    if (cl && typeof cl === 'string') {
-      const lowerCl = cl.toLowerCase();
-      if (lowerCl.includes('nt-toast')) {
-        return true;
-      }
-    }
+    if (cl && typeof cl === 'string' && cl.toLowerCase().includes('nt-toast')) return true;
     el = el.parentElement;
   }
   return false;
@@ -869,40 +730,27 @@ if (isRelevantFrame) {
   const handleScrollUpdate = () => {
     if (!ttuState.running) return;
     if (scrollTimeout) clearTimeout(scrollTimeout);
-
     scrollTimeout = setTimeout(() => {
       if (!isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - TextTracker] Scrolling hook active, triggering char recalculation.`);
-      }
       recalculateChars();
     }, 150);
   };
 
   window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
   window.addEventListener('resize', handleScrollUpdate, { passive: true });
-
   window.addEventListener('click', () => {
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
-
   window.addEventListener('keyup', (e) => {
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
       setTimeout(recalculateChars, 40);
     }
   }, { passive: true });
 
-  // SPA History and Push-state Navigation Interceptors
-  window.addEventListener('popstate', () => {
-    invalidateReadingViewCache();
-    handleMutations();
-  });
-  window.addEventListener('hashchange', () => {
-    invalidateReadingViewCache();
-    handleMutations();
-  });
+  window.addEventListener('popstate', () => { invalidateReadingViewCache(); handleMutations(); });
+  window.addEventListener('hashchange', () => { invalidateReadingViewCache(); handleMutations(); });
 
   const origPushState = window.history.pushState;
   window.history.pushState = function (...args) {
@@ -917,16 +765,13 @@ if (isRelevantFrame) {
     handleMutations();
   };
 
-  // Immediate storage flush on exit or hidden tabs to ensure complete session safety without background lag
   const forceSyncOnExit = () => {
     if (ttuState.running && getReaderConfig(currentConfig).autoSave !== false) {
       liveSyncQueue(true);
     }
   };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      forceSyncOnExit();
-    }
+    if (document.visibilityState === 'hidden') forceSyncOnExit();
   });
   window.addEventListener('pagehide', forceSyncOnExit);
   window.addEventListener('beforeunload', forceSyncOnExit);
@@ -943,43 +788,25 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
 
 function isChapterLoading(): boolean {
   const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
-  if (loader && loader.querySelector('svg')) {
-    return true;
-  }
+  if (loader && loader.querySelector('svg')) return true;
   const contentContainer = document.querySelector('.book-content-container');
-  if (contentContainer && contentContainer.children.length === 0) {
-    return true;
-  }
-  return false;
+  return !!(contentContainer && contentContainer.children.length === 0);
 }
 
-// Optimized element validation bypass
 function isDictNode(node: Node): boolean {
   if (node.nodeType === Node.TEXT_NODE) return true;
   if (node.nodeType === Node.ELEMENT_NODE) {
     const el = node as HTMLElement;
     const tag = el.tagName;
     if (tag === 'RT' || tag === 'RP' || tag === 'RUBY') return true;
-
     const className = el.className;
     let classStr = '';
-    if (typeof className === 'string') {
-      classStr = className;
-    } else if (className && typeof className === 'object' && 'baseVal' in className) {
-      classStr = (className as SVGAnimatedString).baseVal || '';
-    }
-
+    if (typeof className === 'string') classStr = className;
+    else if (className && typeof className === 'object' && 'baseVal' in className) classStr = (className as SVGAnimatedString).baseVal || '';
     if (classStr) {
       const lowerClass = classStr.toLowerCase();
-      if (
-        lowerClass.includes('jiten') ||
-        lowerClass.includes('yomichan') ||
-        lowerClass.includes('yomitan')
-      ) {
-        return true;
-      }
+      if (lowerClass.includes('jiten') || lowerClass.includes('yomichan') || lowerClass.includes('yomitan')) return true;
     }
-
     if (el.getAttribute('ajb') === 'true') return true;
   }
   return false;
@@ -989,7 +816,6 @@ function scheduleMutations() {
   if (_mutationRafScheduled) return;
   _mutationRafScheduled = true;
   if (_mutationTimeout) clearTimeout(_mutationTimeout);
-
   _mutationTimeout = setTimeout(() => {
     _mutationRafScheduled = false;
     handleMutations();
@@ -1004,35 +830,23 @@ let bodyObserver: MutationObserver | null = null;
 
 function setupOptimizedMutationObserver() {
   if (typeof window === 'undefined' || typeof MutationObserver === 'undefined') return;
-
   const isInlineTag = (tag: string) => /^(SPAN|RUBY|RT|RP|A|I|B|EM|STRONG|FONT|CODE)$/i.test(tag);
 
   const observerCallback = (mutations: MutationRecord[]) => {
-    // Highly performant safeguard to skip mutations triggered during the active theme injection cycle
     if ((window as any).__nt_applying_theme__) return;
-
     for (const m of mutations) {
       const target = m.target as HTMLElement;
       if (!target) continue;
-
       if (isInlineTag(target.tagName)) continue;
       if (isTargetInIgnoredContainer(target)) continue;
 
       let isDictionaryMutation = true;
-
       for (let i = 0; i < m.addedNodes.length; i++) {
-        if (!isDictNode(m.addedNodes[i])) {
-          isDictionaryMutation = false;
-          break;
-        }
+        if (!isDictNode(m.addedNodes[i])) { isDictionaryMutation = false; break; }
       }
-
       if (isDictionaryMutation) {
         for (let i = 0; i < m.removedNodes.length; i++) {
-          if (!isDictNode(m.removedNodes[i])) {
-            isDictionaryMutation = false;
-            break;
-          }
+          if (!isDictNode(m.removedNodes[i])) { isDictionaryMutation = false; break; }
         }
       }
 
@@ -1050,25 +864,16 @@ function setupOptimizedMutationObserver() {
           }
         }
         if (hasJitenAdded) {
-          if (ttuState.running) {
-            stabilizer.runSilentGracePeriodIfJiten(true);
-          } else {
-            stabilizer.runGracePeriodIfJiten(true);
-          }
+          if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten(true);
+          else stabilizer.runGracePeriodIfJiten(true);
         }
       }
 
-      // OPTIMIZATION: Only trigger theme synchronization if stylesheet-defining tags were mutated inside the page
       const hasStyleTagMutation = Array.from(m.addedNodes).some(n => n.nodeName === 'LINK' || n.nodeName === 'STYLE') ||
         Array.from(m.removedNodes).some(n => n.nodeName === 'LINK' || n.nodeName === 'STYLE');
 
-      if (hasStyleTagMutation && isReadingViewActive()) {
-        scheduleInstantThemeSync();
-      }
-
-      if (isDictionaryMutation) {
-        continue;
-      }
+      if (hasStyleTagMutation && isReadingViewActive()) scheduleInstantThemeSync();
+      if (isDictionaryMutation) continue;
 
       scheduleMutations();
       break;
@@ -1076,98 +881,45 @@ function setupOptimizedMutationObserver() {
   };
 
   const findReaderContainer = (): Element | null => {
-    const selectors = [
-      '.book-content-container',
-      '.book-content',
-      '[data-ref="container"]',
-      '.reader-container',
-      '#reader-container',
-      '.reader-wrapper',
-      '.writing-container',
-      '#writing-container'
-    ];
+    const selectors = ['.book-content-container', '.book-content', '[data-ref="container"]', '.reader-container', '#reader-container', '.reader-wrapper', '.writing-container', '#writing-container'];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
-      if (el && !el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) {
-        return el;
-      }
+      if (el && !el.closest('#nt-ttu-chrono-wrapper, #nt-overlay, .nt-toast')) return el;
     }
     return null;
   };
 
   const startObserver = () => {
     const targetEl = findReaderContainer() || document.body || document.documentElement;
-
-    if (activeMutationObserver && currentObservedElement === targetEl) {
-      return;
-    }
-
-    if (activeMutationObserver) {
-      activeMutationObserver.disconnect();
-    }
+    if (activeMutationObserver && currentObservedElement === targetEl) return;
+    if (activeMutationObserver) activeMutationObserver.disconnect();
 
     activeMutationObserver = new MutationObserver(observerCallback);
     currentObservedElement = targetEl;
-
-    // Monitor subtree structure updates
-    activeMutationObserver.observe(targetEl, {
-      childList: true,
-      subtree: true
-    });
-
-    // Swapped high-frequency disk logging for compile-time optimized warning inside startObserver
-    if (import.meta.env.DEV) {
-      console.log(`[NAT DEV - TextTracker] MutationObserver restricted target`, {
-        tagName: targetEl.tagName,
-        className: targetEl.className,
-        isReaderContainer: targetEl !== document.body && targetEl !== document.documentElement
-      });
-    }
-
-    // Execute absolute injection check immediately upon observer startup/resets
+    activeMutationObserver.observe(targetEl, { childList: true, subtree: true });
     handleMutations();
   };
 
-  // Extremely performant lightweight observer for top-level theme changes on html/body/app wrappers.
   rootObserver = new MutationObserver((mutations) => {
-    if ((window as any).__nt_applying_theme__) {
-      return;
-    }
-
+    if ((window as any).__nt_applying_theme__) return;
     let actualThemeChange = false;
     for (const m of mutations) {
-      if (m.attributeName === 'class' || m.attributeName === 'data-theme') {
-        actualThemeChange = true;
-        break;
-      }
+      if (m.attributeName === 'class' || m.attributeName === 'data-theme') { actualThemeChange = true; break; }
     }
-
     if (actualThemeChange) {
       clearThemeDetectionCache();
       scheduleInstantThemeSync();
       scheduleMutations();
     }
   });
-  rootObserver.observe(document.documentElement, {
-    attributes: true,
-    subtree: true,
-    attributeFilter: ['class', 'data-theme']
-  });
+  rootObserver.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class', 'data-theme'] });
 
-  // Lightweight style changes observer on root nodes (such as inline CSS variables)
   rootStyleObserver = new MutationObserver((mutations) => {
-    if ((window as any).__nt_applying_theme__) {
-      return;
-    }
-
+    if ((window as any).__nt_applying_theme__) return;
     let actualStyleChange = false;
     for (const m of mutations) {
-      if (m.attributeName === 'style') {
-        actualStyleChange = true;
-        break;
-      }
+      if (m.attributeName === 'style') { actualStyleChange = true; break; }
     }
-
     if (actualStyleChange) {
       clearThemeDetectionCache();
       scheduleInstantThemeSync();
@@ -1176,12 +928,7 @@ function setupOptimizedMutationObserver() {
   rootStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   rootStyleObserver.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 
-  // Direct child mutation tracker on document.body.
-  // This acts as a reliable fallback to capture structural shifts (loader overlays unmounting, app modals toggling) instantly.
-  bodyObserver = new MutationObserver(() => {
-    invalidateReadingViewCache();
-    handleMutations();
-  });
+  bodyObserver = new MutationObserver(() => { invalidateReadingViewCache(); handleMutations(); });
   bodyObserver.observe(document.body, { childList: true, subtree: false });
 
   startObserver();
@@ -1189,9 +936,7 @@ function setupOptimizedMutationObserver() {
   const checkInterval = setInterval(() => {
     if (!isReadingViewActive()) return;
     const container = findReaderContainer();
-    if (container && currentObservedElement !== container) {
-      startObserver();
-    }
+    if (container && currentObservedElement !== container) startObserver();
   }, 1000);
 
   window.addEventListener('unload', () => {
@@ -1209,11 +954,8 @@ if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver 
 
 function handleMutations() {
   const isLoaderActive = isChapterLoading();
-
   if (isReadingViewActive() && isLoaderActive) {
-    if (lastLoggedPaginatedMode === false) {
-      _transitionGraceUntil = Date.now() + 400;
-    }
+    if (lastLoggedPaginatedMode === false) _transitionGraceUntil = Date.now() + 400;
     stabilizer.runGracePeriodIfJiten();
     return;
   }
@@ -1224,7 +966,6 @@ function handleMutations() {
     clearThemeDetectionCache();
     scheduleInstantThemeSync();
 
-    // Reset session and timer values completely when returning to the reading view
     ttuState.timeMs = 0;
     ttuState.chars = 0;
     ttuState.running = false;
@@ -1238,11 +979,12 @@ function handleMutations() {
     stateRefs.globalLastTick = Date.now();
     hasSyncedThisSession = false;
 
-    // Reset Yatsu sidebar tracking states
     _wasTimerRunningBeforeYatsuSidebar = false;
     _isYatsuSidebarCurrentlyOpen = false;
 
-    // Notify chronological dropdown to refresh its visual state
+    // Cache local active tab title asynchronously
+    updateCachedActiveTabTitle();
+
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) {
       wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
@@ -1259,13 +1001,10 @@ function handleMutations() {
     if (target) {
       const readerCfg = getReaderConfig(currentConfig);
       if (readerCfg.enabled !== false) {
-        if (!wrapper) {
-          setupTTUChronometer();
-        } else {
+        if (!wrapper) setupTTUChronometer();
+        else {
           const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
-          if (wrapper.parentElement !== expectedParent) {
-            target.el.insertAdjacentElement(target.pos, wrapper);
-          }
+          if (wrapper.parentElement !== expectedParent) target.el.insertAdjacentElement(target.pos, wrapper);
         }
       }
     }
@@ -1283,27 +1022,16 @@ function handleMutations() {
     }
   }
 
-  if (wrapper && adapter) {
-    adapter.onUpdateStyles?.(wrapper);
-  }
-
-  if (ttuState.running && isReadingViewActive()) {
-    setupProgressObserver();
-  }
+  if (wrapper && adapter) adapter.onUpdateStyles?.(wrapper);
+  if (ttuState.running && isReadingViewActive()) setupProgressObserver();
 
   const now = Date.now();
-  // OPTIMIZATION: Throttle expensive layout traversals to 1.5s (reduces rendering lag significantly)
   if ((now - _lastSectionCheckTime) >= 1500) {
     _lastSectionCheckTime = now;
     const charData = extractAdvancedCharCount(undefined, ttuState.running);
     if (charData !== null) {
       const { total, sectionIndex, isPaginated } = charData;
       const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-
-
-
-
 
       if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
         stateRefs.globalSessionStartChar = -1;
@@ -1313,37 +1041,14 @@ function handleMutations() {
         stateRefs.visitedSections.clear();
         ttuState.chars = 0;
         ttuState.timeMs = 0;
-
-
-
-
-
-
-
-
-
         stateRefs.globalLastTick = Date.now();
         lastLoggedPaginatedMode = isPaginated;
-
-        if (!isPaginated) {
-          _transitionGraceUntil = Date.now() + 400;
-        }
+        if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
         recalculateChars();
         return;
       }
 
       lastLoggedPaginatedMode = isPaginated;
-
-
-
-
-
-
-
-
-
-
-
 
       if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
         const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
@@ -1352,7 +1057,6 @@ function handleMutations() {
 
       if (stateRefs.lastSectionIndex !== activeSection) {
         stabilizer.resetJitenParseFlag();
-
         if (activeSection === -1) {
           if (!isReadingViewActive()) {
             stateRefs.lastSectionIndex = -1;
@@ -1383,21 +1087,13 @@ function handleMutations() {
                 stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
               }
             }
-
-            if (isPaginated) {
-              stateRefs.globalSessionStartChar = 0;
-
-
-            }
+            if (isPaginated) stateRefs.globalSessionStartChar = 0;
 
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
 
-            if (ttuState.running) {
-              stabilizer.runSilentGracePeriodIfJiten();
-            } else {
-              stabilizer.runGracePeriodIfJiten();
-            }
+            if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
+            else stabilizer.runGracePeriodIfJiten();
             recalculateChars();
           });
         }
@@ -1410,14 +1106,10 @@ function handleMutations() {
   if (!adapter) {
     if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
       const overlay = overlayController.getOverlayElement();
-      if (!overlay) {
-        overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
-      }
+      if (!overlay) overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
     }
   }
 
-  // Polling guard: Retry mounting Chrono dropdown if the reader route is active but wrapper isn't attached yet.
-  // This acts as a fallback for transitions out of /settings where components mount asynchronously.
   if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
     setTimeout(() => {
       if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
@@ -1449,20 +1141,14 @@ if (isRelevantFrame) {
       if (window.self !== window.top) return;
       const title = String(event.data.title || '');
       const msg = event.data.message || '';
-      showToast(
-        title,
-        msg,
-        event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error')
-      );
+      showToast(title, msg, event.data.error || title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
     }
   });
 }
 
 function startTimeTracker() {
   if ((window as any).__nt_timer_instance__) {
-    try {
-      (window as any).__nt_timer_instance__.destroy();
-    } catch (e) { }
+    try { (window as any).__nt_timer_instance__.destroy(); } catch (e) {}
   }
   const timer = new TimerEngine();
   (window as any).__nt_timer_instance__ = timer;
@@ -1492,16 +1178,12 @@ export default defineContentScript({
       safelySetAdapterName(adapter, 'ッツ Ebook Reader');
     }
     await applyActiveTheme(activeThemeCfg);
-    if (adapter && originalName) {
-      safelySetAdapterName(adapter, originalName);
-    }
+    if (adapter && originalName) safelySetAdapterName(adapter, originalName);
 
     configStorage.watch((newCfg) => {
       if (newCfg) {
         currentConfig = newCfg;
         _cachedAutoSave = getReaderConfig(newCfg).autoSave !== false;
-
-        // Ensure cache is cleared when configuration changes, so new themes/options apply immediately
         clearThemeDetectionCache();
 
         const activeThemeCfg = getActiveThemeConfig(newCfg);
@@ -1510,10 +1192,8 @@ export default defineContentScript({
         if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
-        applyActiveTheme(activeThemeCfg).catch(() => { });
-        if (adapter && originalName) {
-          safelySetAdapterName(adapter, originalName);
-        }
+        applyActiveTheme(activeThemeCfg).catch(() => {});
+        if (adapter && originalName) safelySetAdapterName(adapter, originalName);
 
         if (adapter) {
           const isEnabled = getReaderConfig(newCfg).enabled;
@@ -1527,10 +1207,7 @@ export default defineContentScript({
               wrapper.remove();
             }
             if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
-          } else {
-            setupTTUChronometer();
-          }
-
+          } else setupTTUChronometer();
           const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
           if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         } else {
@@ -1539,17 +1216,13 @@ export default defineContentScript({
             if (overlay) overlay.style.display = 'none';
             return;
           }
-
-          let customColors: any = undefined;
+          let customColors = undefined;
           const themeName = getActiveThemeName(newCfg);
           if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
             const id = themeName.replace('custom_', '').replace('custom-', '');
             const customTheme = (newCfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
-            if (customTheme) {
-              customColors = customTheme.colors;
-            } else if (newCfg.customColors) {
-              customColors = newCfg.customColors;
-            }
+            if (customTheme) customColors = customTheme.colors;
+            else if (newCfg.customColors) customColors = newCfg.customColors;
           }
 
           injectThemeStyles(themeName, newCfg.font ?? 'sans', customColors);
@@ -1561,21 +1234,14 @@ export default defineContentScript({
               existingOverlay.style.setProperty('display', 'flex', 'important');
               applyOverlayPosition(existingOverlay, overlayPos);
               injectOverlayCustomOverrides();
-
               const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
-              if (pauseBtn) {
-                updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
-              }
+              if (pauseBtn) updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
               const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
               if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
               const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
               if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
-            } else {
-              existingOverlay.style.setProperty('display', 'none', 'important');
-            }
-          } else {
-            overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
-          }
+            } else existingOverlay.style.setProperty('display', 'none', 'important');
+          } else overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
         }
       }
     });
@@ -1596,7 +1262,7 @@ export default defineContentScript({
         const rawTitle = getTTUTitle();
         const parsedRaw = parseTitleWithConfig(rawTitle).query;
 
-        const linkMap = await ttuLinkStorage.getValue() || {}; // Queried exactly once per cycle to save redundant storage executions
+        const linkMap = await ttuLinkStorage.getValue() || {};
         const linkedMedia = linkMap[rawTitle];
         const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
@@ -1611,7 +1277,6 @@ export default defineContentScript({
             ttuState.timeMs = 0;
             ttuState.chars = 0;
             stateRefs.globalLastTick = Date.now();
-
             const initCount = extractAdvancedCharCount(undefined, ttuState.running);
             stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
             stateRefs.globalManualCharOffset = 0;
@@ -1626,14 +1291,9 @@ export default defineContentScript({
         } else if (existing) {
           let updated = false;
           const links = { ...linkMap };
-
           if (existing.mediaId && existing.mediaId !== 'web-reading') {
             if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
-              links[rawTitle] = {
-                mediaId: existing.mediaId,
-                volume: existing.volume || 1,
-                mediaData: existing.mediaData as ReadingMediaData
-              };
+              links[rawTitle] = { mediaId: existing.mediaId, volume: existing.volume || 1, mediaData: existing.mediaData as ReadingMediaData };
               updated = true;
             }
           } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
@@ -1645,7 +1305,6 @@ export default defineContentScript({
               }
             }
           }
-
           if (updated) {
             ttuLinkStorage.setValue(links).then(() => {
               const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -1654,26 +1313,21 @@ export default defineContentScript({
           }
         }
       });
-
       return;
     }
 
     if (isWebsiteOverlaySkipped(cfg)) return;
     startTimeTracker();
     if (cfg.overlayPosition === 'hidden') return;
-
     if (window.self !== window.top) return;
 
-    let customColors: any = undefined;
+    let customColors = undefined;
     const themeName = getActiveThemeName(cfg);
     if (themeName.startsWith('custom_') || themeName.startsWith('custom-') || themeName === 'custom') {
       const id = themeName.replace('custom_', '').replace('custom-', '');
       const customTheme = (cfg.customThemes || []).find((t: any) => t.id === id || t.id === themeName);
-      if (customTheme) {
-        customColors = customTheme.colors;
-      } else if (cfg.customColors) {
-        customColors = cfg.customColors;
-      }
+      if (customTheme) customColors = customTheme.colors;
+      else if (cfg.customColors) customColors = cfg.customColors;
     }
 
     injectThemeStyles(themeName, cfg.font ?? 'sans', customColors);

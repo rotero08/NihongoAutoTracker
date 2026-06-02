@@ -45,6 +45,7 @@ export interface TrackerConfig {
   /* ── Auto-Send Queue Settings ── */
   autoSendEndOfDay?: boolean;
   warnSendAll?: boolean;
+  warnUnmatched?: boolean; // Resolves TS compilation error in QueueItemController
   debugMode?: boolean;
 
   /* ── Custom Theme Registers ── */
@@ -243,7 +244,7 @@ export interface UIThemeColors {
   accentHover: string;
   success: string;
   error: string;
-  [key: string]: string; // Index signature resolves Record assignment compilation errors
+  [key: string]: string;
 }
 
 export interface UIThemeTypography {
@@ -252,7 +253,7 @@ export interface UIThemeTypography {
 }
 
 export interface UITheme {
-  name?: string; // Optional field ensures compatibility with legacy theme instances
+  name?: string;
   colors: UIThemeColors;
   typography: UIThemeTypography;
   borderRadius: number;

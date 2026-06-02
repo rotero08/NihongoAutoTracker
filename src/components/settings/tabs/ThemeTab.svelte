@@ -2,7 +2,7 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { configStorage } from "@/lib/storage/config";
-    import CustomSelect from "@/components/settings/CustomSelect.svelte";
+    import CustomSelect from "@/components/common/CustomSelect.svelte";
     import ThemeEditor from "./ThemeEditor.svelte";
     import ThemePreview from "./ThemePreview.svelte";
     import ThemePreferences from "./ThemePreferences.svelte";

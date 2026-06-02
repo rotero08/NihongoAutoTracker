@@ -2,8 +2,8 @@
  * ── Themes Registry & Dynamic Style Applicator ──────────────────────────────
  */
 
+import { CUSTOM_COLORS_CACHE_KEY, FONT_CACHE_KEY, THEME_CACHE_KEY } from '@/lib/constants';
 import type { UITheme } from '@/lib/types';
-import { THEME_CACHE_KEY, FONT_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY } from '@/lib/constants';
 
 export const DYNAMIC_LOGO_SVG = `
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" style="display: block; width: 100%; height: 100%;" viewBox="0 0 1996 2000" preserveAspectRatio="xMidYMid meet">

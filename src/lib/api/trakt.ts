@@ -1,13 +1,12 @@
+import { searchMedia, submitLog } from '@/lib/api/nihongotracker';
+import { USER_AGENT } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import {
   stremioProcessedStorage,
   stremioQueueStorage,
   updateStremioQueueAtomic,
 } from '@/lib/storage/queues';
-import { addDebugLog } from '@/lib/storage/debug';
-import { searchMedia, submitLog } from '@/lib/api/nihongotracker';
 import type { AnimeMediaData, QueuedStremioLog, TrackerConfig } from '@/lib/types';
-import { USER_AGENT } from '@/lib/constants';
 
 const TRAKT_BASE = 'https://api.trakt.tv';
 

@@ -1,5 +1,10 @@
 <!-- Popup App.svelte -->
 <script lang="ts">
+  /**
+   * ── Popup App.svelte ──────────────────────────────────────────────────────────
+   * Displays the active queued items and provides navigation and appearance options.
+   */
+
   import { onMount } from "svelte";
   import {
     videoQueueStorage,
@@ -11,8 +16,8 @@
   } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import QueueList from "@/components/popup/QueueList.svelte";
-  import ConfirmModal from "@/components/ConfirmModal.svelte";
-  import CustomSelect from "@/components/settings/CustomSelect.svelte";
+  import ConfirmModal from "@/components/common/ConfirmModal.svelte";
+  import CustomSelect from "@/components/common/CustomSelect.svelte";
   import { notify } from "@/lib/utils/toast";
   import {
     submitLog,
@@ -283,73 +288,40 @@
       }
       if (area === "local" && changes["config"]) {
         const val = changes["config"].newValue as any;
-        const nextTheme = val?.selectedThemeId ?? val?.theme ?? "dark-amber";
+        const nextTheme = val?.theme ?? "nihongo";
         const nextFont = val?.font ?? "sans";
+        const useStaticInPageLogo = val?.useStaticInPageLogo === true;
 
-        if (val?.customThemes) {
-          customThemes = val.customThemes;
-        }
-
-        selectedTheme = nextTheme;
-        selectedFont = nextFont;
-        syncPopupWithReaderTheme = val?.syncPopupWithReaderTheme !== false;
-
-        if (val) {
-          let matchedColorsObj = null;
-          if (isCustomThemeId(nextTheme)) {
-            const activeThemeObj = (val.customThemes ?? []).find(
-              (t: any) => t.id === nextTheme,
-            );
-            if (activeThemeObj) {
-              matchedColorsObj = activeThemeObj.colors;
-            } else if (val.customColors) {
-              matchedColorsObj = val.customColors;
-            }
-          }
-          syncThemeCache(nextTheme, nextFont, matchedColorsObj);
-        }
-
-        let host = "";
-        try {
-          if (activeUrl) host = new URL(activeUrl).hostname;
-        } catch (e) {}
-
-        let detectedColors = null;
-        if (host) {
-          storage
-            .getItem(`local:readerColors:${host}`)
-            .then((colors) => {
-              detectedColors = colors;
-              if (!detectedColors) {
-                if (browser?.storage?.local) {
-                  browser.storage.local
-                    .get([`readerColors:${host}`, `local:readerColors:${host}`])
-                    .then((localStore: any) => {
-                      detectedColors =
-                        localStore[`local:readerColors:${host}`] ||
-                        localStore[`readerColors:${host}`];
-                      applyInitialTheme(val, activeUrl, detectedColors);
-                    })
-                    .catch(() => {
-                      applyInitialTheme(val, activeUrl, null);
-                    });
-                } else {
-                  applyInitialTheme(val, activeUrl, null);
-                }
-              } else {
-                applyInitialTheme(val, activeUrl, detectedColors);
-              }
-            })
-            .catch(() => {
-              applyInitialTheme(val, activeUrl, null);
+        if (isCustomThemeId(nextTheme)) {
+          const themeId = nextTheme
+            .replace("custom_", "")
+            .replace("custom-", "");
+          const customThemes = val?.customThemes || [];
+          const targetTheme = customThemes.find(
+            (t: any) => t.id === themeId || t.id === nextTheme,
+          );
+          if (targetTheme) {
+            syncThemeCache(nextTheme, nextFont, targetTheme.colors);
+            applyThemeToDocument("dark-amber", nextFont, targetTheme.colors, {
+              useStaticInPageLogo,
             });
+          } else {
+            syncThemeCache(nextTheme, nextFont, null);
+            applyThemeToDocument("dark-amber", nextFont, undefined, {
+              useStaticInPageLogo,
+            });
+          }
         } else {
-          applyInitialTheme(val, activeUrl, null);
+          syncThemeCache(nextTheme, nextFont, null);
+          applyThemeToDocument(nextTheme, nextFont, undefined, {
+            useStaticInPageLogo,
+          });
         }
       }
     };
 
     if (browser?.storage?.onChanged) {
+      browser.storage.onChanged.removeListener(storageListener);
       browser.storage.onChanged.addListener(storageListener);
     }
 
@@ -790,7 +762,6 @@
   }
 </script>
 
-<!-- ── Header ── -->
 <header class="header">
   <div class="brand">
     <div
@@ -834,7 +805,7 @@
         fill="currentColor"
         style="width: 14px; height: 14px; display: block;"
         ><path
-          d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.64-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.4-1.08-.73-1.69-.98l-.38-2.65C14.46 2.18 14.25 2 14 2h-4c-.25 0-.46.18-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1c-.23-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
+          d="M19.14 12.94c.04-.32.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
         /></svg
       >
     </button>
@@ -915,7 +886,6 @@
 
 <div class="sep"></div>
 
-<!-- ── Queue header ── -->
 <div class="queue-header">
   <div class="queue-header-left">
     <span class="queue-label">QUEUE</span>
@@ -937,7 +907,6 @@
   {/if}
 </div>
 
-<!-- ── Filter tabs ── -->
 <div class="queue-tabs">
   {#each ["all", "video", "reading", "stremio"] as filter}
     <button
@@ -950,7 +919,6 @@
   {/each}
 </div>
 
-<!-- ── Queue list container ── -->
 <div class="queue-container">
   <QueueList
     {videoQueue}
@@ -965,16 +933,13 @@
 
 <div class="sep"></div>
 
-<!-- ── Footer ── -->
 <footer class="footer">
   <button class="open-btn" onclick={openSettings}>Open Settings</button>
 </footer>
 
-<!-- ── Overlays ── -->
 <ConfirmModal bind:this={confirmModal} />
 
 <style>
-  /* ── Root ── */
   :global(body) {
     font-family: var(--font-mono);
     background: var(--color-background);
@@ -998,8 +963,6 @@
     margin: 0;
     padding: 0;
   }
-
-  /* ── Header ── */
   .header {
     display: flex;
     align-items: center;
@@ -1064,20 +1027,15 @@
   .icon-btn:hover {
     color: var(--color-text);
   }
-
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: #3ddc84 !important;
     border-color: rgba(61, 220, 132, 0.25) !important;
   }
-
-  /* ── Separator ── */
   .sep {
     height: 1px;
     background: var(--color-border);
     flex-shrink: 0;
   }
-
-  /* ── Queue header & tabs ── */
   .queue-header {
     display: flex;
     align-items: center;
@@ -1165,8 +1123,6 @@
     color: var(--color-accent);
     border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
   }
-
-  /* ── Queue container ── */
   .queue-container {
     flex: 1;
     display: flex;
@@ -1174,7 +1130,6 @@
     min-height: 0;
     overflow-y: auto;
   }
-
   .queue-container :global(.empty-state),
   .queue-container :global(.empty-message),
   .queue-container :global(.queue-empty),
@@ -1191,8 +1146,6 @@
     height: 100% !important;
     color: var(--color-text-muted) !important;
   }
-
-  /* ── Footer ── */
   .footer {
     padding: 9px 12px 12px;
     flex-shrink: 0;
@@ -1217,7 +1170,6 @@
     color: var(--color-text-muted);
     border-color: var(--color-border-hover);
   }
-
   :global(
       .compact-popover .select-option,
       .compact-popover .option,
@@ -1228,7 +1180,6 @@
     justify-content: space-between !important;
     width: 100%;
   }
-
   :global(
       .select-dropdown,
       .dropdown-menu,
@@ -1240,7 +1191,6 @@
     max-height: 160px !important;
     overflow-y: auto !important;
   }
-
   :global(::-webkit-scrollbar) {
     width: 6px !important;
     height: 6px !important;

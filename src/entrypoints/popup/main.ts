@@ -7,7 +7,7 @@
  */
 
 import { configStorage } from '@/lib/storage/config';
-import { readingQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
+import { readingQueueStorage, videoQueueStorage, stremioQueueStorage } from '@/lib/storage/queues';
 import '@/styles/app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
@@ -20,19 +20,21 @@ async function injectMockData() {
 
   if (isDev && mockDataEnabled) {
     // Read both queues in parallel to save storage IPC round-trip latency
-    const [existingVideo, existingReading] = await Promise.all([
+    const [existingVideo, existingReading, existingStremio] = await Promise.all([
       videoQueueStorage.getValue(),
-      readingQueueStorage.getValue()
+      readingQueueStorage.getValue(),
+      stremioQueueStorage.getValue()
     ]);
 
     /* Only inject if queues are empty (don't overwrite real data) */
-    if (existingVideo.length === 0 && existingReading.length === 0) {
-      const { MOCK_VIDEO_QUEUE, MOCK_READING_QUEUE } = await import('@/dev/mock-data');
+    if (existingVideo.length === 0 && existingReading.length === 0 && existingStremio.length === 0) {
+      const { MOCK_VIDEO_QUEUE, MOCK_READING_QUEUE, MOCK_STREMIO_QUEUE } = await import('@/dev/mock-data');
 
       // Perform mock data writes in parallel
       await Promise.all([
         videoQueueStorage.setValue(MOCK_VIDEO_QUEUE as any),
-        readingQueueStorage.setValue(MOCK_READING_QUEUE as any)
+        readingQueueStorage.setValue(MOCK_READING_QUEUE as any),
+        stremioQueueStorage.setValue(MOCK_STREMIO_QUEUE as any)
       ]);
     }
   }

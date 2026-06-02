@@ -9,6 +9,7 @@
  *          video-tracker (auto-send), text-tracker (direct-send).
  */
 
+import { browser } from 'wxt/browser';
 import { configStorage } from '../storage/config';
 import { addDebugLog } from '../storage/debug';
 import { notify } from '../utils/toast';
@@ -33,6 +34,20 @@ export async function submitLog(
   payload: Record<string, unknown>,
   silent = false,
 ): Promise<{ success: boolean; status?: number; error?: string }> {
+  // Delegate to background script if running in content script to bypass page CSP restrictions [1]
+  const isContentScript = typeof window !== 'undefined' && typeof document !== 'undefined' && !window.location.protocol.startsWith('chrome-extension') && !window.location.protocol.startsWith('moz-extension');
+  if (isContentScript) {
+    try {
+      return await browser.runtime.sendMessage({
+        action: 'SUBMIT_LOG',
+        payload,
+        silent
+      });
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Background routing failed' };
+    }
+  }
+
   const config = await configStorage.getValue();
   const apiKey = config?.apiKey ?? '';
 
@@ -181,8 +196,6 @@ export async function resolveVideoChannelMedia(input: {
   if (channelId) {
     const extras = await fetchChannelExtrasFromYouTube(channelId);
     return {
-      channelId,
-      channelTitle: channelTitle || undefined,
       channelImage: extras.channelImage,
       channelDescription: extras.channelDescription,
     };

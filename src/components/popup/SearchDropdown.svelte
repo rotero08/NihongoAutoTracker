@@ -23,8 +23,9 @@
   interface Props {
     onSelect: (result: AniListSearchResult) => void;
     searchType?: "reading" | "anime" | "movie" | "tv_show";
+    onMouseDown?: () => void;
   }
-  let { onSelect, searchType = "reading" }: Props = $props();
+  let { onSelect, searchType = "reading", onMouseDown }: Props = $props();
 
   /** Execute a search query */
   export async function search(query: string) {
@@ -118,7 +119,10 @@
     {:else}
       {#each results as r}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="search-item" onmousedown={(e) => handleSelect(r, e)}>
+        <div class="search-item" onmousedown={(e) => {
+          onMouseDown?.();
+          handleSelect(r, e);
+        }}>
           {#if r.coverImage || r.contentImage}
             <img class="cover" src={r.coverImage || r.contentImage} alt="" />
           {:else}

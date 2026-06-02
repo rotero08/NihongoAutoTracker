@@ -5,6 +5,7 @@
  * reading overlay displayed on non-integrated standard Japanese pages.
  */
 
+import { getActiveThemeName } from '@/lib/ui/text-tracker-theme-manager';
 import {
   applyOverlayPosition,
   enforceOverlayLayout,
@@ -15,7 +16,6 @@ import {
   runOverlaySetup,
   updatePauseIconState
 } from '@/lib/ui/reader-overlay';
-import { getActiveThemeName } from '@/lib/ui/text-tracker-theme-manager';
 
 export class OverlayController {
     private overlayElement: HTMLElement | null = null;
