@@ -77,7 +77,7 @@ export default defineConfig({
   manifest: {
     name: 'NihongoAutoTracker',
     description: 'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
-    // Version is omitted here so WXT automatically uses package.json as single source of truth
+    version: '4.0.8', // DO NOT CHANGE THIS MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY
     permissions: [
       'storage',
       'contextMenus',
