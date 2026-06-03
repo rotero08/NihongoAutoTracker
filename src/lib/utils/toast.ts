@@ -4,6 +4,8 @@
  * restricted tab security constraints and ungranted cross-origin page hosts.
  */
 
+import { browser } from 'wxt/browser';
+
 const activeToasts: Record<string, {
   toast: HTMLDivElement;
   timestamp: number;
@@ -356,7 +358,7 @@ export function notify(title: string, message: string): void {
 
 function relayToastToActiveTab(title: string, message: string, isError: boolean) {
   if (typeof browser === 'undefined' || !browser.tabs || !browser.tabs.query) {
-    if (browser.runtime?.sendMessage) {
+    if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: 'NOTIFY', title, message }).catch(() => null);
     }
     return;

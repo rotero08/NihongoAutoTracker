@@ -6,7 +6,7 @@
 import { defineBackground } from '#imports';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { importStremioFromTrakt } from '@/lib/api/trakt';
-import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE } from '@/lib/constants';
+import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE, LAST_FLUSH_DATE_KEY, STREMIO_LAST_POLL_AT_KEY, READER_COLORS_PREFIX } from '@/lib/constants';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
@@ -235,14 +235,14 @@ export default defineBackground(() => {
 
       const now = new Date();
       if (now.getHours() === 23 && now.getMinutes() === 59) {
-        const lastFlushDate = await storage.getItem('local:lastFlushDate');
+        const lastFlushDate = await storage.getItem(LAST_FLUSH_DATE_KEY);
         const todayStr = now.toLocaleDateString();
         if (lastFlushDate === todayStr) return;
 
         await flushTodayQueue('reading', readingQueueStorage);
         await flushTodayQueue('video', videoQueueStorage);
         await flushTodayQueue('stremio', stremioQueueStorage);
-        await storage.setItem('local:lastFlushDate', todayStr);
+        await storage.setItem(LAST_FLUSH_DATE_KEY, todayStr);
       }
     });
   }
@@ -294,10 +294,10 @@ export default defineBackground(() => {
       if (!cfg.stremioEnabled || !cfg.traktAccessToken) return;
 
       const pollMinutes = Math.max(1, Number(cfg.stremioPollMinutes ?? 5));
-      const lastPoll = Number((await storage.getItem('local:stremioLastPollAt')) || 0);
+      const lastPoll = Number((await storage.getItem(STREMIO_LAST_POLL_AT_KEY)) || 0);
       if (!force && Date.now() - lastPoll < pollMinutes * 60 * 1000) return;
 
-      await storage.setItem('local:stremioLastPollAt', Date.now());
+      await storage.setItem(STREMIO_LAST_POLL_AT_KEY, Date.now());
       const historyResult = await importStremioFromTrakt();
       if (historyResult.imported > 0) refreshBadge();
     } catch (err) {

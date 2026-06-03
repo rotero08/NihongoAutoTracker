@@ -11,7 +11,6 @@ import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
 import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
 import { configStorage } from '@/lib/storage/config';
-import { addDebugLog } from '@/lib/storage/debug';
 import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
 import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
 import type { QueuedReadingLog, ReadingMediaData } from '@/lib/types';
@@ -549,7 +548,7 @@ function setupProgressObserver() {
       recalculateChars();
     }
   });
-  progressObserver.observe(target, { childList: true, characterData: true, subtree: true });
+  progressObserver.observe(target, { childList: true, subtree: true });
 }
 
 function runInstantThemeSync() {

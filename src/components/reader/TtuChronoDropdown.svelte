@@ -4,7 +4,7 @@
     import { onMount } from "svelte";
     import { searchAniList } from "@/lib/api/anilist";
     import { submitLog } from "@/lib/api/nihongotracker";
-    import { readingQueueStorage } from "@/lib/storage/queues";
+    import { readingQueueStorage, updateReadingQueueAtomic } from "@/lib/storage/queues";
     import { ttuHistoryStorage, ttuLinkStorage } from "@/lib/storage/ttu";
     import { fmt } from "@/lib/utils/time";
     import { showToast } from "@/lib/utils/toast";
@@ -384,7 +384,7 @@
             });
     }
 
-    // AniList linkage helpers with Svelte 5 two-way state sync bindings (Issue 5 Fix)
+    // AniList linkage helpers with Svelte 5 two-way state sync bindings
     function handleAnilistInput(query: string, instant = false) {
         clearTimeout(linkDebounce);
         query = query.trim();
@@ -442,22 +442,22 @@
         };
         await ttuLinkStorage.setValue(links);
 
-        const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
+        await updateReadingQueueAtomic(async (queue) => {
+            const existing = queue.find(
+                (q) => q.originalTitle === title || q.contentTitleNative === title,
+            );
 
-        if (existing) {
-            existing.mediaId = m.contentId;
-            existing.volume = targetVolume;
-            existing.mediaData = links[title].mediaData;
-            existing.contentTitleNative = nativeTitle;
-            existing.contentTitleEnglish =
-                m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
-            existing.description = nativeTitle;
-            await readingQueueStorage.setValue(queue);
-        }
+            if (existing) {
+                existing.mediaId = m.contentId;
+                existing.volume = targetVolume;
+                existing.mediaData = links[title].mediaData;
+                existing.contentTitleNative = nativeTitle;
+                existing.contentTitleEnglish =
+                    m.title?.contentTitleEnglish || m.contentTitleEnglish || "";
+                existing.description = nativeTitle;
+            }
+            return queue;
+        });
 
         anilistResults = [];
         anilistSearchQuery = "";
@@ -478,17 +478,16 @@
         await ttuLinkStorage.setValue(links);
 
         // 2. Fetch and align with exactly the same parsed query matching used by the watcher
-        const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
-
-        if (existing) {
-            existing.mediaId = "web-reading";
-            existing.mediaData = undefined;
-            await readingQueueStorage.setValue(queue);
-        }
+        await updateReadingQueueAtomic(async (queue) => {
+            const existing = queue.find(
+                (q) => q.originalTitle === title || q.contentTitleNative === title,
+            );
+            if (existing) {
+                existing.mediaId = "web-reading";
+                existing.mediaData = undefined;
+            }
+            return queue;
+        });
 
         // 3. Clear Svelte local state and refresh UI
         linkedMedia = null;
@@ -627,15 +626,15 @@
             await ttuLinkStorage.setValue(links);
         }
 
-        const queue = await readingQueueStorage.getValue();
-        // Legacy matching: fall back to raw title matching when necessary (Issue 5 Fix)
-        const existing = queue.find(
-            (q) => q.originalTitle === title || q.contentTitleNative === title,
-        );
-        if (existing) {
-            existing.volume = next;
-            await readingQueueStorage.setValue(queue);
-        }
+        await updateReadingQueueAtomic(async (queue) => {
+            const existing = queue.find(
+                (q) => q.originalTitle === title || q.contentTitleNative === title,
+            );
+            if (existing) {
+                existing.volume = next;
+            }
+            return queue;
+        });
         await refreshLinkerUI();
     }
 
@@ -656,14 +655,13 @@
         historyNow[title] = curr.filter((s: any) => s.id !== sessionId);
         await ttuHistoryStorage.setValue(historyNow);
 
-        const q = await readingQueueStorage.getValue();
-        const filtered = q.filter(
-            (item: any) =>
-                !(item.sessions || []).some((s: any) => s.id === sessionId),
-        );
-        if (filtered.length !== q.length) {
-            await readingQueueStorage.setValue(filtered);
-        }
+        await updateReadingQueueAtomic(async (q) => {
+            const filtered = q.filter(
+                (item: any) =>
+                    !(item.sessions || []).some((s: any) => s.id === sessionId),
+            );
+            return filtered;
+        });
         await updateHistoryData();
     }
 

@@ -12,6 +12,11 @@ export const FONT_CACHE_KEY = 'nta-font-cache' as const;
 export const CUSTOM_COLORS_CACHE_KEY = 'nta-custom-colors-cache' as const;
 export const ACTIVE_SETTINGS_TAB_KEY = 'local:activeSettingsTab' as const;
 
+export const SESS_CLOSED_PREFIX = 'local:sess-closed-' as const;
+export const LAST_FLUSH_DATE_KEY = 'local:lastFlushDate' as const;
+export const STREMIO_LAST_POLL_AT_KEY = 'local:stremioLastPollAt' as const;
+export const READER_COLORS_PREFIX = 'local:readerColors:' as const;
+
 /* ── Host lists ───────────────────────────────────────────────────────────── */
 
 /**

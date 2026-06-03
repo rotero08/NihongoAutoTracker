@@ -16,14 +16,19 @@
   let showConfirmation = $state(false);
   let isSubmitting = $state(false);
 
-  // Computed visible items
+  // Computed visible items - Block bodies prevent Svelte parenthetical parser conflicts while keeping explicit TS types
   let visibleVideos = $derived(
-    videos.map((v: any, index: number) => ({ ...v, originalIndex: index }))
-          .filter((v: any) => !showOnlyJapanese || v.isJp)
+    videos.map((v: any, index: number) => {
+      return { ...v, originalIndex: index };
+    }).filter((v: any) => {
+      return !showOnlyJapanese || v.isJp;
+    })
   );
 
   let checkedVideos = $derived(
-    videos.filter((v: any, index: number) => selectedIndices[index])
+    videos.filter((v: any, index: number) => {
+      return selectedIndices[index];
+    })
   );
 
   function toggleSelectAll() {

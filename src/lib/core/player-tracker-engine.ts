@@ -5,6 +5,7 @@
  * manual logger inputs, and transaction queues integrations.
  */
 
+import { browser } from 'wxt/browser';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';

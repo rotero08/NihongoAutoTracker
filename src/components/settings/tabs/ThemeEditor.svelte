@@ -1,6 +1,7 @@
 <!-- ThemeEditor.svelte -->
 <script lang="ts">
     import { onMount } from "svelte";
+    import CustomSelect from "@/components/common/CustomSelect.svelte";
     import { THEMES, lightenHexColor, DEFAULT_CUSTOM_COLORS } from "@/lib/ui/themes";
 
     interface Props {
@@ -33,7 +34,6 @@
         onCollapse,
     }: Props = $props();
 
-    let templateDropdownOpen = $state(false);
     let importInputOpen = $state(false);
     let importCode = $state("");
     let exportStatus = $state("Share");
@@ -102,6 +102,41 @@
         }
     }
 
+    function handlePresetChange(val: string) {
+        if (!val) return;
+        const presetTheme = THEMES[val];
+        if (presetTheme) {
+            themeColors = {
+                background: presetTheme.colors.background,
+                surface: presetTheme.colors.surface,
+                surfaceAlt: presetTheme.colors.surfaceAlt || presetTheme.colors.surface,
+                border: presetTheme.colors.border,
+                borderHover: presetTheme.colors.borderHover || presetTheme.colors.border,
+                text: presetTheme.colors.text,
+                textMuted: presetTheme.colors.muted,
+                accent: presetTheme.colors.accent,
+                accentHover: presetTheme.colors.accentHover || presetTheme.colors.accent,
+                success: presetTheme.colors.success || "#3ddc84",
+            };
+        } else {
+            const customPreset = customThemes.find(t => t.id === val);
+            if (customPreset) {
+                themeColors = {
+                    background: customPreset.colors.background,
+                    surface: customPreset.colors.surface,
+                    surfaceAlt: customPreset.colors.surfaceAlt || customPreset.colors.surface,
+                    border: customPreset.colors.border,
+                    borderHover: customPreset.colors.borderHover || customPreset.colors.border,
+                    text: customPreset.colors.text,
+                    textMuted: customPreset.colors.textMuted,
+                    accent: customPreset.colors.accent,
+                    accentHover: customPreset.colors.accentHover || customPreset.colors.accent,
+                    success: customPreset.colors.success || "#3ddc84",
+                };
+            }
+        }
+    }
+
     function autofocus(node: HTMLInputElement) {
         if (!compact) {
             node.focus();
@@ -135,18 +170,6 @@
         }
     }
 
-    onMount(() => {
-        const handleGlobalClick = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            if (!target.closest(".custom-select-trigger")) {
-                templateDropdownOpen = false;
-            }
-        };
-        window.addEventListener("click", handleGlobalClick, true);
-        return () =>
-            window.removeEventListener("click", handleGlobalClick, true);
-    });
-
     const colorFields = $derived(
         compact
             ? [
@@ -175,26 +198,11 @@
               ],
     );
 
-    function isThemeModified(): boolean {
-        const customTheme = customThemes.find((t) => t.id === themeId);
-        if (!customTheme) return true;
-
-        if (themeName !== customTheme.name) return true;
-
-        const keys = [
-            "background",
-            "surface",
-            "surfaceAlt",
-            "border",
-            "borderHover",
-            "text",
-            "textMuted",
-            "accent",
-            "accentHover",
-            "success",
-        ];
-        return keys.some((k) => themeColors[k] !== customTheme.colors[k]);
-    }
+    const presetOptions = $derived([
+        { value: "", label: "Load Preset..." },
+        ...Object.entries(THEMES).map(([key, value]) => ({ value: key, label: (value as any).name })),
+        ...customThemes.filter((t) => t.id !== themeId && t.name.trim() !== "").map((t) => ({ value: t.id, label: `★ ${t.name}` }))
+    ]);
 </script>
 
 <div
@@ -226,27 +234,15 @@
             changes on the right.
         </p>
         <div
-            style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative;"
+            style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; position: relative; width: 220px;"
         >
-            <span
-                style="font-size: 11px; color: var(--color-text-muted); font-weight: bold; white-space: nowrap;"
-                >Template:</span
-            >
-
-            <button
-                type="button"
-                class="custom-select-trigger"
-                style="background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; outline: none; cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; transition: border-color 0.15s, background 0.15s;"
-                onclick={(e) => {
-                    e.stopPropagation();
-                    templateDropdownOpen = !templateDropdownOpen;
-                }}
-            >
-                <span>Load Preset...</span>
-                <span style="font-size: 8px; color: var(--color-text-muted);"
-                    >▼</span
-                >
-            </button>
+            <CustomSelect
+                options={presetOptions}
+                value=""
+                onChange={handlePresetChange}
+                label=""
+                compact={true}
+            />
 
             <button
                 type="button"
@@ -264,98 +260,6 @@
             >
                 Import
             </button>
-
-            {#if templateDropdownOpen}
-                <div
-                    style="position: absolute; {compact
-                        ? 'bottom: calc(100% + 4px);'
-                        : 'top: calc(100% + 4px);'} right: 0; background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); z-index: 100; width: 160px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0;"
-                >
-                    {#each Object.entries(THEMES) as [key, value]}
-                        {@const themeObj = value as any}
-                        <button
-                            type="button"
-                            style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
-                            onmouseenter={(e) =>
-                                (e.currentTarget.style.background =
-                                    "rgba(255, 255, 255, 0.05)")}
-                            onmouseleave={(e) =>
-                                (e.currentTarget.style.background =
-                                    "transparent")}
-                            onclick={() => {
-                                const presetTheme = THEMES[key];
-                                themeColors = {
-                                    background: presetTheme.colors.background,
-                                    surface: presetTheme.colors.surface,
-                                    surfaceAlt:
-                                        presetTheme.colors.surfaceAlt ||
-                                        presetTheme.colors.surface,
-                                    border: presetTheme.colors.border,
-                                    borderHover:
-                                        presetTheme.colors.borderHover ||
-                                        presetTheme.colors.border,
-                                    text: presetTheme.colors.text,
-                                    textMuted: presetTheme.colors.muted,
-                                    accent: presetTheme.colors.accent,
-                                    accentHover:
-                                        presetTheme.colors.accentHover ||
-                                        presetTheme.colors.accent,
-                                    success:
-                                        presetTheme.colors.success || "#3ddc84",
-                                };
-                                templateDropdownOpen = false;
-                            }}
-                        >
-                            {themeObj.name}
-                        </button>
-                    {/each}
-
-                    {#if customThemes.filter((t) => t.id !== themeId && t.name.trim() !== "").length > 0}
-                        <div
-                            style="border-top: 1px solid var(--color-border); margin: 4px 0;"
-                        ></div>
-                        {#each customThemes.filter((t) => t.id !== themeId && t.name.trim() !== "") as customPreset}
-                            <button
-                                type="button"
-                                style="background: transparent; border: none; color: var(--color-text); font-family: var(--font-mono); font-size: 11px; padding: 6px 12px; text-align: left; cursor: pointer; width: 100%; transition: background 0.15s;"
-                                onmouseenter={(e) =>
-                                    (e.currentTarget.style.background =
-                                        "rgba(255, 255, 255, 0.05)")}
-                                onmouseleave={(e) =>
-                                    (e.currentTarget.style.background =
-                                        "transparent")}
-                                onclick={() => {
-                                    themeColors = {
-                                        background:
-                                            customPreset.colors.background,
-                                        surface: customPreset.colors.surface,
-                                        surfaceAlt:
-                                            customPreset.colors.surfaceAlt ||
-                                            customPreset.colors.surface,
-                                        border: customPreset.colors.border,
-                                        borderHover:
-                                            customPreset.colors.borderHover ||
-                                            customPreset.colors.border,
-                                        text: customPreset.colors.text,
-                                        textMuted:
-                                            customPreset.colors.textMuted,
-                                        accent: customPreset.colors.accent,
-                                        accentHover:
-                                            customPreset.colors.accentHover ||
-                                            customPreset.colors.accent,
-                                        success:
-                                            customPreset.colors.success ||
-                                            "#3ddc84",
-                                    };
-                                    templateDropdownOpen = false;
-                                }}
-                            >
-                                ★ {customPreset.name}
-                            </button>
-                        {/each}
-                    {/if}
-                </div>
-            {/if}
         </div>
     </div>
 

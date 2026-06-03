@@ -8,6 +8,7 @@
   import { toLocalDT } from "@/lib/utils/time";
   import { storage } from "wxt/utils/storage";
   import { onMount } from "svelte";
+  import { SESS_CLOSED_PREFIX } from "@/lib/constants";
 
   interface Props {
     sessions: QueueSession[];
@@ -26,13 +27,13 @@
   let isOpen = $state(true);
 
   onMount(async () => {
-    const val = await storage.getItem(`local:sess-closed-${itemId}`);
+    const val = await storage.getItem(`${SESS_CLOSED_PREFIX}${itemId}`);
     isOpen = val !== "1";
   });
 
   async function toggleOpen() {
     isOpen = !isOpen;
-    await storage.setItem(`local:sess-closed-${itemId}`, isOpen ? "0" : "1");
+    await storage.setItem(`${SESS_CLOSED_PREFIX}${itemId}`, isOpen ? "0" : "1");
   }
 
   function rememberEditableStart(e: FocusEvent) {
@@ -180,7 +181,7 @@
     text-align: left;
   }
   .session-summary:hover {
-    color: var(--color-text, #dde4f0);
+    color: var(--color-text);
   }
   .session-list {
     display: flex;

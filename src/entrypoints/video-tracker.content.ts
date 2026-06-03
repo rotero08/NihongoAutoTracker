@@ -3,16 +3,14 @@
  * Binds browser player event loops, watched threshold aggregators, and manual modals.
  */
 
-import { browser } from 'wxt/browser';
 import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { configStorage } from '@/lib/storage/config';
-import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { showPlaylistSelectorModal, cleanupPlaylistModal } from '@/lib/ui/playlist-modal';
-import { applyThemeToDocument, getTheme } from '@/lib/ui/themes';
+import { applyThemeToDocument, resolveThemeColors, getTheme } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
@@ -436,15 +434,8 @@ function getActivePlaylistContainers(): HTMLElement[] {
 
 function getActiveAccentColor(): string {
   const theme = cachedConfig.theme ?? 'dark-amber';
-  let customColors: any = null;
-  if (theme && (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom')) {
-    const themeId = theme.replace('custom_', '').replace('custom-', '');
-    const targetTheme = (cachedConfig.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
-    if (targetTheme) customColors = targetTheme.colors;
-    else if (cachedConfig.customColors) customColors = cachedConfig.customColors;
-  }
-  const activeTheme = getTheme(theme) || JSON.parse(JSON.stringify(DEFAULT_THEME));
-  return customColors?.accent || activeTheme.colors?.accent || '#F5B831';
+  const resolvedColors = resolveThemeColors(theme, cachedConfig.customThemes);
+  return resolvedColors.accent || '#F5B831';
 }
 
 function runPlaylistInjection(): boolean {
@@ -521,7 +512,6 @@ function runPlaylistInjection(): boolean {
       adapter.injectPlaylistButton(targetContainer, btn);
       injectedAny = true;
     } catch (err) {
-      addDebugLog('ERROR', 'VideoTracker', 'Failed to execute playlist button injection', err);
     }
   }
   return injectedAny;
@@ -542,13 +532,7 @@ function applyCachedTheme(c: any) {
   const theme = c.theme ?? 'dark-amber';
   const font = c.font ?? 'sans';
   const useStaticInPageLogo = c.useStaticInPageLogo === true;
-  let customColors: any = null;
-  if (theme && (theme.startsWith('custom_') || theme.startsWith('custom-') || theme === 'custom')) {
-    const themeId = theme.replace('custom_', '').replace('custom-', '');
-    const targetTheme = (c.customThemes || []).find((t: any) => t.id === themeId || t.id === theme);
-    if (targetTheme) customColors = targetTheme.colors;
-    else if (c.customColors) customColors = c.customColors;
-  }
+  const customColors = resolveThemeColors(theme, c.customThemes);
   applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
   
   const activeTheme = getTheme(theme) || JSON.parse(JSON.stringify(DEFAULT_THEME));
@@ -581,7 +565,6 @@ function injectThemeVariables(theme: any) {
     rootStyle.setProperty('--color-success', colors.success, 'important');
     rootStyle.setProperty('--color-error', colors.error, 'important');
   } catch (err) {
-    addDebugLog('ERROR', 'VideoTracker', 'Failed to write CSS custom properties onto documentElement', err);
   }
 }
 

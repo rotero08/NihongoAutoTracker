@@ -1,6 +1,8 @@
+import { browser } from 'wxt/browser';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
+import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, rgbToHsl, resolveThemeColors } from '@/lib/ui/themes';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
+import { READER_COLORS_PREFIX } from '@/lib/constants';
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;
@@ -75,13 +77,7 @@ export function getActiveThemeName(cfg: any): string {
 export function getCustomColorsForSite(cfg: any): any {
   const activeThemeName = getActiveThemeName(cfg);
   if (!activeThemeName) return null;
-  if (activeThemeName.startsWith('custom-') || activeThemeName.startsWith('custom_') || activeThemeName === 'custom') {
-    const id = activeThemeName.replace('custom-', '').replace('custom_', '');
-    const themes = cfg.customThemes || cfg.userThemes || [];
-    const theme = themes.find((t: any) => t.id === id || t.id === activeThemeName);
-    return theme ? theme.colors : (cfg.customColors || null);
-  }
-  return null;
+  return resolveThemeColors(activeThemeName, cfg.customThemes || cfg.userThemes);
 }
 
 export function adjustLightness(rgb: { r: number, g: number, b: number }, offset: number): string {
@@ -378,7 +374,7 @@ export function updateActiveThemeStyles(themeName: string, cfg: any) {
       if (detectedColors) {
         const host = window.location.hostname;
         browser.storage.local.set({
-          [`local:readerColors:${host}`]: detectedColors,
+          [`${READER_COLORS_PREFIX}${host}`]: detectedColors,
           [`readerColors:${host}`]: detectedColors
         }).catch(() => { });
 
@@ -443,8 +439,8 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
             }
 
             if (themeName === 'match-reader') {
-              const stored = await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]);
-              customColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
+              const stored = await browser.storage.local.get([`${READER_COLORS_PREFIX}${host}`, `readerColors:${host}`]);
+              customColors = stored[`${READER_COLORS_PREFIX}${host}`] || stored[`readerColors:${host}`];
             }
           }
         }
@@ -461,8 +457,8 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
 
       if (themeName === 'match-reader' && !isExtensionPage) {
         const host = window.location.hostname;
-        const stored = (await browser.storage.local.get([`local:readerColors:${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
-        const cachedColors = stored[`local:readerColors:${host}`] || stored[`readerColors:${host}`];
+        const stored = (await browser.storage.local.get([`${READER_COLORS_PREFIX}${host}`, `readerColors:${host}`]).catch(() => ({}))) as Record<string, any>;
+        const cachedColors = stored[`${READER_COLORS_PREFIX}${host}`] || stored[`readerColors:${host}`];
 
         const detectedColors = detectReaderThemeColors();
         if (detectedColors) {
@@ -483,7 +479,7 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
 
           if (colorsHaveChanged) {
             await browser.storage.local.set({
-              [`local:readerColors:${host}`]: detectedColors,
+              [`${READER_COLORS_PREFIX}${host}`]: detectedColors,
               [`readerColors:${host}`]: detectedColors
             });
           }

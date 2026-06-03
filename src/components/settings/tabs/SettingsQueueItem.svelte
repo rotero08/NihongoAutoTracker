@@ -27,6 +27,7 @@
   import { onMount, onDestroy } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { addDebugLog } from "@/lib/storage/debug";
+  import { SESS_CLOSED_PREFIX } from "@/lib/constants";
   import {
     persistField,
     persistFields,
@@ -129,7 +130,7 @@
   let isSessionsOpen = $state(true);
 
   onMount(async () => {
-    const val = await storage.getItem(`local:sess-closed-${item.id}`);
+    const val = await storage.getItem(`${SESS_CLOSED_PREFIX}${item.id}`);
     isSessionsOpen = val !== "1";
   });
 
@@ -141,7 +142,7 @@
   async function toggleSessionsOpen() {
     isSessionsOpen = !isSessionsOpen;
     await storage.setItem(
-      `local:sess-closed-${item.id}`,
+      `${SESS_CLOSED_PREFIX}${item.id}`,
       isSessionsOpen ? "0" : "1",
     );
   }
@@ -635,7 +636,7 @@
                 <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
                 <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
                 <line x1="8" y1="12" x2="16" y2="12"/>
-                <line x1="2" y1="2" x2="22" y2="22"/>
+                <line x1="2" y1="22" x2="22" y2="22"/>
               </svg>
             {:else}
               <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
