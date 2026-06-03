@@ -53,39 +53,20 @@ if (typeof window !== 'undefined') {
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+/**
+ * Reusable helper to count Japanese characters using a stateful regex.
+ * This completely eliminates temporary match array allocations and GC churn.
+ */
+function countJapaneseChars(text: string): number {
+    if (!text) return 0;
+    let count = 0;
+    JP_CHAR_PATTERN.lastIndex = 0;
+    while (JP_CHAR_PATTERN.test(text)) {
+        count++;
+    }
+    JP_CHAR_PATTERN.lastIndex = 0; // Reset state
+    return count;
+}
 
 
 /**
@@ -277,6 +258,11 @@ export function extractAdvancedCharCount(
         const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
         const currentContainerId = activeContainer.id || '';
 
+        // If the previously tracked container was removed from the DOM, clean up to prevent detached memory leaks
+        if (lastContainer && !lastContainer.isConnected) {
+            clearExtractorCache();
+        }
+
         // Check if the container reference or its ID changed to trigger a cache refresh
         if (readerContainer !== lastContainer || currentContainerId !== lastContainerId) {
             lastContainer = readerContainer;
@@ -293,18 +279,18 @@ export function extractAdvancedCharCount(
             const style = getComputedStyle(activeContainer);
             cachedWritingMode = style.writingMode || '';
             cachedIsVertical =
-                cachedWritingMode === 'vertical-rl' ||
-                cachedWritingMode === 'vertical-lr' ||
-                readerContainer.classList.contains('book-content--writing-vertical-rl');
+            cachedWritingMode === 'vertical-rl' ||
+            cachedWritingMode === 'vertical-lr' ||
+            readerContainer.classList.contains('book-content--writing-vertical-rl');
 
             const colWidth = style.columnWidth || '';
             const colCount = style.columnCount || '';
 
             cachedIsPaginated =
-                !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
-                !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-                ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
-                    (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
+            !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
+            !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
+            ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
+            (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
         }
 
         // 2. Query Text-bearing Nodes
@@ -316,22 +302,12 @@ export function extractAdvancedCharCount(
             }) as Element[];
         }
 
-        const sectionIndex = getSectionIndex(activeContainer);
-        lastCachedSectionIndex = sectionIndex;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        // Use caching to completely bypass redundant getSectionIndex querySelector runs on every tick
+        let sectionIndex = lastCachedSectionIndex;
+        if (!isCacheValid || lastCachedSectionIndex === null) {
+            sectionIndex = getSectionIndex(activeContainer);
+            lastCachedSectionIndex = sectionIndex;
+        }
 
         if (pTags.length === 0) {
             lastCachedTotal = 0;
@@ -363,8 +339,7 @@ export function extractAdvancedCharCount(
                             text += n.nodeValue || '';
                         }
                     }
-                    const matches = text.match(JP_CHAR_PATTERN);
-                    count = matches ? matches.length : 0;
+                    count = countJapaneseChars(text);
                     ttuCharCountCache.set(el, count);
                 }
                 acc += count;
@@ -390,19 +365,19 @@ export function extractAdvancedCharCount(
                 explored = true; // Treats unrendered nodes as explored
             } else if (cachedIsVertical) {
                 if (cachedIsPaginated) {
-                    explored = r.bottom <= 0.5;
+                    explored = r.bottom <= 1;
                 } else {
                     if (cachedWritingMode === 'vertical-lr') {
-                        explored = r.right <= 0.5;
+                        explored = r.right <= 1;
                     } else {
-                        explored = r.left >= (cachedVw + 0.5);
+                        explored = r.left >= (cachedVw + 1);
                     }
                 }
             } else {
                 if (cachedIsPaginated) {
-                    explored = r.right <= 0.5;
+                    explored = r.right <= 1;
                 } else {
-                    explored = r.bottom <= 0.5;
+                    explored = r.bottom <= 1;
                 }
             }
 
@@ -427,18 +402,18 @@ export function extractAdvancedCharCount(
             if (cachedIsPaginated) {
                 // Goal 1: Bypass text-node measurements in columns unless split or highlighted
                 const isSplit = cachedIsVertical
-                    ? (r.bottom > cachedVh || r.top < 0)
-                    : (r.right > cachedVw || r.left < 0);
+                ? (r.bottom > cachedVh || r.top < 0)
+                : (r.right > cachedVw || r.left < 0);
                 needsSubParagraphTracking = isSplit || activeEl.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
             } else {
                 if (cachedIsVertical) {
                     if (cachedWritingMode === 'vertical-lr') {
-                        needsSubParagraphTracking = r.left < -0.5;
+                        needsSubParagraphTracking = r.left < -1;
                     } else {
-                        needsSubParagraphTracking = r.right > (cachedVw + 0.5);
+                        needsSubParagraphTracking = r.right > (cachedVw + 1);
                     }
                 } else {
-                    needsSubParagraphTracking = r.top < -0.5;
+                    needsSubParagraphTracking = r.top < -1;
                 }
             }
 
@@ -453,38 +428,37 @@ export function extractAdvancedCharCount(
                         let sExp = false;
                         if (cachedIsVertical) {
                             if (cachedIsPaginated) {
-                                sExp = sr.bottom <= 0.5;
+                                sExp = sr.bottom <= 1;
                             } else {
                                 if (cachedWritingMode === 'vertical-rl') {
-                                    sExp = sr.left >= (cachedVw + 0.5);
+                                    sExp = sr.left >= (cachedVw + 1);
                                 } else {
-                                    sExp = sr.right <= 0.5;
+                                    sExp = sr.right <= 1;
                                 }
                             }
                         } else {
                             if (cachedIsPaginated) {
-                                sExp = sr.right <= 0.5;
+                                sExp = sr.right <= 1;
                             } else {
-                                sExp = sr.bottom <= 0.5;
+                                sExp = sr.bottom <= 1;
                             }
                         }
 
                         if (sExp) {
-                            const m = s.textContent?.match(JP_CHAR_PATTERN);
-                            if (m) current += m.length;
+                            current += countJapaneseChars(s.textContent || '');
                         }
                     });
                 } else {
                     // Fallback to text node precision tracking when highlights are absent
                     const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
                     let n;
+                    let checkedNodesCount = 0;
 
                     if (!reusableRange && typeof document !== 'undefined') {
                         reusableRange = document.createRange();
                     }
 
-                    // Node limit removed to ensure 100% accuracy on extremely long web novel paragraphs
-                    while ((n = walker.nextNode())) {
+                    while ((n = walker.nextNode()) && checkedNodesCount < 150) {
                         const parent = n.parentElement;
                         if (!parent || shouldIgnoreNode(parent)) {
                             continue;
@@ -495,6 +469,8 @@ export function extractAdvancedCharCount(
                             continue;
                         }
 
+                        checkedNodesCount++;
+
                         let sExp = false;
                         // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation
                         if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
@@ -502,19 +478,19 @@ export function extractAdvancedCharCount(
                             if (nr.width > 0 && nr.height > 0) {
                                 if (cachedIsVertical) {
                                     if (cachedIsPaginated) {
-                                        sExp = nr.bottom <= 0.5;
+                                        sExp = nr.bottom <= 1;
                                     } else {
                                         if (cachedWritingMode === 'vertical-rl') {
-                                            sExp = nr.left >= (cachedVw + 0.5);
+                                            sExp = nr.left >= (cachedVw + 1);
                                         } else {
-                                            sExp = nr.right <= 0.5;
+                                            sExp = nr.right <= 1;
                                         }
                                     }
                                 } else {
                                     if (cachedIsPaginated) {
-                                        sExp = nr.right <= 0.5;
+                                        sExp = nr.right <= 1;
                                     } else {
-                                        sExp = nr.bottom <= 0.5;
+                                        sExp = nr.bottom <= 1;
                                     }
                                 }
                             }
@@ -526,28 +502,25 @@ export function extractAdvancedCharCount(
 
                             if (cachedIsVertical) {
                                 if (cachedIsPaginated) {
-                                    sExp = nr.bottom <= 0.5;
+                                    sExp = nr.bottom <= 1;
                                 } else {
                                     if (cachedWritingMode === 'vertical-rl') {
-                                        sExp = nr.left >= (cachedVw + 0.5);
+                                        sExp = nr.left >= (cachedVw + 1);
                                     } else {
-                                        sExp = nr.right <= 0.5;
+                                        sExp = nr.right <= 1;
                                     }
                                 }
                             } else {
                                 if (cachedIsPaginated) {
-                                    sExp = nr.right <= 0.5;
+                                    sExp = nr.right <= 1;
                                 } else {
-                                    sExp = nr.bottom <= 0.5;
+                                    sExp = nr.bottom <= 1;
                                 }
                             }
                         }
 
                         if (sExp) {
-                            const matches = text.match(JP_CHAR_PATTERN);
-                            if (matches) {
-                                current += matches.length;
-                            }
+                            current += countJapaneseChars(text);
                         }
                     }
                 }

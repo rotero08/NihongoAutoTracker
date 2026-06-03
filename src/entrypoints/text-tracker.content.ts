@@ -69,6 +69,10 @@ let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
 const YATSU_SIDEBAR_CHECK_TTL = 1000; // Scan the deep DOM at most once every 1000ms during idle reading
 
+// Cached references for ignored container elements to bypass querySelector/closest walks
+let cachedChronoWrapper: HTMLElement | null = null;
+let cachedOverlay: HTMLElement | null = null;
+
 function invalidateYatsuSidebarCache() {
   _lastYatsuSidebarCheckTime = 0;
 }
@@ -93,11 +97,11 @@ const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
         tooltip.className = 'nt-chrono-tooltip';
         Object.assign(tooltip.style, {
           position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
-          background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
-          borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
-          zIndex: '10000', opacity: '0', pointerEvents: 'none',
-          transition: 'opacity 0.2s ease, transform 0.2s ease'
+                      background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+                      borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+                      zIndex: '10000', opacity: '0', pointerEvents: 'none',
+                      transition: 'opacity 0.2s ease, transform 0.2s ease'
         });
         wrapper.appendChild(tooltip);
       }
@@ -125,9 +129,9 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
       Object.assign(newOverlay.style, {
         position: 'absolute', top: '0', left: '0', right: '0', bottom: '0',
         background: 'rgba(15, 15, 20, 0.75)', backdropFilter: 'blur(2.5px)',
-        webkitBackdropFilter: 'blur(2.5px)', color: '#aaa', display: 'flex',
-        alignItems: 'center', justifyContent: 'center', fontSize: '11px',
-        textAlign: 'center', padding: '16px', borderRadius: '8px', zIndex: '9999'
+                    webkitBackdropFilter: 'blur(2.5px)', color: '#aaa', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center', fontSize: '11px',
+                    textAlign: 'center', padding: '16px', borderRadius: '8px', zIndex: '9999'
       } as any);
       dropdown.appendChild(newOverlay);
       newOverlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
@@ -142,41 +146,41 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
 
 const stabilizer = new DOMMutationStabilizer(
   { get running() { return ttuState.running; } },
-  setChronoButtonDisabled,
-  updateDropdownOverlayState,
-  () => recalculateChars(),
-  (active) => {
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) {
-      wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
-    }
-    const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
-    if (btn && wrapper) {
-      let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
-      if (active) {
-        btn.classList.add('nt-btn-suspended-running');
-        btn.style.setProperty('cursor', 'help', 'important');
-        if (!tooltip) {
-          tooltip = document.createElement('div');
-          tooltip.className = 'nt-chrono-tooltip';
-          Object.assign(tooltip.style, {
-            position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
-            background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
-            borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
-            zIndex: '10000', opacity: '0', pointerEvents: 'none',
-            transition: 'opacity 0.2s ease, transform 0.2s ease'
-          });
-          wrapper.appendChild(tooltip);
-        }
-        tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
-      } else {
-        btn.classList.remove('nt-btn-suspended-running');
-        btn.style.removeProperty('cursor');
-        if (tooltip) tooltip.remove();
-      }
-    }
-  }
+                                             setChronoButtonDisabled,
+                                             updateDropdownOverlayState,
+                                             () => recalculateChars(),
+                                             (active) => {
+                                               const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+                                               if (wrapper) {
+                                                 wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
+                                               }
+                                               const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
+                                               if (btn && wrapper) {
+                                                 let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+                                                 if (active) {
+                                                   btn.classList.add('nt-btn-suspended-running');
+                                                   btn.style.setProperty('cursor', 'help', 'important');
+                                                   if (!tooltip) {
+                                                     tooltip = document.createElement('div');
+                                                     tooltip.className = 'nt-chrono-tooltip';
+Object.assign(tooltip.style, {
+  position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
+              background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+              borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+              zIndex: '10000', opacity: '0', pointerEvents: 'none',
+              transition: 'opacity 0.2s ease, transform 0.2s ease'
+});
+wrapper.appendChild(tooltip);
+                                                   }
+                                                   tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
+                                                 } else {
+                                                   btn.classList.remove('nt-btn-suspended-running');
+                                                   btn.style.removeProperty('cursor');
+                                                   if (tooltip) tooltip.remove();
+                                                 }
+                                               }
+                                             }
 );
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
@@ -206,9 +210,9 @@ const stateRefs: StateRefs = {
 
 const ttuState = new Proxy({
   id: crypto.randomUUID(),
-  running: false,
-  timeMs: 0,
-  chars: 0,
+                           running: false,
+                           timeMs: 0,
+                           chars: 0,
 }, {
   set(target, prop, value) {
     if (prop === 'running') {
@@ -254,13 +258,14 @@ let isSyncing = false;
 function updateCachedActiveTabTitle() {
   if (window.self !== window.top) {
     browser.runtime.sendMessage({ action: "GET_ACTIVE_TAB_TITLE" })
-      .then((response) => {
-        if (response?.title) cachedActiveTabTitle = response.title;
-      })
-      .catch(() => {});
+    .then((response) => {
+      if (response?.title) cachedActiveTabTitle = response.title;
+    })
+    .catch(() => {});
   }
 }
 
+// Extract sequential section index from current wrapper relative to document flow
 function getTTUTitle() {
   let title = document.title;
   try {
@@ -274,7 +279,7 @@ function getTTUTitle() {
   } catch (e) {
     if (cachedActiveTabTitle) title = cachedActiveTabTitle;
   }
-  
+
   const adapter = getActiveReaderAdapter();
   if (adapter) {
     return adapter.getTitle(title);
@@ -397,12 +402,12 @@ async function liveSyncQueue(force = false) {
       if (!existing) {
         existing = {
           id: crypto.randomUUID(), type: 'reading',
-          contentTitleNative: parsedTitle, contentTitleEnglish: '',
-          originalTitle: rawTitle, description: parsedTitle,
-          chars: ttuState.chars, time: secs, volume: targetVolume,
-          date: dateStr, private: false, tags: [],
-          sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
-          readerName: getReaderName()
+                                   contentTitleNative: parsedTitle, contentTitleEnglish: '',
+                                   originalTitle: rawTitle, description: parsedTitle,
+                                   chars: ttuState.chars, time: secs, volume: targetVolume,
+                                   date: dateStr, private: false, tags: [],
+                                   sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
+                                   readerName: getReaderName()
         };
         queue.push(existing);
       } else {
@@ -480,7 +485,7 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   const footer = document.getElementById('ttu-page-footer');
   if (footer) {
     const flexGroups = Array.from(footer.children).filter(el =>
-      el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
+    el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
     if (flexGroups.length > 0) { _insertPointCache = { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' }; return _insertPointCache; }
     _insertPointCache = { el: footer, pos: 'afterbegin' };
     return _insertPointCache;
@@ -504,73 +509,6 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
-/**
- * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
- */
-function checkAndProcessSectionTransition(charData: any): boolean {
-  const { total, sectionIndex, isPaginated } = charData;
-  const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-  if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-    stateRefs.globalSessionStartChar = -1;
-    stateRefs.globalManualCharOffset = 0;
-    stateRefs.lastSectionIndex = -1;
-    stateRefs.lastSectionTotal = 0;
-    stateRefs.visitedSections.clear();
-    ttuState.chars = 0;
-    ttuState.timeMs = 0;
-    stateRefs.globalLastTick = Date.now();
-    lastLoggedPaginatedMode = isPaginated;
-    if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
-    return true;
-  }
-
-  lastLoggedPaginatedMode = isPaginated;
-
-  if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
-    initSessionRefs(charData.current, activeSection, total, isPaginated);
-  }
-
-  if (stateRefs.lastSectionIndex !== activeSection) {
-    stabilizer.resetJitenParseFlag();
-    if (activeSection === -1) {
-      if (!isReadingViewActive()) {
-        stateRefs.lastSectionIndex = -1;
-        stateRefs.globalManualCharOffset = 0;
-        stateRefs.visitedSections.clear();
-      }
-    } else {
-      if (activeSection > stateRefs.lastSectionIndex) {
-        if (stateRefs.visitedSections.has(activeSection)) {
-          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-        } else {
-          // Commit current section total before jumping to ensure mathematical precision
-          stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-        }
-      } else {
-        if (stateRefs.visitedSections.has(activeSection)) {
-          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-        } else {
-          stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-        }
-      }
-      if (isPaginated) stateRefs.globalSessionStartChar = 0;
-
-      stateRefs.lastSectionIndex = activeSection;
-      stateRefs.lastSectionTotal = total;
-
-      if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
-      else stabilizer.runGracePeriodIfJiten();
-    }
-    return true;
-  } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-    stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
-  }
-  return false;
-}
-
 function recalculateChars() {
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
   const now = Date.now();
@@ -588,12 +526,9 @@ function recalculateChars() {
     return;
   }
 
-  const charData = extractAdvancedCharCount(undefined, ttuState.running);
-  if (charData !== null) {
-    // Synchronize section boundary and manual offset before applying the local paragraph count
-    checkAndProcessSectionTransition(charData);
-
-    const current = charData.current;
+  const adapter = getActiveReaderAdapter();
+  const current = adapter ? adapter.extractCharCount() : null;
+  if (current !== null) {
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
     }
@@ -659,7 +594,7 @@ function scheduleInstantThemeSync() {
   });
 }
 
-// Deep, geometric evaluation of sidebars, dialogs, and settings drawers 
+// Deep, geometric evaluation of sidebars, dialogs, and settings drawers
 function isYatsuSidebarOpen(): boolean {
   if (window.location.hostname !== 'app.yatsu.moe') return false;
   const now = Date.now();
@@ -674,15 +609,21 @@ function isYatsuSidebarOpen(): boolean {
     return false;
   }
 
+  // Fast-path: Check DOM tree existence without triggering style resolution/layout reflows
+  if (!document.querySelector('aside, dialog, [role="dialog"], [role="menu"]')) {
+    _cachedYatsuSidebarOpen = false;
+    return false;
+  }
+
   // Query strictly semantic sidebar, dialog, and accessibility tags.
   // This executes instantly and returns 0 items during active reading (99.9% of the session)
   const els = document.querySelectorAll('aside, dialog, [role="dialog"], [role="menu"]');
-  
+
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
     const id = el.id || '';
     const className = el.className || '';
-    
+
     const idStr = typeof id === 'string' ? id.toLowerCase() : '';
     const classStr = typeof className === 'string' ? className.toLowerCase() : '';
 
@@ -719,7 +660,7 @@ function isYatsuSidebarOpen(): boolean {
     }
 
     // 6. Geometric Classification:
-    
+
     // A. Backdrop / Full Screen Overlay: covers almost the entire viewport
     const isBackdrop = rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.9;
 
@@ -776,13 +717,13 @@ async function setupTTUChronometer() {
         getTTUTitle,
         parseTitleWithConfig,
         extractTTUCharCount: () => extractAdvancedCharCount(undefined, ttuState.running),
-        getReaderName,
-        getCurrentReaderConfig: () => {
-          const rCfg = getReaderConfig(currentConfig) || {};
-          return { ...rCfg, hideUnavailableActions: currentConfig.hideUnavailableActions ?? false };
-        },
-        liveSyncQueue: (force = false) => liveSyncQueue(force),
-        saveSessionAndQueue,
+                                   getReaderName,
+                                   getCurrentReaderConfig: () => {
+                                     const rCfg = getReaderConfig(currentConfig) || {};
+                                     return { ...rCfg, hideUnavailableActions: currentConfig.hideUnavailableActions ?? false };
+                                   },
+                                   liveSyncQueue: (force = false) => liveSyncQueue(force),
+                                   saveSessionAndQueue,
       }
     });
 
@@ -879,6 +820,21 @@ async function setupTTUChronometer() {
 function isTargetInIgnoredContainer(target: Node): boolean {
   const element = target.nodeType === Node.ELEMENT_NODE ? (target as HTMLElement) : target.parentElement;
   if (!element) return false;
+
+  // Bypass heavy closest walks using high-performance DOM containment checks on cached elements
+  if (!cachedChronoWrapper || !cachedChronoWrapper.isConnected) {
+    cachedChronoWrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  }
+  if (!cachedOverlay || !cachedOverlay.isConnected) {
+    cachedOverlay = document.getElementById('nt-overlay');
+  }
+
+  if (cachedChronoWrapper && cachedChronoWrapper.contains(element)) return true;
+  if (cachedOverlay && cachedOverlay.contains(element)) return true;
+
+  const cl = element.className;
+  if (typeof cl === 'string' && cl.includes('nt-toast')) return true;
+
   return !!element.closest('#nt-ttu-chrono-wrapper, #nt-overlay, [class*="nt-toast"]');
 }
 
@@ -933,14 +889,14 @@ if (isRelevantFrame) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') forceSyncOnExit();
   });
-  window.addEventListener('pagehide', forceSyncOnExit);
-  window.addEventListener('beforeunload', forceSyncOnExit);
+    window.addEventListener('pagehide', forceSyncOnExit);
+    window.addEventListener('beforeunload', forceSyncOnExit);
 
-  document.addEventListener('nt-theme-lock-released', () => {
-    invalidateReadingViewCache();
-    invalidateYatsuSidebarCache();
-    handleMutations();
-  });
+    document.addEventListener('nt-theme-lock-released', () => {
+      invalidateReadingViewCache();
+      invalidateYatsuSidebarCache();
+      handleMutations();
+    });
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
@@ -1115,10 +1071,10 @@ function setupOptimizedMutationObserver() {
   rootStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   rootStyleObserver.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 
-  bodyObserver = new MutationObserver(() => { 
-    invalidateReadingViewCache(); 
+  bodyObserver = new MutationObserver(() => {
+    invalidateReadingViewCache();
     invalidateYatsuSidebarCache();
-    handleMutations(); 
+    handleMutations();
   });
   bodyObserver.observe(document.body, { childList: true, subtree: false });
 
@@ -1130,13 +1086,13 @@ function setupOptimizedMutationObserver() {
     if (container && currentObservedElement !== container) startObserver();
   }, 1000);
 
-  window.addEventListener('unload', () => {
-    clearInterval(checkInterval);
-    if (activeMutationObserver) activeMutationObserver.disconnect();
-    if (rootObserver) rootObserver.disconnect();
-    if (rootStyleObserver) rootStyleObserver.disconnect();
-    if (bodyObserver) bodyObserver.disconnect();
-  });
+    window.addEventListener('unload', () => {
+      clearInterval(checkInterval);
+      if (activeMutationObserver) activeMutationObserver.disconnect();
+      if (rootObserver) rootObserver.disconnect();
+      if (rootStyleObserver) rootStyleObserver.disconnect();
+      if (bodyObserver) bodyObserver.disconnect();
+    });
 }
 
 if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -1190,8 +1146,10 @@ function handleMutations() {
     }
   } else if (!isActive) {
     _wasReadingViewActive = false;
+    _insertPointCache = null; // Clean cached stale elements on view exit to resolve detached DOM memory leak
   }
 
+  let didWriteDOM = false;
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   const adapter = getActiveReaderAdapter();
   if (isReadingViewActive()) {
@@ -1199,10 +1157,15 @@ function handleMutations() {
     if (target) {
       const readerCfg = getReaderConfig(currentConfig);
       if (readerCfg.enabled !== false) {
-        if (!wrapper) setupTTUChronometer();
-        else {
+        if (!wrapper) {
+          setupTTUChronometer();
+          didWriteDOM = true;
+        } else {
           const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
-          if (wrapper.parentElement !== expectedParent) target.el.insertAdjacentElement(target.pos, wrapper);
+          if (wrapper.parentElement !== expectedParent) {
+            target.el.insertAdjacentElement(target.pos, wrapper);
+            didWriteDOM = true;
+          }
         }
       }
     }
@@ -1213,6 +1176,7 @@ function handleMutations() {
         mountedChronoComponent = null;
       }
       wrapper.remove();
+      didWriteDOM = true;
     }
     if (progressObserver) {
       progressObserver.disconnect();
@@ -1220,32 +1184,102 @@ function handleMutations() {
     }
   }
 
-  if (wrapper && adapter) adapter.onUpdateStyles?.(wrapper);
+  if (wrapper && adapter) {
+    adapter.onUpdateStyles?.(wrapper);
+    didWriteDOM = true;
+  }
   if (ttuState.running && isReadingViewActive()) setupProgressObserver();
 
-  // Instant verifying synchronous section indexing
-  const charData = extractAdvancedCharCount(undefined, ttuState.running);
-  if (charData !== null) {
-    const didTransition = checkAndProcessSectionTransition(charData);
-    if (didTransition) {
+  const runCalculation = () => {
+    // Instant verifying synchronous section indexing
+    const charData = extractAdvancedCharCount(undefined, ttuState.running);
+    if (charData !== null) {
+      const { total, sectionIndex, isPaginated } = charData;
+      const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+      if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+        stateRefs.globalSessionStartChar = -1;
+        stateRefs.globalManualCharOffset = 0;
+        stateRefs.lastSectionIndex = -1;
+        stateRefs.lastSectionTotal = 0;
+        stateRefs.visitedSections.clear();
+        ttuState.chars = 0;
+        ttuState.timeMs = 0;
+        stateRefs.globalLastTick = Date.now();
+        lastLoggedPaginatedMode = isPaginated;
+        if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
         recalculateChars();
-    }
-  }
-
-  if (!adapter) {
-    if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
-      const overlay = overlayController.getOverlayElement();
-      if (!overlay) overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
-    }
-  }
-
-  if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
-    setTimeout(() => {
-      if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
-        invalidateReadingViewCache();
-        handleMutations();
+        return;
       }
-    }, 250);
+
+      lastLoggedPaginatedMode = isPaginated;
+
+      if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
+        const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
+        initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
+      }
+
+      if (stateRefs.lastSectionIndex !== activeSection) {
+        stabilizer.resetJitenParseFlag();
+        if (activeSection === -1) {
+          if (!isReadingViewActive()) {
+            stateRefs.lastSectionIndex = -1;
+            stateRefs.globalManualCharOffset = 0;
+            stateRefs.visitedSections.clear();
+            recalculateChars();
+          }
+        } else {
+          if (activeSection > stateRefs.lastSectionIndex) {
+            if (stateRefs.visitedSections.has(activeSection)) {
+              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+            } else {
+              stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+            }
+          } else {
+            if (stateRefs.visitedSections.has(activeSection)) {
+              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+            } else {
+              stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+            }
+          }
+          if (isPaginated) stateRefs.globalSessionStartChar = 0;
+
+          stateRefs.lastSectionIndex = activeSection;
+          stateRefs.lastSectionTotal = total;
+
+          if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
+          else stabilizer.runGracePeriodIfJiten();
+          recalculateChars();
+        }
+      } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
+        stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
+      }
+    }
+
+    if (!adapter) {
+      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
+        const overlay = overlayController.getOverlayElement();
+        if (!overlay) overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
+      }
+    }
+
+    if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+      setTimeout(() => {
+        if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+          invalidateReadingViewCache();
+          handleMutations();
+        }
+      }, 250);
+    }
+  };
+
+  // Prevent synchronous layout thrashing (Forced Reflow) by deferring math reads when DOM writes occur
+  if (didWriteDOM) {
+    requestAnimationFrame(runCalculation);
+  } else {
+    runCalculation();
   }
 }
 
@@ -1311,7 +1345,7 @@ export default defineContentScript({
 
     configStorage.watch((newCfg) => {
       if (newCfg) {
-        // Force reset the cached reading view status and elements to prevent 
+        // Force reset the cached reading view status and elements to prevent
         // the chronometer from failing to re-inject after settings/theme changes.
         invalidateReadingViewCache();
 
@@ -1325,7 +1359,7 @@ export default defineContentScript({
         if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
-        
+
         applyActiveTheme(activeThemeCfg);
 
         if (adapter && originalName) safelySetAdapterName(adapter, originalName);
@@ -1365,17 +1399,17 @@ export default defineContentScript({
           const existingOverlay = overlayController.getOverlayElement();
           if (existingOverlay) {
             const overlayPos = newCfg.overlayPosition ?? 'top-right';
-            if (overlayPos !== 'hidden') {
-              existingOverlay.style.setProperty('display', 'flex', 'important');
-              applyOverlayPosition(existingOverlay, overlayPos);
-              injectOverlayCustomOverrides();
-              const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
-              if (pauseBtn) updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
-              const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
-              if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
-              const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
-              if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
-            } else existingOverlay.style.setProperty('display', 'none', 'important');
+    if (overlayPos !== 'hidden') {
+      existingOverlay.style.setProperty('display', 'flex', 'important');
+      applyOverlayPosition(existingOverlay, overlayPos);
+      injectOverlayCustomOverrides();
+      const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
+      if (pauseBtn) updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
+      const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
+      if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
+      const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
+      if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
+    } else existingOverlay.style.setProperty('display', 'none', 'important');
           } else overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
         }
       }
@@ -1392,63 +1426,63 @@ export default defineContentScript({
         if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
       });
 
-      readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
-        const currentQueue = queue || [];
-        const rawTitle = getTTUTitle();
-        const parsedRaw = parseTitleWithConfig(rawTitle).query;
+        readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
+          const currentQueue = queue || [];
+          const rawTitle = getTTUTitle();
+          const parsedRaw = parseTitleWithConfig(rawTitle).query;
 
-        const linkMap = await ttuLinkStorage.getValue() || {};
-        const linkedMedia = linkMap[rawTitle];
-        const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
+          const linkMap = await ttuLinkStorage.getValue() || {};
+          const linkedMedia = linkMap[rawTitle];
+          const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
-        const existing = currentQueue.find((q: any) => {
-          if (q.originalTitle === rawTitle) return true;
-          const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
-          return qParsed.query === parsedRaw && (qParsed.volume || 1) === targetVolume;
-        });
+          const existing = currentQueue.find((q: any) => {
+            if (q.originalTitle === rawTitle) return true;
+            const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
+            return qParsed.query === parsedRaw && (qParsed.volume || 1) === targetVolume;
+          });
 
-        if (!existing && ttuState.timeMs > 0) {
-          if (hasSyncedThisSession) {
-            ttuState.timeMs = 0;
-            ttuState.chars = 0;
-            stateRefs.globalLastTick = Date.now();
-            const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
-            stateRefs.globalManualCharOffset = 0;
+          if (!existing && ttuState.timeMs > 0) {
+            if (hasSyncedThisSession) {
+              ttuState.timeMs = 0;
+              ttuState.chars = 0;
+              stateRefs.globalLastTick = Date.now();
+              const initCount = extractAdvancedCharCount(undefined, ttuState.running);
+              stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+              stateRefs.globalManualCharOffset = 0;
 
-            const timeVal = document.querySelector('#nt-ttu-val-time');
-            const charsVal = document.querySelector('#nt-ttu-val-chars');
-            if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
-            if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+              const timeVal = document.querySelector('#nt-ttu-val-time');
+              const charsVal = document.querySelector('#nt-ttu-val-chars');
+              if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
+              if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
 
-            hasSyncedThisSession = false;
-          }
-        } else if (existing) {
-          let updated = false;
-          const links = { ...linkMap };
-          if (existing.mediaId && existing.mediaId !== 'web-reading') {
-            if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
-              links[rawTitle] = { mediaId: existing.mediaId, volume: existing.volume || 1, mediaData: existing.mediaData as ReadingMediaData };
-              updated = true;
+              hasSyncedThisSession = false;
             }
-          } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
-            if (links[rawTitle]) {
-              const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
-              if (links[rawTitle].volume === parsedVol) {
-                delete links[rawTitle];
+          } else if (existing) {
+            let updated = false;
+            const links = { ...linkMap };
+            if (existing.mediaId && existing.mediaId !== 'web-reading') {
+              if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
+                links[rawTitle] = { mediaId: existing.mediaId, volume: existing.volume || 1, mediaData: existing.mediaData as ReadingMediaData };
                 updated = true;
               }
+            } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
+              if (links[rawTitle]) {
+                const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
+                if (links[rawTitle].volume === parsedVol) {
+                  delete links[rawTitle];
+                  updated = true;
+                }
+              }
+            }
+            if (updated) {
+              ttuLinkStorage.setValue(links).then(() => {
+                const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+                if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+              });
             }
           }
-          if (updated) {
-            ttuLinkStorage.setValue(links).then(() => {
-              const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-              if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-            });
-          }
-        }
-      });
-      return;
+        });
+        return;
     }
 
     if (isWebsiteOverlaySkipped(cfg)) return;
