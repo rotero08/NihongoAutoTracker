@@ -352,18 +352,37 @@ export function runOverlaySetup(cfg: any) {
     document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } });
     document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
 
+    // Centralized helper to immediately sync state modifications to the layout DOM elements
+    const updateOverlayUI = () => {
+      const nt = (window as any).__nt_tracker_session_active_ms__;
+      if (nt) {
+        timeEl.textContent = fmt(nt.getTotal());
+        const isPaused = nt.isPaused();
+        const curD = pauseBtn.textContent;
+        if (isPaused && curD !== '▶') {
+          updatePauseIconState(pauseBtn, true);
+          pauseBtn.classList.add('active');
+        } else if (!isPaused && curD !== '⏸') {
+          updatePauseIconState(pauseBtn, false);
+          pauseBtn.classList.remove('active');
+        }
+      }
+    };
+
     pauseBtn.addEventListener('click', () => {
       const nt = (window as any).__nt_tracker_session_active_ms__;
       if (nt) {
         const nowPaused = !nt.isPaused();
         nt.pause(nowPaused);
-        updatePauseIconState(pauseBtn, nowPaused);
-        pauseBtn.classList.toggle('active', nowPaused);
+        updateOverlayUI();
       }
     });
     resetBtn.addEventListener('click', () => {
       const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (nt) nt.setMs(0);
+      if (nt) {
+        nt.setMs(0);
+        updateOverlayUI();
+      }
     });
     timeEl.addEventListener('click', () => {
       const nt = (window as any).__nt_tracker_session_active_ms__;
@@ -381,27 +400,15 @@ export function runOverlaySetup(cfg: any) {
         }
         if (ms >= 0) nt.setMs(ms);
         input.replaceWith(timeEl);
+        updateOverlayUI();
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
       timeEl.replaceWith(input); input.focus(); input.select();
     });
 
-    setInterval(() => {
-      const nt = (window as any).__nt_tracker_session_active_ms__;
-      if (nt) {
-        timeEl.textContent = fmt(nt.getTotal());
-        const isPaused = nt.isPaused();
-        const curD = pauseBtn.textContent;
-        if (isPaused && curD !== '▶') {
-          updatePauseIconState(pauseBtn, true);
-          pauseBtn.classList.add('active');
-        } else if (!isPaused && curD !== '⏸') {
-          updatePauseIconState(pauseBtn, false);
-          pauseBtn.classList.remove('active');
-        }
-      }
-    }, 1000);
+    // Run interval tick updates at 200ms to keep timer transitions smooth
+    setInterval(updateOverlayUI, 200);
   }
 
   const pos = cfg.overlayPosition ?? 'top-right';
