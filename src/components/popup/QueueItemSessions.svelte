@@ -216,7 +216,7 @@
   .session-label {
     font-family: var(--font-mono, monospace);
     font-size: 10px;
-    color: var(--color-accent-dim, #b88e33) !important;
+    color: color-mix(in srgb, var(--color-accent) 60%, transparent) !important;
     font-weight: bold;
     flex-shrink: 0;
     margin-right: 5px;
@@ -224,7 +224,7 @@
   .stremio-static-meta {
     font-family: var(--font-mono, monospace);
     font-size: 10px;
-    color: var(--color-text-muted, #5a6a85);
+    color: var(--color-text-muted, #7a8ca5);
     white-space: nowrap;
     flex-shrink: 0;
   }

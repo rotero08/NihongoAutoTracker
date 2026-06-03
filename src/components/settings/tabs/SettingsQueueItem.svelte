@@ -322,6 +322,7 @@
   /* Characters spin navigation */
   async function adjustChars(amt: number) {
     const current = Number(item.chars || 0);
+    const sessions = item.sessions ?? [];
     const sumChars = sessions.reduce(
       (a: number, b: any) => a + (b.chars || 0),
       0,
@@ -1081,5 +1082,31 @@
     fill: none !important;
     stroke-linecap: round !important;
     stroke-linejoin: round !important;
+  }
+  .send-sess-btn {
+    background: none !important;
+    border: none !important;
+    color: var(--color-accent, #f0b429) !important;
+    cursor: pointer !important;
+    padding: 0 4px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0.8 !important;
+    transition: opacity 0.15s, transform 0.1s !important;
+    margin-left: 2px !important;
+    box-shadow: none !important;
+  }
+  .send-sess-btn:hover {
+    opacity: 1 !important;
+    background: none !important;
+  }
+  .send-sess-btn:active {
+    transform: scale(0.9) !important;
+  }
+  .send-sess-btn svg {
+    width: 10px !important;
+    height: 10px !important;
+    fill: currentColor !important;
   }
 </style>

@@ -100,12 +100,12 @@
                             <path
                                 transform="translate(0,0)"
                                 fill="url(#BrandPreviewLogoGrad)"
-                                d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"
+                                d="M 5.15169 4.91116 L 227.002 5.1235 L 303.231 4.89851 C 316.879 4.84169 330.966 4.60148 344.588 4.9931 C 349.275 5.12786 353.263 5.28615 356.291 8.67041 C 373.67 28.0987 390.237 49.7645 406.799 70.0154 L 518.649 207.361 L 864.445 633.27 C 1099.11 924.792 1331.77 1217.93 1562.38 1512.67 L 1822.26 1841.82 C 1862.82 1893.49 1907.26 1947.27 1945.73 2000 L 1386.04 2000 C 1370.28 1986.81 1338.29 1943.64 1324.29 1926.51 L 1183.25 1754.74 L 642.856 1098.9 L 479.588 899.661 L 433.947 843.861 C 420.372 827.106 408.23 811.388 393.231 795.828 C 394.003 811.198 393.317 829.088 393.277 844.767 L 393.166 932.786 L 393.166 932.786 L 393.036 1207.88 L 392.742 2000 L 5.7664 2000 C 3.98011 1976.53 5.21222 1942.73 5.1816 1918.26 L 5.24603 1751.57 L 5.11573 1234.05 L 5.07001 413.888 L 5.10066 140.547 C 5.11251 96.5711 3.97624 48.2916 5.15169 4.91116 z"
                             />
                             <path
                                 transform="translate(1,0)"
                                 fill={previewLogoText}
-                                d="M 545.48 3.41642 C 618.477 4.27753 691.48 4.51709 764.481 4.13506 L 1150.38 4.14877 L 1996 3.90803 L 1996 396.493 C 1981.8 395.339 1956.31 396.056 1941.29 396.056 L 1839.74 396.112 L 1730.32 396.087 C 1710.26 396.087 1683.22 395.48 1663.63 396.889 C 1665.89 410.024 1664.9 465.901 1664.88 481.692 L 1664.76 660.017 L 1664.61 1333.11 L 1664.93 1482.65 C 1664.94 1488.35 1666.25 1509.62 1664.1 1512.99 C 1661.21 1512.36 1659.54 1510.64 1657.58 1508.56 C 1642.87 1492.9 1630.67 1473.93 1617.23 1457.12 C 1545.12 1366.97 1472.33 1276.85 1403.18 1184.44 C 1394.11 1172.31 1378.4 1158.98 1373.14 1144.8 C 1368.57 1132.48 1371.02 1021.47 1371.03 1001.99 L 1371.06 786.466 L 1371.05 540.762 C 1371.04 493.827 1370.01 443.005 1371.85 396.579 C 1324.33 395.232 1273.73 396.044 1225.87 396.05 L 975.872 396.147 C 937.262 396.177 896.37 396.925 857.95 395.899 C 846.987 387.483 840.284 376.716 831.698 365.964 C 820.535 352.246 809.511 338.415 798.627 324.474 L 689.982 187.802 C 658.188 148.24 626.619 108.499 595.277 68.5783 C 582.305 52.2313 555.273 19.8823 545.48 3.41642 z"
+                                d="M 545.48 3.41642 C 618.477 4.27753 691.48 4.51709 764.481 4.13506 L 1150.38 4.14877 L 1996 3.90803 L 1996 396.493 C 1981.8 395.339 1956.31 396.056 1941.29 396.056 L 1839.74 396.112 L 1730.32 396.087 C 1710.26 396.087 1683.22 395.48 1663.63 396.889 C 1665.89 410.024 1664.9 465.901 1664.88 481.692 L 1664.76 660.017 L 1664.61 1333.11 L 1664.93 1482.65 C 1664.94 1488.35 1666.25 1509.62 1664.1 1512.99 C 1661.21 1512.36 1659.54 1510.64 1657.58 1508.56 C 1642.87 1492.9 1630.67 1473.93 1617.23 1457.12 C 1545.12 1366.97 1472.33 1276.85 1403.18 1184.44 C 1394.11 1172.31 1378.4 1158.98 1373.14 1144.8 C 1368.57 1132.48 1371.02 1021.47 1371.03 1001.99 L 1371.06 786.466 L 1371.05 540.762 C 1371.04 493.827 1370.01 443.005 1371.85 396.579 C 1324.33 395.232 1273.73 396.044 1225.87 396.05 L 975.872 396.147 C 937.262 396.147 896.37 396.925 857.95 395.899 C 846.987 387.483 840.284 376.716 831.698 365.964 C 820.535 352.246 809.511 338.415 798.627 324.474 L 689.982 187.802 C 658.188 148.24 626.619 108.499 595.277 68.5783 C 582.305 52.2313 555.273 19.8823 545.48 3.41642 z"
                             />
                             <path
                                 transform="translate(-53,0)"
@@ -193,6 +193,10 @@
                     style="font-size: 8.5px; font-weight: bold; padding: 1.5px 5px; border-radius: 2.5px; border: 1px solid {themeColors.border}; color: {themeColors.textMuted};"
                     >Reading</span
                 >
+                <span
+                    style="font-size: 8.5px; font-weight: bold; padding: 1.5px 5px; border-radius: 2.5px; border: 1px solid {themeColors.border}; color: {themeColors.textMuted};"
+                    >Stremio</span
+                >
             </div>
 
             <!-- Queue Book Item mockup -->
@@ -207,13 +211,16 @@
                         >転生したらスライムだった件</span
                     >
                     <div
-                        style="display: flex; gap: 4px; font-size: 9px; color: {themeColors.textMuted};"
+                        style="display: flex; gap: 6px; font-size: 9px; color: {themeColors.textMuted}; align-items: center;"
                     >
-                        <span
-                            style="color: {previewApiGreen} !important; font-weight: bold;"
-                            >✓</span
-                        >
-                        <span>×</span>
+                        <span style="color: {previewApiGreen} !important; display: inline-flex; align-items: center; justify-content: center; width: 11px; height: 11px; flex-shrink: 0;">
+                            <svg style="width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
+                                <line x1="8" y1="12" x2="16" y2="12"/>
+                            </svg>
+                        </span>
+                        <span style="font-size: 12px; font-weight: bold; line-height: 1; cursor: default; margin-left: 2px;">×</span>
                     </div>
                 </div>
                 <div style="font-size: 8.5px; color: {themeColors.textMuted};">
@@ -267,18 +274,18 @@
                     <div
                         style="font-size: 8.5px; font-weight: bold; color: {themeColors.textMuted}; margin-bottom: 2px;"
                     >
-                        ▼ Sessions (3)
+                        ▾ Sessions (3)
                     </div>
                     <div
                         style="display: flex; flex-direction: column; gap: 2px; font-size: 8px; color: {themeColors.textMuted};"
                     >
                         <div
-                            style="display: flex; justify-content: space-between;"
+                            style="display: flex; justify-content: space-between; align-items: center;"
                         >
                             <span
                                 >• <span
                                     style="color: color-mix(in srgb, {themeColors.accent} 60%, transparent); font-weight: bold;"
-                                    >S1</span
+                                    >s1</span
                                 >
                                 <strong style="color: {themeColors.accent};"
                                     >8200</strong
@@ -286,12 +293,17 @@
                                 chars •
                                 <strong style="color: {themeColors.text};"
                                     >40</strong
-                                > min</span
-                            >
+                                > min
+                                <span style="color: {themeColors.accent}; display: inline-flex; align-items: center; justify-content: center; width: 9px; height: 9px; opacity: 0.8; margin-left: 5px; vertical-align: middle;">
+                                    <svg style="width: 100%; height: 100%; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                                    </svg>
+                                </span>
+                            </span>
                             <span
                                 style="display: flex; align-items: center; gap: 3px;"
                             >
-                                22/05
+                                22/05/2026, 08:09 pm
                                 <svg
                                     width="10"
                                     height="10"
@@ -320,17 +332,16 @@
                                         y2="10"
                                     /></svg
                                 >
-                                <span style="color: var(--color-error);">×</span
-                                >
+                                <span style="color: var(--color-error); font-weight: bold; font-size: 10px; cursor: default; line-height: 1; margin-left: 1px;">×</span>
                             </span>
                         </div>
                         <div
-                            style="display: flex; justify-content: space-between;"
+                            style="display: flex; justify-content: space-between; align-items: center;"
                         >
                             <span
                                 >• <span
                                     style="color: color-mix(in srgb, {themeColors.accent} 60%, transparent); font-weight: bold;"
-                                    >S2</span
+                                    >s2</span
                                 >
                                 <strong style="color: {themeColors.accent};"
                                     >4100</strong
@@ -338,12 +349,17 @@
                                 chars •
                                 <strong style="color: {themeColors.text};"
                                     >30</strong
-                                > min</span
-                            >
+                                > min
+                                <span style="color: {themeColors.accent}; display: inline-flex; align-items: center; justify-content: center; width: 9px; height: 9px; opacity: 0.8; margin-left: 5px; vertical-align: middle;">
+                                    <svg style="width: 100%; height: 100%; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                                    </svg>
+                                </span>
+                            </span>
                             <span
                                 style="display: flex; align-items: center; gap: 3px;"
                             >
-                                22/05
+                                22/05/2026, 08:09 pm
                                 <svg
                                     width="10"
                                     height="10"
@@ -372,17 +388,16 @@
                                         y2="10"
                                     /></svg
                                 >
-                                <span style="color: var(--color-error);">×</span
-                                >
+                                <span style="color: var(--color-error); font-weight: bold; font-size: 10px; cursor: default; line-height: 1; margin-left: 1px;">×</span>
                             </span>
                         </div>
                         <div
-                            style="display: flex; justify-content: space-between;"
+                            style="display: flex; justify-content: space-between; align-items: center;"
                         >
                             <span
                                 >• <span
                                     style="color: color-mix(in srgb, {themeColors.accent} 60%, transparent); font-weight: bold;"
-                                    >S3</span
+                                    >s3</span
                                 >
                                 <strong style="color: {themeColors.accent};"
                                     >6200</strong
@@ -390,19 +405,24 @@
                                 chars •
                                 <strong style="color: {themeColors.text};"
                                     >20</strong
-                                > min</span
-                            >
+                                > min
+                                <span style="color: {themeColors.accent}; display: inline-flex; align-items: center; justify-content: center; width: 9px; height: 9px; opacity: 0.8; margin-left: 5px; vertical-align: middle;">
+                                    <svg style="width: 100%; height: 100%; fill: currentColor;" viewBox="0 0 24 24">
+                                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                                    </svg>
+                                </span>
+                            </span>
                             <span
                                 style="display: flex; align-items: center; gap: 3px;"
                             >
-                                22/05
+                                22/05/2026, 08:09 pm
                                 <svg
                                     width="10"
                                     height="10"
                                     viewBox="0 0 24 24"
                                     fill="none"
                                     stroke="currentColor"
-                                    stroke-width="2.5"
+                                    stroke-width="2"
                                     stroke-linecap="round"
                                     stroke-linejoin="round"
                                     ><rect
@@ -424,8 +444,7 @@
                                         y2="10"
                                     /></svg
                                 >
-                                <span style="color: var(--color-error);">×</span
-                                >
+                                <span style="color: var(--color-error); font-weight: bold; font-size: 10px; cursor: default; line-height: 1; margin-left: 1px;">×</span>
                             </span>
                         </div>
                     </div>
@@ -623,36 +642,41 @@
                 </div>
 
                 <div
-                    style="background: color-mix(in srgb, {themeColors.success} 5%, {themeColors.surface}); border: 1px solid color-mix(in srgb, {themeColors.success} 25%, transparent); border-radius: 4px; padding: 6px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-align: left; width: 100%;"
+                    style="background: color-mix(in srgb, {themeColors.success} 8%, {themeColors.surface}) !important; border: 1px solid color-mix(in srgb, {themeColors.success} 22%, transparent) !important; border-radius: 4px; padding: 4px 8px; display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; width: 100%; box-sizing: border-box; color: {themeColors.success};"
                 >
                     <div
-                        style="display: flex; align-items: center; gap: 4px; overflow: hidden;"
+                        style="display: flex !important; align-items: center !important; gap: 6px !important; flex: 1 !important; min-width: 0 !important;"
                     >
                         <svg
-                            width="11"
-                            height="11"
                             viewBox="0 0 24 24"
                             fill="none"
                             stroke="currentColor"
-                            stroke-width="3"
+                            stroke-width="2.5"
                             stroke-linecap="round"
                             stroke-linejoin="round"
-                            style="color: {themeColors.success}; flex-shrink: 0;"
+                            style="width: 12px; height: 12px; flex-shrink: 0; color: {themeColors.success};"
                         >
-                            <polyline points="20 6 9 17 4 12" />
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                         </svg>
                         <span
-                            style="color: {themeColors.success}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; font-weight: bold;"
-                            >無職転生 ~異世界行ったら...</span
+                            style="white-space: normal !important; word-break: break-word !important; flex: 1 !important; min-width: 0 !important; text-align: center !important; display: -webkit-box !important; -webkit-line-clamp: 3 !important; line-clamp: 3 !important; -webkit-box-orient: vertical !important; overflow: hidden !important; text-overflow: ellipsis !important; line-height: 1.4 !important; font-weight: bold; font-family: var(--font-mono); color: {themeColors.success};"
+                            >無職転生 ~異世界行ったら本気だす~</span
                         >
                     </div>
-                    <span
-                        style="color: {themeColors.accent}; font-weight: bold; white-space: nowrap;"
-                        >Vol 1 <span
-                            style="color: #f0706a; margin-left: 4px; font-weight: bold; cursor: default;"
-                            >×</span
-                        ></span
-                    >
+                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                        <span
+                            style="color: {themeColors.accent}; font-family: var(--font-mono); font-size: 11px; font-weight: 700; padding: 0 4px; white-space: nowrap; flex-shrink: 0;"
+                            >Vol 18</span
+                        >
+                        <span style="color: {themeColors.success}; display: flex; align-items: center; justify-content: center; width: 12px; height: 12px; flex-shrink: 0;">
+                            <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2"></path>
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"></path>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                        </span>
+                    </div>
                 </div>
 
                 <div
@@ -703,7 +727,7 @@
                         >
                             <span
                                 style="font-size: 9px; color: {themeColors.textMuted}; flex-shrink: 0;"
-                                >▼</span
+                                >▾</span
                             > Past Sessions History
                         </summary>
                         <div

@@ -315,7 +315,7 @@
         } else {
           syncThemeCache(nextTheme, nextFont, null);
           applyThemeToDocument(nextTheme, nextFont, undefined, {
-            useStaticInPageLogo,
+              useStaticInPageLogo,
           });
         }
       }
@@ -339,8 +339,50 @@
     };
     window.addEventListener("click", clickOutsideOrDelete, true);
 
+    let isEditingActive = false;
+
+    // Prevent Escape from closing the extension popup when editing standard fields or elements
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" || e.key === "Esc") {
+        if (e.type === "keydown") {
+          const active = document.activeElement as HTMLElement;
+          const isTargetEditable =
+            active &&
+            (active.tagName === "INPUT" ||
+              active.tagName === "TEXTAREA" ||
+              active.tagName === "SELECT" ||
+              active.hasAttribute("contenteditable") ||
+              active.closest(".qi") ||
+              active.closest(".compact-popover"));
+
+          // If active is editing, or it is a repeat keydown event of a prevented edit session
+          if (isTargetEditable || (e.repeat && isEditingActive)) {
+            e.preventDefault();
+            isEditingActive = true;
+          } else {
+            isEditingActive = false;
+          }
+        } else if (e.type === "keyup") {
+          if (isEditingActive) {
+            e.preventDefault();
+            isEditingActive = false;
+          }
+        }
+      }
+    };
+
+    // Redundant captures ensure native browser close triggers are cleanly stopped on keydown and keyup
+    window.addEventListener("keydown", handleGlobalKey, true);
+    window.addEventListener("keyup", handleGlobalKey, true);
+    document.addEventListener("keydown", handleGlobalKey, true);
+    document.addEventListener("keyup", handleGlobalKey, true);
+
     return () => {
       window.removeEventListener("click", clickOutsideOrDelete, true);
+      window.removeEventListener("keydown", handleGlobalKey, true);
+      window.removeEventListener("keyup", handleGlobalKey, true);
+      document.removeEventListener("keydown", handleGlobalKey, true);
+      document.removeEventListener("keyup", handleGlobalKey, true);
       if (browser?.storage?.onChanged) {
         browser.storage.onChanged.removeListener(storageListener);
       }
@@ -1002,9 +1044,9 @@
     border-radius: 8px;
   }
   .pill-ok {
-    color: #3ddc84 !important;
-    border: 1px solid rgba(61, 220, 132, 0.25) !important;
-    background: rgba(61, 220, 132, 0.07) !important;
+    color: var(--color-api-green) !important;
+    border: 1px solid color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
+    background: color-mix(in srgb, var(--color-api-green) 7%, transparent) !important;
   }
   .pill-off {
     color: var(--color-error);
@@ -1028,9 +1070,9 @@
   .icon-btn:hover {
     color: var(--color-text);
   }
-  :global(.qi-link-status, .api-status.ok, .pill-ok) {
-    color: #3ddc84 !important;
-    border-color: rgba(61, 220, 132, 0.25) !important;
+  :global(.qi-link-status, .api-status.ok) {
+    color: var(--color-api-green) !important;
+    border-color: color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
   }
   .sep {
     height: 1px;
