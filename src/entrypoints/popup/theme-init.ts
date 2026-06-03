@@ -1,4 +1,4 @@
-import { THEME_CACHE_KEY, CUSTOM_COLORS_CACHE_KEY } from '@/lib/constants';
+import { CUSTOM_COLORS_CACHE_KEY, THEME_CACHE_KEY } from '@/lib/constants';
 
 // Synchronously apply the cached theme background before first visual paint
 (function () {

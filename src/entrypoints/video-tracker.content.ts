@@ -7,17 +7,17 @@ import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
 import { submitLog } from '@/lib/api/nihongotracker';
+import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
 import { configStorage } from '@/lib/storage/config';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
-import { showPlaylistSelectorModal, cleanupPlaylistModal } from '@/lib/ui/playlist-modal';
-import { applyThemeToDocument, resolveThemeColors, getTheme } from '@/lib/ui/themes';
+import { DEFAULT_THEME } from '@/lib/types';
+import { cleanupPlaylistModal, showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
+import { applyThemeToDocument, getTheme, resolveThemeColors } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
-import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
-import { DEFAULT_THEME } from '@/lib/types';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,

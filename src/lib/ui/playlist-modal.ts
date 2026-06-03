@@ -9,11 +9,10 @@ import { configStorage } from '@/lib/storage/config';
 import { DYNAMIC_LOGO_SVG } from '@/lib/ui/themes';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
-import { setSafeHTML } from '@/lib/utils/dom';
 import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
+import { mount, unmount } from 'svelte';
 import { getTheme } from './themes';
 import { injectModalStyles } from './video-modal';
-import { mount, unmount } from 'svelte';
 
 const inlineLogo = DYNAMIC_LOGO_SVG;
 

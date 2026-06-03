@@ -3,13 +3,13 @@
  * Monitors page focus, scrolls, and manages the in-page reading overlay timer.
  */
 
-import { browser } from 'wxt/browser';
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
 import TtuChronoDropdown from '@/components/reader/TtuChronoDropdown.svelte';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
-import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
+import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
+import { OverlayController } from '@/lib/core/overlay-controller';
 import { configStorage } from '@/lib/storage/config';
 import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
 import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
@@ -23,13 +23,13 @@ import {
   updatePauseIconState
 } from '@/lib/ui/reader-overlay';
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
-import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
-import { OverlayController } from '@/lib/core/overlay-controller';
+import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
 import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
 import { mount, unmount } from 'svelte';
+import { browser } from 'wxt/browser';
 
 const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && (
   window.self === window.top ||

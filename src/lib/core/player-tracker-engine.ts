@@ -5,13 +5,13 @@
  * manual logger inputs, and transaction queues integrations.
  */
 
-import { browser } from 'wxt/browser';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
 import { getChannelMediaData } from '@/lib/utils/youtube-extraction';
+import { browser } from 'wxt/browser';
 
 export class PlayerTrackerEngine {
     private watchedSecs = 0;

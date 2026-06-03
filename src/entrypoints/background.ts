@@ -6,11 +6,11 @@
 import { defineBackground } from '#imports';
 import { submitLog } from '@/lib/api/nihongotracker';
 import { importStremioFromTrakt } from '@/lib/api/trakt';
-import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE, LAST_FLUSH_DATE_KEY, STREMIO_LAST_POLL_AT_KEY, READER_COLORS_PREFIX } from '@/lib/constants';
-import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
+import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE, LAST_FLUSH_DATE_KEY, STREMIO_LAST_POLL_AT_KEY } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
 import { readingQueueStorage, stremioQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
+import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
 import { notify } from '@/lib/utils/toast';
 import { storage } from 'wxt/utils/storage';
 

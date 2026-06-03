@@ -3,8 +3,8 @@
  * Programmatically mounts the Svelte 5 VideoEditModal.svelte component.
  */
 
-import { mount, unmount } from 'svelte';
 import { getTheme } from '@/lib/ui/themes';
+import { mount, unmount } from 'svelte';
 
 let activeModalInstance: any = null;
 

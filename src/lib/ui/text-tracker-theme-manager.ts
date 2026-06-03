@@ -1,8 +1,8 @@
-import { browser } from 'wxt/browser';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, rgbToHsl, resolveThemeColors } from '@/lib/ui/themes';
-import { injectThemeStyles } from '@/lib/ui/reader-overlay';
 import { READER_COLORS_PREFIX } from '@/lib/constants';
+import { injectThemeStyles } from '@/lib/ui/reader-overlay';
+import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, resolveThemeColors, rgbToHsl } from '@/lib/ui/themes';
+import { browser } from 'wxt/browser';
 
 let _cachedThemeColors: any = null;
 let _lastThemeDetectionTime = 0;

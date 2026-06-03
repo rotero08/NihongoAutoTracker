@@ -5,7 +5,7 @@
  * can iterate on the UI without needing real browsing sessions.
  */
 
-import type { QueuedReadingLog, QueuedVideoLog, QueuedStremioLog } from '../lib/types';
+import type { QueuedReadingLog, QueuedStremioLog, QueuedVideoLog } from '../lib/types';
 
 /** Sample video queue items for dev testing */
 export const MOCK_VIDEO_QUEUE: QueuedVideoLog[] = [

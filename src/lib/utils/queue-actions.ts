@@ -1,13 +1,11 @@
-import { submitLog, resolveVideoChannelMedia } from '@/lib/api/nihongotracker';
-import { stripVideoTitle } from '@/lib/utils/text-parsing';
-import { addDebugLog } from '@/lib/storage/debug';
+import { resolveVideoChannelMedia, submitLog } from '@/lib/api/nihongotracker';
 import {
+  stremioProcessedStorage,
   updateReadingQueueAtomic,
-  updateVideoQueueAtomic,
   updateStremioQueueAtomic,
-  stremioProcessedStorage
+  updateVideoQueueAtomic
 } from '@/lib/storage/queues';
-import type { ReadingMediaData } from '@/lib/types';
+import { stripVideoTitle } from '@/lib/utils/text-parsing';
 
 /**
  * Returns the atomic updater function for the specific queue type with unified casting.

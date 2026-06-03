@@ -7,7 +7,7 @@
  */
 
 import { configStorage } from '@/lib/storage/config';
-import { readingQueueStorage, videoQueueStorage, stremioQueueStorage } from '@/lib/storage/queues';
+import { readingQueueStorage, stremioQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
 import '@/styles/app.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
