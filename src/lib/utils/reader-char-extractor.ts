@@ -288,18 +288,6 @@ export function extractAdvancedCharCount(
             watchContainerMutations(readerContainer);
         }
 
-        // Goal 3: Complete Stopped-State Optimization Bypass (O(1) retrieval when stopped & cache valid)
-        if (!isTimerRunning && lastContainer === readerContainer && currentContainerId === lastContainerId && isCacheValid) {
-            return {
-                current: 0,
-                total: lastCachedTotal,
-                sectionIndex: lastCachedSectionIndex,
-                isPaginated: cachedIsPaginated
-
-
-            };
-        }
-
         // 1. Resolve Style Configurations (Cached)
         if (!isCacheValid) {
             const style = getComputedStyle(activeContainer);
@@ -313,7 +301,8 @@ export function extractAdvancedCharCount(
             const colCount = style.columnCount || '';
 
             cachedIsPaginated =
-                !!document.querySelector('.book-content-container, .book-reader-paginated, [data-view-mode="paginated"]') ||
+                !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
+                !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
                 ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
                     (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
         }
@@ -387,11 +376,6 @@ export function extractAdvancedCharCount(
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
         lastCachedTotal = total;
 
-        // Bypasses calculations when stopped, but still preserves cached metrics
-        if (!isTimerRunning) {
-            return { current: 0, total, sectionIndex, isPaginated: cachedIsPaginated };
-        }
-
         // 4. Binary Search for last explored paragraph
         let low = 0;
         let high = ttuCachedNodes.length - 1;
@@ -406,19 +390,19 @@ export function extractAdvancedCharCount(
                 explored = true; // Treats unrendered nodes as explored
             } else if (cachedIsVertical) {
                 if (cachedIsPaginated) {
-                    explored = r.bottom <= 1;
+                    explored = r.bottom <= 0.5;
                 } else {
                     if (cachedWritingMode === 'vertical-lr') {
-                        explored = r.right <= 1;
+                        explored = r.right <= 0.5;
                     } else {
-                        explored = r.left >= (cachedVw + 1);
+                        explored = r.left >= (cachedVw + 0.5);
                     }
                 }
             } else {
                 if (cachedIsPaginated) {
-                    explored = r.right <= 1;
+                    explored = r.right <= 0.5;
                 } else {
-                    explored = r.bottom <= 1;
+                    explored = r.bottom <= 0.5;
                 }
             }
 
@@ -447,125 +431,122 @@ export function extractAdvancedCharCount(
                     : (r.right > cachedVw || r.left < 0);
                 needsSubParagraphTracking = isSplit || activeEl.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
             } else {
-                {
-                    if (cachedIsVertical) {
-                        if (cachedWritingMode === 'vertical-lr') {
-                            needsSubParagraphTracking = r.left < -1;
-                        } else {
-                            needsSubParagraphTracking = r.right > (cachedVw + 1);
-                        }
+                if (cachedIsVertical) {
+                    if (cachedWritingMode === 'vertical-lr') {
+                        needsSubParagraphTracking = r.left < -0.5;
                     } else {
-                        needsSubParagraphTracking = r.top < -1;
+                        needsSubParagraphTracking = r.right > (cachedVw + 0.5);
                     }
+                } else {
+                    needsSubParagraphTracking = r.top < -0.5;
                 }
-                if (needsSubParagraphTracking) {
-                    const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
+            }
 
-                    if (spans.length > 0) {
-                        spans.forEach(s => {
-                            if (shouldIgnoreNode(s)) return;
+            if (needsSubParagraphTracking) {
+                const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
-                            const sr = s.getBoundingClientRect();
-                            let sExp = false;
+                if (spans.length > 0) {
+                    spans.forEach(s => {
+                        if (shouldIgnoreNode(s)) return;
+
+                        const sr = s.getBoundingClientRect();
+                        let sExp = false;
+                        if (cachedIsVertical) {
+                            if (cachedIsPaginated) {
+                                sExp = sr.bottom <= 0.5;
+                            } else {
+                                if (cachedWritingMode === 'vertical-rl') {
+                                    sExp = sr.left >= (cachedVw + 0.5);
+                                } else {
+                                    sExp = sr.right <= 0.5;
+                                }
+                            }
+                        } else {
+                            if (cachedIsPaginated) {
+                                sExp = sr.right <= 0.5;
+                            } else {
+                                sExp = sr.bottom <= 0.5;
+                            }
+                        }
+
+                        if (sExp) {
+                            const m = s.textContent?.match(JP_CHAR_PATTERN);
+                            if (m) current += m.length;
+                        }
+                    });
+                } else {
+                    // Fallback to text node precision tracking when highlights are absent
+                    const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
+                    let n;
+
+                    if (!reusableRange && typeof document !== 'undefined') {
+                        reusableRange = document.createRange();
+                    }
+
+                    // Node limit removed to ensure 100% accuracy on extremely long web novel paragraphs
+                    while ((n = walker.nextNode())) {
+                        const parent = n.parentElement;
+                        if (!parent || shouldIgnoreNode(parent)) {
+                            continue;
+                        }
+
+                        const text = n.nodeValue || '';
+                        if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
+                            continue;
+                        }
+
+                        let sExp = false;
+                        // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation
+                        if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
+                            const nr = parent.getBoundingClientRect();
+                            if (nr.width > 0 && nr.height > 0) {
+                                if (cachedIsVertical) {
+                                    if (cachedIsPaginated) {
+                                        sExp = nr.bottom <= 0.5;
+                                    } else {
+                                        if (cachedWritingMode === 'vertical-rl') {
+                                            sExp = nr.left >= (cachedVw + 0.5);
+                                        } else {
+                                            sExp = nr.right <= 0.5;
+                                        }
+                                    }
+                                } else {
+                                    if (cachedIsPaginated) {
+                                        sExp = nr.right <= 0.5;
+                                    } else {
+                                        sExp = nr.bottom <= 0.5;
+                                    }
+                                }
+                            }
+                        } else if (reusableRange) {
+                            reusableRange.selectNodeContents(n);
+                            const nr = reusableRange.getBoundingClientRect();
+
+                            if (nr.width === 0 || nr.height === 0) continue;
+
                             if (cachedIsVertical) {
                                 if (cachedIsPaginated) {
-                                    sExp = sr.bottom <= 1;
+                                    sExp = nr.bottom <= 0.5;
                                 } else {
                                     if (cachedWritingMode === 'vertical-rl') {
-                                        sExp = sr.left >= (cachedVw + 1);
+                                        sExp = nr.left >= (cachedVw + 0.5);
                                     } else {
-                                        sExp = sr.right <= 1;
+                                        sExp = nr.right <= 0.5;
                                     }
                                 }
                             } else {
                                 if (cachedIsPaginated) {
-                                    sExp = sr.right <= 1;
+                                    sExp = nr.right <= 0.5;
                                 } else {
-                                    sExp = sr.bottom <= 1;
+                                    sExp = nr.bottom <= 0.5;
                                 }
                             }
-
-                            if (sExp) {
-                                const m = s.textContent?.match(JP_CHAR_PATTERN);
-                                if (m) current += m.length;
-                            }
-                        });
-                    } else {
-                        // Fallback to text node precision tracking when highlights are absent
-                        const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
-                        let n;
-                        let checkedNodesCount = 0;
-
-                        if (!reusableRange && typeof document !== 'undefined') {
-                            reusableRange = document.createRange();
                         }
 
-                        while ((n = walker.nextNode()) && checkedNodesCount < 150) {
-                            const parent = n.parentElement;
-                            if (!parent || shouldIgnoreNode(parent)) {
-                                continue;
-                            }
-
-                            const text = n.nodeValue || '';
-                            if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
-                                continue;
-                            }
-
-                            checkedNodesCount++;
-
-                            let sExp = false;
-                            // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation
-                            if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
-                                const nr = parent.getBoundingClientRect();
-                                if (nr.width > 0 && nr.height > 0) {
-                                    if (cachedIsVertical) {
-                                        if (cachedIsPaginated) {
-                                            sExp = nr.bottom <= 1;
-                                        } else {
-                                            if (cachedWritingMode === 'vertical-rl') {
-                                                sExp = nr.left >= (cachedVw + 1);
-                                            } else {
-                                                sExp = nr.right <= 1;
-                                            }
-                                        }
-                                    } else {
-                                        if (cachedIsPaginated) {
-                                            sExp = nr.right <= 1;
-                                        } else {
-                                            sExp = nr.bottom <= 1;
-                                        }
-                                    }
-                                }
-                            } else if (reusableRange) {
-                                reusableRange.selectNodeContents(n);
-                                const nr = reusableRange.getBoundingClientRect();
-
-                                if (nr.width === 0 || nr.height === 0) continue;
-
-                                if (cachedIsVertical) {
-                                    if (cachedIsPaginated) {
-                                        sExp = nr.bottom <= 1;
-                                    } else {
-                                        if (cachedWritingMode === 'vertical-rl') {
-                                            sExp = nr.left >= (cachedVw + 1);
-                                        } else {
-                                            sExp = nr.right <= 1;
-                                        }
-                                    }
-                                } else {
-                                    if (cachedIsPaginated) {
-                                        sExp = nr.right <= 1;
-                                    } else {
-                                        sExp = nr.bottom <= 1;
-                                    }
-                                }
-                            }
-
-                            if (sExp) {
-                                const matches = text.match(JP_CHAR_PATTERN);
-                                if (matches) {
-                                    current += matches.length;
-                                }
+                        if (sExp) {
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) {
+                                current += matches.length;
                             }
                         }
                     }

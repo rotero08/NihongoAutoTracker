@@ -504,6 +504,73 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
+/**
+ * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
+ */
+function checkAndProcessSectionTransition(charData: any): boolean {
+  const { total, sectionIndex, isPaginated } = charData;
+  const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+  if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+    stateRefs.globalSessionStartChar = -1;
+    stateRefs.globalManualCharOffset = 0;
+    stateRefs.lastSectionIndex = -1;
+    stateRefs.lastSectionTotal = 0;
+    stateRefs.visitedSections.clear();
+    ttuState.chars = 0;
+    ttuState.timeMs = 0;
+    stateRefs.globalLastTick = Date.now();
+    lastLoggedPaginatedMode = isPaginated;
+    if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
+    return true;
+  }
+
+  lastLoggedPaginatedMode = isPaginated;
+
+  if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
+    initSessionRefs(charData.current, activeSection, total, isPaginated);
+  }
+
+  if (stateRefs.lastSectionIndex !== activeSection) {
+    stabilizer.resetJitenParseFlag();
+    if (activeSection === -1) {
+      if (!isReadingViewActive()) {
+        stateRefs.lastSectionIndex = -1;
+        stateRefs.globalManualCharOffset = 0;
+        stateRefs.visitedSections.clear();
+      }
+    } else {
+      if (activeSection > stateRefs.lastSectionIndex) {
+        if (stateRefs.visitedSections.has(activeSection)) {
+          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+        } else {
+          // Commit current section total before jumping to ensure mathematical precision
+          stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+        }
+      } else {
+        if (stateRefs.visitedSections.has(activeSection)) {
+          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+        } else {
+          stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+        }
+      }
+      if (isPaginated) stateRefs.globalSessionStartChar = 0;
+
+      stateRefs.lastSectionIndex = activeSection;
+      stateRefs.lastSectionTotal = total;
+
+      if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
+      else stabilizer.runGracePeriodIfJiten();
+    }
+    return true;
+  } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
+    stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
+  }
+  return false;
+}
+
 function recalculateChars() {
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
   const now = Date.now();
@@ -521,9 +588,12 @@ function recalculateChars() {
     return;
   }
 
-  const adapter = getActiveReaderAdapter();
-  const current = adapter ? adapter.extractCharCount() : null;
-  if (current !== null) {
+  const charData = extractAdvancedCharCount(undefined, ttuState.running);
+  if (charData !== null) {
+    // Synchronize section boundary and manual offset before applying the local paragraph count
+    checkAndProcessSectionTransition(charData);
+
+    const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
     }
@@ -1153,81 +1223,12 @@ function handleMutations() {
   if (wrapper && adapter) adapter.onUpdateStyles?.(wrapper);
   if (ttuState.running && isReadingViewActive()) setupProgressObserver();
 
-  const now = Date.now();
-  if ((now - _lastSectionCheckTime) >= 1500) {
-    _lastSectionCheckTime = now;
-    const charData = extractAdvancedCharCount(undefined, ttuState.running);
-    if (charData !== null) {
-      const { total, sectionIndex, isPaginated } = charData;
-      const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-      if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-        stateRefs.globalSessionStartChar = -1;
-        stateRefs.globalManualCharOffset = 0;
-        stateRefs.lastSectionIndex = -1;
-        stateRefs.lastSectionTotal = 0;
-        stateRefs.visitedSections.clear();
-        ttuState.chars = 0;
-        ttuState.timeMs = 0;
-        stateRefs.globalLastTick = Date.now();
-        lastLoggedPaginatedMode = isPaginated;
-        if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
+  // Instant verifying synchronous section indexing
+  const charData = extractAdvancedCharCount(undefined, ttuState.running);
+  if (charData !== null) {
+    const didTransition = checkAndProcessSectionTransition(charData);
+    if (didTransition) {
         recalculateChars();
-        return;
-      }
-
-      lastLoggedPaginatedMode = isPaginated;
-
-      if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
-        const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
-        initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
-      }
-
-      if (stateRefs.lastSectionIndex !== activeSection) {
-        stabilizer.resetJitenParseFlag();
-        if (activeSection === -1) {
-          if (!isReadingViewActive()) {
-            stateRefs.lastSectionIndex = -1;
-            stateRefs.globalManualCharOffset = 0;
-            stateRefs.visitedSections.clear();
-            recalculateChars();
-          }
-        } else {
-          const rawTitle = getTTUTitle();
-          const parsedVolume = parseTitleWithConfig(rawTitle).volume;
-
-          ttuLinkStorage.getValue().then((links) => {
-            const linkedMedia = (links || {})[rawTitle];
-            const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
-
-            if (activeSection > stateRefs.lastSectionIndex) {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-              } else {
-                stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-              }
-            } else {
-              if (stateRefs.visitedSections.has(activeSection)) {
-                stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-              } else {
-                stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-                stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-              }
-            }
-            if (isPaginated) stateRefs.globalSessionStartChar = 0;
-
-            stateRefs.lastSectionIndex = activeSection;
-            stateRefs.lastSectionTotal = total;
-
-            if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
-            else stabilizer.runGracePeriodIfJiten();
-            recalculateChars();
-          });
-        }
-      } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-        stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
-      }
     }
   }
 
