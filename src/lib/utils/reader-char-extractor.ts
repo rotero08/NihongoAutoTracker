@@ -352,12 +352,13 @@ export function extractAdvancedCharCount(
         }
 
         if (pTags.length === 0) {
-            lastCachedTotal = 0;
-
-            // Differentiate temporary loading unmounts from permanent cover/illustration pages
-            const hasImages = !!readerContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
+            // Differentiate temporary loading unmounts from permanent cover/illustration pages.
+            // If the reader container contains images, the layout is not deferred, allowing transitions to process.
+            const activeReaderContainer = document.querySelector('.reader-container, .book-content-container, #reader-container, .reader-wrapper') || readerContainer;
+            const hasImages = !!activeReaderContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
             const isDeferred = !hasImages;
 
+            console.log(`[NT DEBUG extractor] pTags=0 → DEFERRED=${isDeferred} | sectionIndex=${sectionIndex} isPaginated=${cachedIsPaginated}`);
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: isDeferred };
         }
 
@@ -593,6 +594,7 @@ export function extractAdvancedCharCount(
             }
         }
 
+        console.log(`[NT DEBUG extractor] pTags=${ttuCachedNodes.length} current=${current} total=${total} sectionIndex=${sectionIndex} isPag=${cachedIsPaginated}`);
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
         console.error(`[NT Extractor] Fatal crash in character extraction:`, e);

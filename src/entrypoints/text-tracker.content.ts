@@ -86,6 +86,25 @@ let cachedActiveTabTitle = "";
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
+function getLayoutOffset(): number {
+  const container = document.querySelector('.book-content-container') ||
+                    document.querySelector('.book-content') ||
+                    document.querySelector('[data-ref="container"]') ||
+                    document.querySelector('.reader-container') ||
+                    document.body;
+  const rect = container.getBoundingClientRect();
+  
+  let internalScroll = 0;
+  if (container) {
+    internalScroll += (container.scrollLeft || 0) + (container.scrollTop || 0);
+    if (container.parentElement) {
+      internalScroll += (container.parentElement.scrollLeft || 0) + (container.parentElement.scrollTop || 0);
+    }
+  }
+  
+  return Math.round(Math.abs(rect.left) + Math.abs(rect.top)) + internalScroll;
+}
+
 function dispatchLinkerRefresh() {
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   if (wrapper) {
@@ -216,16 +235,44 @@ interface StateRefs {
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
   visitedSectionTotals: Map<number, number>;
+  offsetToCharMap: Map<number, number>;
+  globalSessionStartSection?: number;
+  globalSessionStartCharInternal?: number;
 }
 
+let _globalSessionStartChar = -1;
 const stateRefs: StateRefs = {
-  globalSessionStartChar: -1,
+  globalSessionStartSection: -1,
+  globalSessionStartCharInternal: -1,
+  get globalSessionStartChar() {
+    return _globalSessionStartChar;
+  },
+  set globalSessionStartChar(val) {
+    _globalSessionStartChar = val;
+    if (val !== -1) {
+      if (this.globalSessionStartCharInternal === -1 || val !== 0) {
+        this.globalSessionStartCharInternal = val;
+        if (this.lastSectionIndex !== -1) {
+          this.globalSessionStartSection = this.lastSectionIndex;
+        } else {
+          const charData = extractAdvancedCharCount(undefined, false);
+          if (charData && charData.sectionIndex !== null) {
+            this.globalSessionStartSection = charData.sectionIndex;
+          }
+        }
+      }
+    } else {
+      this.globalSessionStartCharInternal = -1;
+      this.globalSessionStartSection = -1;
+    }
+  },
   globalManualCharOffset: 0,
   globalLastTick: Date.now(),
   lastSectionIndex: -1,
   lastSectionTotal: 0,
   visitedSections: new Map<number, number>(),
-  visitedSectionTotals: new Map<number, number>()
+  visitedSectionTotals: new Map<number, number>(),
+  offsetToCharMap: new Map<number, number>()
 };
 
 const ttuState = new Proxy({
@@ -254,7 +301,6 @@ const ttuState = new Proxy({
       target.timeMs = numVal; // Commit target immediately to prevent nested reset calls from recurring
       
       if (numVal === 0 && oldVal > 0) {
-        console.log(`[NT Debug] startNewSession: Layout transition triggering metric reset.`);
         startNewSession();
       } else if (numVal < oldVal || numVal === 0) {
         stateRefs.globalLastTick = Date.now();
@@ -286,6 +332,7 @@ function startNewSession(isPaginated?: boolean) {
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.offsetToCharMap.clear();
   stateRefs.globalLastTick = Date.now();
 
   hasSyncedThisSession = false;
@@ -526,6 +573,7 @@ async function saveSessionAndQueue() {
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.offsetToCharMap.clear();
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
   hasSyncedThisSession = false;
@@ -573,6 +621,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
     // Mode changed! Start a new session, reset state, and completely pause
+    console.log(`[NT DEBUG transition] MODE CHANGE: ${lastLoggedPaginatedMode} → ${isPaginated}`);
     startNewSession(isPaginated);
     ttuState.running = false;
     _wasTimerRunningBeforeYatsuSidebar = false;
@@ -583,6 +632,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 
   // Skip transition checks during active loading or layout-deferred states
   if (isLayoutDeferred) {
+    console.log(`[NT DEBUG transition] DEFERRED — skipping | activeSection=${activeSection} lastSection=${stateRefs.lastSectionIndex}`);
     return false;
   }
 
@@ -608,8 +658,11 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         stateRefs.globalManualCharOffset = 0;
         stateRefs.visitedSections.clear();
         stateRefs.visitedSectionTotals.clear();
+        stateRefs.offsetToCharMap.clear();
       }
     } else {
+      stateRefs.offsetToCharMap.clear(); // Clear mapping context on any chapter transitions
+      console.log(`[NT DEBUG transition] SECTION CHANGE: ${stateRefs.lastSectionIndex} → ${activeSection} | total=${total} isPag=${isPaginated}`);
       if (isPaginated) {
         // Robust dynamic offset summing to prevent timing issues during fast turns and backtracks
         let computedOffset = 0;
@@ -648,6 +701,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
       else stabilizer.runGracePeriodIfJiten();
     }
+    console.log(`[NT DEBUG transition] POST-CHANGE: lastSection=${stateRefs.lastSectionIndex} manualOffset=${stateRefs.globalManualCharOffset} startChar=${stateRefs.globalSessionStartChar} visitedTotals=${JSON.stringify([...stateRefs.visitedSectionTotals.entries()])}`);
     return true;
   } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
     if (total > stateRefs.lastSectionTotal) {
@@ -687,25 +741,67 @@ function recalculateChars(force = false) {
     // Synchronize section boundary and manual offset before applying the local paragraph count
     checkAndProcessSectionTransition(charData);
 
-    const current = charData.current;
+    let current = charData.current;
     const total = charData.total;
 
-    // Preserving the count when the layout is unmounted or deferred
+    const scrollOffset = getLayoutOffset();
+
     if (total === 0 || charData.isLayoutDeferred) {
-      return;
+      // Find the best matching character count from previous pages
+      let bestOffset = -1;
+      let bestCurrent = 0;
+      for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
+        if (offset <= scrollOffset && offset > bestOffset) {
+          bestOffset = offset;
+          bestCurrent = charProgress;
+        }
+      }
+      if (bestOffset !== -1) {
+        current = bestCurrent;
+        console.log(`[NT DEBUG recalc] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+      } else {
+        // No prior offset mapping exists — DOM is temporarily unmounted or we
+        // navigated backward before all mapped entries. Hold the current char
+        // count by skipping this update entirely.
+        console.log(`[NT DEBUG recalc] DEFERRED no-match: scrollOffset=${scrollOffset} mapSize=${stateRefs.offsetToCharMap.size} → HOLDING chars=${ttuState.chars}`);
+        return;
+      }
+    } else {
+      // Valid text page — save scroll offset mapping with monotonic guard.
+      // In paginated mode scrollOffset is constant, so the map has one key.
+      // During DOM transitions the extractor briefly returns current=0 before
+      // fully unmounting (pTags > 0 but elements repositioned). Without this
+      // guard that transient 0 overwrites the real value, poisoning the
+      // deferred fallback on the next (image/empty) page.
+      const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
+      if (prevMapValue === undefined || current >= prevMapValue) {
+        stateRefs.offsetToCharMap.set(scrollOffset, current);
+      }
     }
 
+    const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
+    } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
+      if (activeSection === stateRefs.globalSessionStartSection) {
+        if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
+          stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
+        }
+      } else {
+        if (stateRefs.globalSessionStartChar !== 0) {
+          stateRefs.globalSessionStartChar = 0;
+        }
+      }
     }
     if (Date.now() < _transitionGraceUntil) {
-      stateRefs.globalSessionStartChar = current;
       if (!charData.isPaginated) return;
     }
 
     let diff = current - stateRefs.globalSessionStartChar;
     if (diff < 0) diff = 0;
-    ttuState.chars = diff + stateRefs.globalManualCharOffset;
+    const newChars = diff + stateRefs.globalManualCharOffset;
+    console.log(`[NT DEBUG recalc] current=${current} startChar=${stateRefs.globalSessionStartChar} diff=${diff} manualOffset=${stateRefs.globalManualCharOffset} → chars=${newChars} (was ${ttuState.chars})`);
+    ttuState.chars = newChars;
 
     dispatchLinkerRefresh();
   }
@@ -987,22 +1083,57 @@ async function setupTTUChronometer() {
         if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
-            const { current, total, isLayoutDeferred, isPaginated } = charData;
+            let { current, total, isLayoutDeferred, isPaginated } = charData;
             
-            // Skip updating ttuState.chars if there are no paragraphs or layout is deferred
-            if (total !== 0 && !isLayoutDeferred) {
-              if (stateRefs.globalSessionStartChar === -1) {
-                stateRefs.globalSessionStartChar = current;
-              }
-              if (now >= _transitionGraceUntil) {
-                let diff = current - stateRefs.globalSessionStartChar;
-                if (diff < 0) diff = 0;
-                ttuState.chars = diff + stateRefs.globalManualCharOffset;
-              } else {
-                stateRefs.globalSessionStartChar = current;
-                if (isPaginated) {
-                  ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
+            const scrollOffset = getLayoutOffset();
+
+            if (total === 0 || isLayoutDeferred) {
+              let bestOffset = -1;
+              let bestCurrent = 0;
+              for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
+                if (offset <= scrollOffset && offset > bestOffset) {
+                  bestOffset = offset;
+                  bestCurrent = charProgress;
                 }
+              }
+              if (bestOffset !== -1) {
+                current = bestCurrent;
+                console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+              } else {
+                // No prior offset mapping — hold current chars by reconstructing
+                // the previous current value so the diff produces no change
+                current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
+                console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
+              }
+            } else {
+              // Monotonic guard — see recalculateChars for full explanation
+              const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
+              if (prevMapValue === undefined || current >= prevMapValue) {
+                stateRefs.offsetToCharMap.set(scrollOffset, current);
+              }
+            }
+
+            const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
+            if (stateRefs.globalSessionStartChar === -1) {
+              stateRefs.globalSessionStartChar = current;
+            } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
+              if (activeSection === stateRefs.globalSessionStartSection) {
+                if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
+                  stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
+                }
+              } else {
+                if (stateRefs.globalSessionStartChar !== 0) {
+                  stateRefs.globalSessionStartChar = 0;
+                }
+              }
+            }
+            if (now >= _transitionGraceUntil) {
+              let diff = current - stateRefs.globalSessionStartChar;
+              if (diff < 0) diff = 0;
+              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+            } else {
+              if (isPaginated) {
+                ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
               }
             }
           }
@@ -1029,13 +1160,15 @@ function isTargetInIgnoredContainer(target: Node): boolean {
 }
 
 if (isRelevantFrame) {
+  let scrollRafId: number | null = null;
   const handleScrollUpdate = () => {
     if (!ttuState.running) return;
-    if (scrollTimeout) clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
+    if (scrollRafId !== null) return;
+    scrollRafId = requestAnimationFrame(() => {
+      scrollRafId = null;
       if (!isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
-      recalculateChars();
-    }, 150);
+      recalculateChars(true);
+    });
   };
 
   window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
@@ -1043,13 +1176,13 @@ if (isRelevantFrame) {
   window.addEventListener('click', () => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
-      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on click!
+      setTimeout(() => { recalculateChars(true); }, 16);
     }
   }, { passive: true });
   window.addEventListener('keyup', (e) => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
-      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on page flip key!
+      setTimeout(() => { recalculateChars(true); }, 16);
     }
   }, { passive: true });
 
@@ -1097,6 +1230,7 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.visitedSections.clear();
   stateRefs.visitedSections.set(activeSection, 0);
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.offsetToCharMap.clear();
   if (isPaginated) {
     stateRefs.visitedSectionTotals.set(activeSection, total);
   }
