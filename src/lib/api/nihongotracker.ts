@@ -352,3 +352,66 @@ export async function searchMedia(input: {
   if (Array.isArray(data?.media)) return data.media;
   return [];
 }
+
+/* ── Stats & Verification Helpers ── */
+import { storage } from 'wxt/utils/storage';
+
+export async function verifyApiKey(key: string): Promise<{ success: boolean; username?: string; error?: string; stats?: any }> {
+  try {
+    const response = await fetch(`${API_BASE}/auth/verify`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'X-API-Key': key,
+      },
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.valid && data.user) {
+        return {
+          success: true,
+          username: data.user.username,
+          stats: data.user.stats,
+        };
+      }
+    }
+    return { success: false, error: 'Invalid API Key' };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function fetchUserStats(username: string): Promise<any> {
+  const url = `${API_BASE}/users/${encodeURIComponent(username)}/stats`;
+  const response = await fetch(url, {
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch stats: ${response.statusText}`);
+  }
+  return await response.json();
+}
+
+/**
+ * Cohesive, fetch-and-cache coordinator enforcing standard cache timeout boundaries (5-minute TTL).
+ * Prevents redundant server queries across separate options tabs and the popup.
+ */
+export async function fetchAndCacheUserStats(username: string, force = false): Promise<any> {
+  try {
+    const FETCH_COOLDOWN = 5 * 60 * 1000;
+    const lastFetched = await storage.getItem<number>('local:userStatsLastFetched') || 0;
+    
+    if (force || (Date.now() - lastFetched > FETCH_COOLDOWN)) {
+      const stats = await fetchUserStats(username);
+      await Promise.all([
+        storage.setItem('local:userStats', stats),
+        storage.setItem('local:userStatsLastFetched', Date.now())
+      ]);
+      return stats;
+    }
+    return await storage.getItem('local:userStats');
+  } catch (err) {
+    console.error('Failed to fetch and cache user stats:', err);
+    return await storage.getItem('local:userStats');
+  }
+}

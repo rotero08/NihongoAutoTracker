@@ -63,6 +63,25 @@
       >
     </a>
 
+    <!-- Dashboard -->
+    <a
+      class="nav-item"
+      class:active={activeTab === "dashboard"}
+      data-tab="dashboard"
+      href="#dashboard"
+      onclick={(e) => {
+        e.preventDefault();
+        onTabChange("dashboard");
+      }}
+    >
+      <span class="nav-icon"
+        ><svg viewBox="0 0 16 16"
+          ><rect x="2" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg
+        ></span
+      >
+      Dashboard
+    </a>
+
     <!-- API Key -->
     <a
       class="nav-item"
@@ -175,72 +194,72 @@
       Stremio
     </a>
 
-    <!-- Readers -->
-    <a
-      class="nav-item"
-      class:active={activeTab === "readers"}
-      data-tab="readers"
-      href="#readers"
-      onclick={(e) => {
-        e.preventDefault();
-        onTabChange("readers");
-      }}
-    >
-      <span class="nav-icon"
-        ><svg viewBox="0 0 16 16"
-          ><rect x="2" y="3" width="12" height="10" rx="1" /><line
-            x1="5"
-            y1="7"
-            x2="11"
-            y2="7"
-          /><line x1="5" y1="10" x2="9" y2="10" /></svg
-        ></span
-      >
-      Readers
-    </a>
-
-    <!-- Debug (only visible when Advanced enabled) -->
-    {#if debugMode}
-      <a
-        class="nav-item"
-        id="nav-debug"
-        class:active={activeTab === "debug"}
-        data-tab="debug"
-        href="#debug"
-        onclick={(e) => {
-          e.preventDefault();
-          onTabChange("debug");
-        }}
-      >
-        <span class="nav-icon"
-          ><svg viewBox="0 0 16 16"
-            ><path
-              d="M2 4h12M2 8h12M2 12h12"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            /></svg
-          ></span
+   <!-- Readers -->
+        <a
+          class="nav-item"
+          class:active={activeTab === "readers"}
+          data-tab="readers"
+          href="#readers"
+          onclick={(e) => {
+            e.preventDefault();
+            onTabChange("readers");
+          }}
         >
-        Debug
-      </a>
-    {/if}
-  </div>
+          <span class="nav-icon"
+            ><svg viewBox="0 0 16 16"
+              ><rect x="2" y="3" width="12" height="10" rx="1" /><line
+                x1="5"
+                y1="7"
+                x2="11"
+                y2="7"
+              /><line x1="5" y1="10" x2="9" y2="10" /></svg
+            ></span
+          >
+          Readers
+        </a>
 
-  <!-- Advanced toggle at bottom of sidebar -->
-  <div
-    style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--color-border);"
-  >
-    <label class="toggle" style="font-size: 11px;">
-      <input
-        type="checkbox"
-        id="debug-mode"
-        class="toggle-chk"
-        checked={debugMode}
-        onchange={handleDebugToggle}
-      />
-      <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      Advanced
-    </label>
-  </div>
-</nav>
+        <!-- Debug (only visible when Advanced enabled) -->
+        {#if debugMode}
+          <a
+            class="nav-item"
+            id="nav-debug"
+            class:active={activeTab === "debug"}
+            data-tab="debug"
+            href="#debug"
+            onclick={(e) => {
+              e.preventDefault();
+              onTabChange("debug");
+            }}
+          >
+            <span class="nav-icon"
+              ><svg viewBox="0 0 16 16"
+                ><path
+                  d="M2 4h12M2 8h12M2 12h12"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                /></svg
+              ></span
+            >
+            Debug
+          </a>
+        {/if}
+      </div>
+
+      <!-- Advanced toggle at bottom of sidebar -->
+      <div
+        style="margin-top: auto; padding: 20px 18px; border-top: 1px solid var(--color-border);"
+      >
+        <label class="toggle" style="font-size: 11px;">
+          <input
+            type="checkbox"
+            id="debug-mode"
+            class="toggle-chk"
+            checked={debugMode}
+            onchange={handleDebugToggle}
+          />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          Advanced
+        </label>
+      </div>
+    </nav>
