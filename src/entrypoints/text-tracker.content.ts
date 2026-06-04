@@ -3,13 +3,13 @@
  * Monitors page focus, scrolls, and manages the in-page reading overlay timer.
  */
 
+import { browser } from 'wxt/browser';
 import { defineContentScript } from '#imports';
 import '@/assets/text-tracker.css';
 import TtuChronoDropdown from '@/components/reader/TtuChronoDropdown.svelte';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { JP_DOMAINS_DEFAULT } from '@/lib/constants';
-import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
-import { OverlayController } from '@/lib/core/overlay-controller';
+import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
 import { configStorage } from '@/lib/storage/config';
 import { readingQueueStorage, updateReadingQueueAtomic } from '@/lib/storage/queues';
 import { ttuHistoryStorage, ttuLinkStorage } from '@/lib/storage/ttu';
@@ -23,13 +23,13 @@ import {
   updatePauseIconState
 } from '@/lib/ui/reader-overlay';
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
-import { isJapanesePage as detectJapanesePage } from '@/lib/utils/japanese';
+import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
+import { OverlayController } from '@/lib/core/overlay-controller';
 import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
 import { mount, unmount } from 'svelte';
-import { browser } from 'wxt/browser';
 
 const isRelevantFrame = typeof window !== 'undefined' && typeof window.location !== 'undefined' && (
   window.self === window.top ||
@@ -69,10 +69,6 @@ let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
 const YATSU_SIDEBAR_CHECK_TTL = 1000; // Scan the deep DOM at most once every 1000ms during idle reading
 
-// Cached references for ignored container elements to bypass querySelector/closest walks
-let cachedChronoWrapper: HTMLElement | null = null;
-let cachedOverlay: HTMLElement | null = null;
-
 function invalidateYatsuSidebarCache() {
   _lastYatsuSidebarCheckTime = 0;
 }
@@ -97,11 +93,11 @@ const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
         tooltip.className = 'nt-chrono-tooltip';
         Object.assign(tooltip.style, {
           position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
-                      background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
-                      borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
-                      zIndex: '10000', opacity: '0', pointerEvents: 'none',
-                      transition: 'opacity 0.2s ease, transform 0.2s ease'
+          background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+          borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+          zIndex: '10000', opacity: '0', pointerEvents: 'none',
+          transition: 'opacity 0.2s ease, transform 0.2s ease'
         });
         wrapper.appendChild(tooltip);
       }
@@ -129,9 +125,9 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
       Object.assign(newOverlay.style, {
         position: 'absolute', top: '0', left: '0', right: '0', bottom: '0',
         background: 'rgba(15, 15, 20, 0.75)', backdropFilter: 'blur(2.5px)',
-                    webkitBackdropFilter: 'blur(2.5px)', color: '#aaa', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', fontSize: '11px',
-                    textAlign: 'center', padding: '16px', borderRadius: '8px', zIndex: '9999'
+        webkitBackdropFilter: 'blur(2.5px)', color: '#aaa', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontSize: '11px',
+        textAlign: 'center', padding: '16px', borderRadius: '8px', zIndex: '9999'
       } as any);
       dropdown.appendChild(newOverlay);
       newOverlay.textContent = message || 'Waiting for Jiten to finish processing layout...';
@@ -146,41 +142,41 @@ const updateDropdownOverlayState = (active: boolean, message?: string) => {
 
 const stabilizer = new DOMMutationStabilizer(
   { get running() { return ttuState.running; } },
-                                             setChronoButtonDisabled,
-                                             updateDropdownOverlayState,
-                                             () => recalculateChars(),
-                                             (active) => {
-                                               const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-                                               if (wrapper) {
-                                                 wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
-                                               }
-                                               const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
-                                               if (btn && wrapper) {
-                                                 let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
-                                                 if (active) {
-                                                   btn.classList.add('nt-btn-suspended-running');
-                                                   btn.style.setProperty('cursor', 'help', 'important');
-                                                   if (!tooltip) {
-                                                     tooltip = document.createElement('div');
-                                                     tooltip.className = 'nt-chrono-tooltip';
-Object.assign(tooltip.style, {
-  position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
-              background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
-              borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
-              zIndex: '10000', opacity: '0', pointerEvents: 'none',
-              transition: 'opacity 0.2s ease, transform 0.2s ease'
-});
-wrapper.appendChild(tooltip);
-                                                   }
-                                                   tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
-                                                 } else {
-                                                   btn.classList.remove('nt-btn-suspended-running');
-                                                   btn.style.removeProperty('cursor');
-                                                   if (tooltip) tooltip.remove();
-                                                 }
-                                               }
-                                             }
+  setChronoButtonDisabled,
+  updateDropdownOverlayState,
+  () => recalculateChars(),
+  (active) => {
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) {
+      wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
+    }
+    const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
+    if (btn && wrapper) {
+      let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
+      if (active) {
+        btn.classList.add('nt-btn-suspended-running');
+        btn.style.setProperty('cursor', 'help', 'important');
+        if (!tooltip) {
+          tooltip = document.createElement('div');
+          tooltip.className = 'nt-chrono-tooltip';
+          Object.assign(tooltip.style, {
+            position: 'absolute', bottom: '38px', left: '0', transform: 'translateY(5px)',
+            background: 'rgba(20, 20, 25, 0.95)', color: '#f5a623', padding: '6px 12px',
+            borderRadius: '4px', fontSize: '11px', whiteSpace: 'nowrap',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.6)', border: '1px solid rgba(245, 166, 35, 0.3)',
+            zIndex: '10000', opacity: '0', pointerEvents: 'none',
+            transition: 'opacity 0.2s ease, transform 0.2s ease'
+          });
+          wrapper.appendChild(tooltip);
+        }
+        tooltip.textContent = 'Waiting for Jiten to finish processing layout... Double-click to pause.';
+      } else {
+        btn.classList.remove('nt-btn-suspended-running');
+        btn.style.removeProperty('cursor');
+        if (tooltip) tooltip.remove();
+      }
+    }
+  }
 );
 
 async function isJapanesePage(cfg: any): Promise<boolean> {
@@ -210,9 +206,9 @@ const stateRefs: StateRefs = {
 
 const ttuState = new Proxy({
   id: crypto.randomUUID(),
-                           running: false,
-                           timeMs: 0,
-                           chars: 0,
+  running: false,
+  timeMs: 0,
+  chars: 0,
 }, {
   set(target, prop, value) {
     if (prop === 'running') {
@@ -258,14 +254,18 @@ let isSyncing = false;
 function updateCachedActiveTabTitle() {
   if (window.self !== window.top) {
     browser.runtime.sendMessage({ action: "GET_ACTIVE_TAB_TITLE" })
-    .then((response) => {
-      if (response?.title) cachedActiveTabTitle = response.title;
-    })
-    .catch(() => {});
+      .then((response) => {
+        if (response?.title) {
+          cachedActiveTabTitle = response.title;
+          console.log(`[NT Tracker] [Title Sync] Received parent tab title from background: "${response.title}"`);
+        }
+      })
+      .catch((err) => {
+        console.error(`[NT Tracker] [Title Sync] Failed to request parent title:`, err);
+      });
   }
 }
 
-// Extract sequential section index from current wrapper relative to document flow
 function getTTUTitle() {
   let title = document.title;
   try {
@@ -278,8 +278,9 @@ function getTTUTitle() {
     }
   } catch (e) {
     if (cachedActiveTabTitle) title = cachedActiveTabTitle;
+    console.warn(`[NT Tracker] [Title Extraction] Access to top window blocked or failed. Using fallback: "${title}"`);
   }
-
+  
   const adapter = getActiveReaderAdapter();
   if (adapter) {
     return adapter.getTitle(title);
@@ -402,12 +403,12 @@ async function liveSyncQueue(force = false) {
       if (!existing) {
         existing = {
           id: crypto.randomUUID(), type: 'reading',
-                                   contentTitleNative: parsedTitle, contentTitleEnglish: '',
-                                   originalTitle: rawTitle, description: parsedTitle,
-                                   chars: ttuState.chars, time: secs, volume: targetVolume,
-                                   date: dateStr, private: false, tags: [],
-                                   sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
-                                   readerName: getReaderName()
+          contentTitleNative: parsedTitle, contentTitleEnglish: '',
+          originalTitle: rawTitle, description: parsedTitle,
+          chars: ttuState.chars, time: secs, volume: targetVolume,
+          date: dateStr, private: false, tags: [],
+          sessions: [{ id: ttuState.id, secs: secs, chars: ttuState.chars, date: dateStr }],
+          readerName: getReaderName()
         };
         queue.push(existing);
       } else {
@@ -485,7 +486,7 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   const footer = document.getElementById('ttu-page-footer');
   if (footer) {
     const flexGroups = Array.from(footer.children).filter(el =>
-    el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
+      el.classList.contains('flex') && !el.classList.contains('fixed') && !el.classList.contains('absolute') && el.id !== 'nt-ttu-chrono-wrapper');
     if (flexGroups.length > 0) { _insertPointCache = { el: flexGroups[flexGroups.length - 1], pos: 'beforeend' }; return _insertPointCache; }
     _insertPointCache = { el: footer, pos: 'afterbegin' };
     return _insertPointCache;
@@ -509,7 +510,97 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
+/**
+ * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
+ */
+function checkAndProcessSectionTransition(charData: any): boolean {
+  const { total, sectionIndex, isPaginated } = charData;
+  const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+  // Skip transition checks during loading states or on illustration-only pages to avoid temporary resets
+  if (!total || Number(total) === 0) {
+    console.log(`[NT Tracker] [Transition Guard] Skipping transition checks because total characters is 0 (loading or illustration page).`);
+    return false;
+  }
+
+  console.log(`[NT Tracker] [State Verification] activeSection: ${activeSection}, total: ${total}, isPaginated: ${isPaginated}, lastSectionIndex: ${stateRefs.lastSectionIndex}, lastSectionTotal: ${stateRefs.lastSectionTotal}, currentOffset: ${stateRefs.globalManualCharOffset}`);
+
+  if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+    console.warn(`[NT Tracker] [Mode Transition Detected] Mode changed from ${lastLoggedPaginatedMode ? 'Paginated' : 'Continuous'} to ${isPaginated ? 'Paginated' : 'Continuous'}. Resetting tracking references!`);
+    stateRefs.globalSessionStartChar = -1;
+    stateRefs.globalManualCharOffset = 0;
+    stateRefs.lastSectionIndex = -1;
+    stateRefs.lastSectionTotal = 0;
+    stateRefs.visitedSections.clear();
+    ttuState.chars = 0;
+    ttuState.timeMs = 0;
+    stateRefs.globalLastTick = Date.now();
+    lastLoggedPaginatedMode = isPaginated;
+    if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
+    return true;
+  }
+
+  lastLoggedPaginatedMode = isPaginated;
+
+  if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
+    console.log(`[NT Tracker] [Baseline Initialized] First valid section boundary identified: activeSection = ${activeSection}, chars on start: ${charData.current}`);
+    initSessionRefs(charData.current, activeSection, total, isPaginated);
+  }
+
+  if (stateRefs.lastSectionIndex !== activeSection) {
+    console.log(`[NT Tracker] [Chapter Boundary Jumped] from Section ${stateRefs.lastSectionIndex} to Section ${activeSection}`);
+    stabilizer.resetJitenParseFlag();
+    if (activeSection === -1) {
+      if (!isReadingViewActive()) {
+        stateRefs.lastSectionIndex = -1;
+        stateRefs.globalManualCharOffset = 0;
+        stateRefs.visitedSections.clear();
+      }
+    } else {
+      if (activeSection > stateRefs.lastSectionIndex) {
+        if (stateRefs.visitedSections.has(activeSection)) {
+          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+          console.log(`[NT Tracker] [Forward Transition] Restored cached manual offset for Section ${activeSection}: ${stateRefs.globalManualCharOffset}`);
+        } else {
+          // Commit current section total before jumping to ensure mathematical precision
+          stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+          console.log(`[NT Tracker] [Forward Transition] Section ${activeSection} unvisited. Accumulated manual offset: ${stateRefs.globalManualCharOffset} (+${stateRefs.lastSectionTotal} characters from previous Section)`);
+        }
+      } else {
+        if (stateRefs.visitedSections.has(activeSection)) {
+          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+          console.log(`[NT Tracker] [Backward Transition] Restored cached manual offset for Section ${activeSection}: ${stateRefs.globalManualCharOffset}`);
+        } else {
+          stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+          console.log(`[NT Tracker] [Backward Transition] Section ${activeSection} unvisited. Reduced manual offset: ${stateRefs.globalManualCharOffset} (-${total} characters of current Section)`);
+        }
+      }
+      if (isPaginated) stateRefs.globalSessionStartChar = 0;
+
+      stateRefs.lastSectionIndex = activeSection;
+      stateRefs.lastSectionTotal = total;
+
+      if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
+      else stabilizer.runGracePeriodIfJiten();
+    }
+    return true;
+  } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
+    if (total > stateRefs.lastSectionTotal) {
+      console.log(`[NT Tracker] [Dynamic Section Reflow] Updating total character baseline for Section ${activeSection} from ${stateRefs.lastSectionTotal} to ${total}`);
+      stateRefs.lastSectionTotal = total;
+    }
+  }
+  return false;
+}
+
 function recalculateChars() {
+  // Guard clause to block execution on inactive frames (such as Yomiyasu's parent document)
+  if (!document.getElementById('nt-ttu-chrono-wrapper')) {
+    console.log(`[NT Tracker] [Frame Guard] Skipping recalculateChars on inactive frame (no chrono wrapper found).`);
+    return;
+  }
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
   const now = Date.now();
   if (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS) {
@@ -526,19 +617,33 @@ function recalculateChars() {
     return;
   }
 
-  const adapter = getActiveReaderAdapter();
-  const current = adapter ? adapter.extractCharCount() : null;
-  if (current !== null) {
+  const charData = extractAdvancedCharCount(undefined, ttuState.running);
+  if (charData !== null) {
+    // Synchronize section boundary and manual offset before applying the local paragraph count
+    checkAndProcessSectionTransition(charData);
+
+    const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = current;
+      console.log(`[NT Tracker] [Recalculate] Session starting baseline dynamically set to current position count: ${current}`);
     }
     if (Date.now() < _transitionGraceUntil) {
       stateRefs.globalSessionStartChar = current;
       return;
     }
-    let diff = current - stateRefs.globalSessionStartChar;
-    if (diff < 0) diff = 0;
-    ttuState.chars = diff + stateRefs.globalManualCharOffset;
+
+    // If we are on an illustration or loading page (total === 0), preserve and display 
+    // the sum of all fully read chapters including the last section's total chars.
+    if (!charData.total || Number(charData.total) === 0) {
+      ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+      console.log(`[NT Tracker] [Preserved Offset on Empty/Illustration] chars = ${ttuState.chars} (manualOffset = ${stateRefs.globalManualCharOffset}, lastSectionTotal = ${stateRefs.lastSectionTotal})`);
+    } else {
+      let diff = current - stateRefs.globalSessionStartChar;
+      if (diff < 0) diff = 0;
+      ttuState.chars = diff + stateRefs.globalManualCharOffset;
+      console.log(`[NT Tracker] [Calculated Characters] chars = ${ttuState.chars} (diff = ${diff}, manualOffset = ${stateRefs.globalManualCharOffset}, currentCount = ${current}, startBaseline = ${stateRefs.globalSessionStartChar})`);
+    }
+
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
   }
@@ -594,7 +699,7 @@ function scheduleInstantThemeSync() {
   });
 }
 
-// Deep, geometric evaluation of sidebars, dialogs, and settings drawers
+// Deep, geometric evaluation of sidebars, dialogs, and settings drawers 
 function isYatsuSidebarOpen(): boolean {
   if (window.location.hostname !== 'app.yatsu.moe') return false;
   const now = Date.now();
@@ -609,21 +714,15 @@ function isYatsuSidebarOpen(): boolean {
     return false;
   }
 
-  // Fast-path: Check DOM tree existence without triggering style resolution/layout reflows
-  if (!document.querySelector('aside, dialog, [role="dialog"], [role="menu"]')) {
-    _cachedYatsuSidebarOpen = false;
-    return false;
-  }
-
   // Query strictly semantic sidebar, dialog, and accessibility tags.
   // This executes instantly and returns 0 items during active reading (99.9% of the session)
   const els = document.querySelectorAll('aside, dialog, [role="dialog"], [role="menu"]');
-
+  
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
     const id = el.id || '';
     const className = el.className || '';
-
+    
     const idStr = typeof id === 'string' ? id.toLowerCase() : '';
     const classStr = typeof className === 'string' ? className.toLowerCase() : '';
 
@@ -634,7 +733,7 @@ function isYatsuSidebarOpen(): boolean {
 
     // 2. Skip hover popups, lookup dictionaries, and translation tools
     if (
-      classStr.includes('jiten') || classStr.includes('yomichan') || classStr.includes('yomitan') || classStr.includes('anki') || classStr.includes('jpdb') || classStr.includes('lookup') || classStr.includes('popup') ||
+      classStr.includes('jiten') || classStr.includes('yomichan') || classStr.includes('yomichan') || classStr.includes('yomitan') || classStr.includes('anki') || classStr.includes('jpdb') || classStr.includes('lookup') || classStr.includes('popup') ||
       idStr.includes('jiten') || idStr.includes('yomichan') || idStr.includes('yomitan') || idStr.includes('anki') || idStr.includes('jpdb') || idStr.includes('lookup') || idStr.includes('popup')
     ) {
       continue;
@@ -660,7 +759,7 @@ function isYatsuSidebarOpen(): boolean {
     }
 
     // 6. Geometric Classification:
-
+    
     // A. Backdrop / Full Screen Overlay: covers almost the entire viewport
     const isBackdrop = rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.9;
 
@@ -717,13 +816,13 @@ async function setupTTUChronometer() {
         getTTUTitle,
         parseTitleWithConfig,
         extractTTUCharCount: () => extractAdvancedCharCount(undefined, ttuState.running),
-                                   getReaderName,
-                                   getCurrentReaderConfig: () => {
-                                     const rCfg = getReaderConfig(currentConfig) || {};
-                                     return { ...rCfg, hideUnavailableActions: currentConfig.hideUnavailableActions ?? false };
-                                   },
-                                   liveSyncQueue: (force = false) => liveSyncQueue(force),
-                                   saveSessionAndQueue,
+        getReaderName,
+        getCurrentReaderConfig: () => {
+          const rCfg = getReaderConfig(currentConfig) || {};
+          return { ...rCfg, hideUnavailableActions: currentConfig.hideUnavailableActions ?? false };
+        },
+        liveSyncQueue: (force = false) => liveSyncQueue(force),
+        saveSessionAndQueue,
       }
     });
 
@@ -820,21 +919,6 @@ async function setupTTUChronometer() {
 function isTargetInIgnoredContainer(target: Node): boolean {
   const element = target.nodeType === Node.ELEMENT_NODE ? (target as HTMLElement) : target.parentElement;
   if (!element) return false;
-
-  // Bypass heavy closest walks using high-performance DOM containment checks on cached elements
-  if (!cachedChronoWrapper || !cachedChronoWrapper.isConnected) {
-    cachedChronoWrapper = document.getElementById('nt-ttu-chrono-wrapper');
-  }
-  if (!cachedOverlay || !cachedOverlay.isConnected) {
-    cachedOverlay = document.getElementById('nt-overlay');
-  }
-
-  if (cachedChronoWrapper && cachedChronoWrapper.contains(element)) return true;
-  if (cachedOverlay && cachedOverlay.contains(element)) return true;
-
-  const cl = element.className;
-  if (typeof cl === 'string' && cl.includes('nt-toast')) return true;
-
   return !!element.closest('#nt-ttu-chrono-wrapper, #nt-overlay, [class*="nt-toast"]');
 }
 
@@ -889,14 +973,14 @@ if (isRelevantFrame) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') forceSyncOnExit();
   });
-    window.addEventListener('pagehide', forceSyncOnExit);
-    window.addEventListener('beforeunload', forceSyncOnExit);
+  window.addEventListener('pagehide', forceSyncOnExit);
+  window.addEventListener('beforeunload', forceSyncOnExit);
 
-    document.addEventListener('nt-theme-lock-released', () => {
-      invalidateReadingViewCache();
-      invalidateYatsuSidebarCache();
-      handleMutations();
-    });
+  document.addEventListener('nt-theme-lock-released', () => {
+    invalidateReadingViewCache();
+    invalidateYatsuSidebarCache();
+    handleMutations();
+  });
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
@@ -927,7 +1011,7 @@ function isDictNode(node: Node): boolean {
     else if (className && typeof className === 'object' && 'baseVal' in className) classStr = (className as SVGAnimatedString).baseVal || '';
     if (classStr) {
       const lowerClass = classStr.toLowerCase();
-      if (lowerClass.includes('jiten') || lowerClass.includes('yomichan') || lowerClass.includes('yomitan')) return true;
+      if (lowerClass.includes('jiten') || lowerClass.includes('yomichan') || lowerClass.includes('yomichan') || lowerClass.includes('yomitan')) return true;
     }
     if (el.getAttribute('ajb') === 'true') return true;
   }
@@ -1071,10 +1155,10 @@ function setupOptimizedMutationObserver() {
   rootStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   rootStyleObserver.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 
-  bodyObserver = new MutationObserver(() => {
-    invalidateReadingViewCache();
+  bodyObserver = new MutationObserver(() => { 
+    invalidateReadingViewCache(); 
     invalidateYatsuSidebarCache();
-    handleMutations();
+    handleMutations(); 
   });
   bodyObserver.observe(document.body, { childList: true, subtree: false });
 
@@ -1086,13 +1170,13 @@ function setupOptimizedMutationObserver() {
     if (container && currentObservedElement !== container) startObserver();
   }, 1000);
 
-    window.addEventListener('unload', () => {
-      clearInterval(checkInterval);
-      if (activeMutationObserver) activeMutationObserver.disconnect();
-      if (rootObserver) rootObserver.disconnect();
-      if (rootStyleObserver) rootStyleObserver.disconnect();
-      if (bodyObserver) bodyObserver.disconnect();
-    });
+  window.addEventListener('unload', () => {
+    clearInterval(checkInterval);
+    if (activeMutationObserver) activeMutationObserver.disconnect();
+    if (rootObserver) rootObserver.disconnect();
+    if (rootStyleObserver) rootStyleObserver.disconnect();
+    if (bodyObserver) bodyObserver.disconnect();
+  });
 }
 
 if (isRelevantFrame && typeof window !== 'undefined' && typeof MutationObserver !== 'undefined') {
@@ -1146,10 +1230,8 @@ function handleMutations() {
     }
   } else if (!isActive) {
     _wasReadingViewActive = false;
-    _insertPointCache = null; // Clean cached stale elements on view exit to resolve detached DOM memory leak
   }
 
-  let didWriteDOM = false;
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   const adapter = getActiveReaderAdapter();
   if (isReadingViewActive()) {
@@ -1157,15 +1239,10 @@ function handleMutations() {
     if (target) {
       const readerCfg = getReaderConfig(currentConfig);
       if (readerCfg.enabled !== false) {
-        if (!wrapper) {
-          setupTTUChronometer();
-          didWriteDOM = true;
-        } else {
+        if (!wrapper) setupTTUChronometer();
+        else {
           const expectedParent = (target.pos === 'beforebegin' || target.pos === 'afterend') ? target.el.parentElement : target.el;
-          if (wrapper.parentElement !== expectedParent) {
-            target.el.insertAdjacentElement(target.pos, wrapper);
-            didWriteDOM = true;
-          }
+          if (wrapper.parentElement !== expectedParent) target.el.insertAdjacentElement(target.pos, wrapper);
         }
       }
     }
@@ -1176,7 +1253,6 @@ function handleMutations() {
         mountedChronoComponent = null;
       }
       wrapper.remove();
-      didWriteDOM = true;
     }
     if (progressObserver) {
       progressObserver.disconnect();
@@ -1184,102 +1260,36 @@ function handleMutations() {
     }
   }
 
-  if (wrapper && adapter) {
-    adapter.onUpdateStyles?.(wrapper);
-    didWriteDOM = true;
-  }
+  if (wrapper && adapter) adapter.onUpdateStyles?.(wrapper);
   if (ttuState.running && isReadingViewActive()) setupProgressObserver();
 
-  const runCalculation = () => {
-    // Instant verifying synchronous section indexing
+  // Synchronous and immediate section boundary verification wrapped in active frame guard
+  if (document.getElementById('nt-ttu-chrono-wrapper')) {
     const charData = extractAdvancedCharCount(undefined, ttuState.running);
     if (charData !== null) {
-      const { total, sectionIndex, isPaginated } = charData;
-      const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-      if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-        stateRefs.globalSessionStartChar = -1;
-        stateRefs.globalManualCharOffset = 0;
-        stateRefs.lastSectionIndex = -1;
-        stateRefs.lastSectionTotal = 0;
-        stateRefs.visitedSections.clear();
-        ttuState.chars = 0;
-        ttuState.timeMs = 0;
-        stateRefs.globalLastTick = Date.now();
-        lastLoggedPaginatedMode = isPaginated;
-        if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
-        recalculateChars();
-        return;
-      }
-
-      lastLoggedPaginatedMode = isPaginated;
-
-      if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
-        const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
-        initSessionRefs(currentCount !== null ? currentCount.current : 0, activeSection, total, isPaginated);
-      }
-
-      if (stateRefs.lastSectionIndex !== activeSection) {
-        stabilizer.resetJitenParseFlag();
-        if (activeSection === -1) {
-          if (!isReadingViewActive()) {
-            stateRefs.lastSectionIndex = -1;
-            stateRefs.globalManualCharOffset = 0;
-            stateRefs.visitedSections.clear();
-            recalculateChars();
-          }
-        } else {
-          if (activeSection > stateRefs.lastSectionIndex) {
-            if (stateRefs.visitedSections.has(activeSection)) {
-              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-            } else {
-              stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-            }
-          } else {
-            if (stateRefs.visitedSections.has(activeSection)) {
-              stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-            } else {
-              stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-              stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-            }
-          }
-          if (isPaginated) stateRefs.globalSessionStartChar = 0;
-
-          stateRefs.lastSectionIndex = activeSection;
-          stateRefs.lastSectionTotal = total;
-
-          if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
-          else stabilizer.runGracePeriodIfJiten();
+      const didTransition = checkAndProcessSectionTransition(charData);
+      if (didTransition) {
           recalculateChars();
-        }
-      } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-        stateRefs.lastSectionTotal = Math.max(stateRefs.lastSectionTotal, total);
       }
     }
-
-    if (!adapter) {
-      if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
-        const overlay = overlayController.getOverlayElement();
-        if (!overlay) overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
-      }
-    }
-
-    if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
-      setTimeout(() => {
-        if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
-          invalidateReadingViewCache();
-          handleMutations();
-        }
-      }, 250);
-    }
-  };
-
-  // Prevent synchronous layout thrashing (Forced Reflow) by deferring math reads when DOM writes occur
-  if (didWriteDOM) {
-    requestAnimationFrame(runCalculation);
   } else {
-    runCalculation();
+    console.log(`[NT Tracker] [Frame Guard] Skipping section transition check on inactive frame (no chrono wrapper found).`);
+  }
+
+  if (!adapter) {
+    if (window.self !== window.top && currentConfig.overlayPosition !== 'hidden' && !getOverlayDismissed()) {
+      const overlay = overlayController.getOverlayElement();
+      if (!overlay) overlayController.checkAndRunOverlay(currentConfig, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
+    }
+  }
+
+  if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+    setTimeout(() => {
+      if (isReadingViewActive() && !document.getElementById('nt-ttu-chrono-wrapper')) {
+        invalidateReadingViewCache();
+        handleMutations();
+      }
+    }, 250);
   }
 }
 
@@ -1345,7 +1355,7 @@ export default defineContentScript({
 
     configStorage.watch((newCfg) => {
       if (newCfg) {
-        // Force reset the cached reading view status and elements to prevent
+        // Force reset the cached reading view status and elements to prevent 
         // the chronometer from failing to re-inject after settings/theme changes.
         invalidateReadingViewCache();
 
@@ -1359,7 +1369,7 @@ export default defineContentScript({
         if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
-
+        
         applyActiveTheme(activeThemeCfg);
 
         if (adapter && originalName) safelySetAdapterName(adapter, originalName);
@@ -1399,17 +1409,17 @@ export default defineContentScript({
           const existingOverlay = overlayController.getOverlayElement();
           if (existingOverlay) {
             const overlayPos = newCfg.overlayPosition ?? 'top-right';
-    if (overlayPos !== 'hidden') {
-      existingOverlay.style.setProperty('display', 'flex', 'important');
-      applyOverlayPosition(existingOverlay, overlayPos);
-      injectOverlayCustomOverrides();
-      const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
-      if (pauseBtn) updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
-      const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
-      if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
-      const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
-      if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
-    } else existingOverlay.style.setProperty('display', 'none', 'important');
+            if (overlayPos !== 'hidden') {
+              existingOverlay.style.setProperty('display', 'flex', 'important');
+              applyOverlayPosition(existingOverlay, overlayPos);
+              injectOverlayCustomOverrides();
+              const pauseBtn = existingOverlay.querySelector('.nt-ctrl[title="Pause / Resume"]') as HTMLButtonElement;
+              if (pauseBtn) updatePauseIconState(pauseBtn, pauseBtn.textContent === '▶');
+              const resetBtn = existingOverlay.querySelector('.nt-ctrl[title="Reset timer"]') as HTMLElement;
+              if (resetBtn) resetBtn.style.setProperty('font-size', '11px', 'important');
+              const closeBtn = existingOverlay.querySelector('.nt-close') as HTMLElement;
+              if (closeBtn) closeBtn.style.setProperty('font-size', '12px', 'important');
+            } else existingOverlay.style.setProperty('display', 'none', 'important');
           } else overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
         }
       }
@@ -1426,63 +1436,63 @@ export default defineContentScript({
         if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
       });
 
-        readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
-          const currentQueue = queue || [];
-          const rawTitle = getTTUTitle();
-          const parsedRaw = parseTitleWithConfig(rawTitle).query;
+      readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
+        const currentQueue = queue || [];
+        const rawTitle = getTTUTitle();
+        const parsedRaw = parseTitleWithConfig(rawTitle).query;
 
-          const linkMap = await ttuLinkStorage.getValue() || {};
-          const linkedMedia = linkMap[rawTitle];
-          const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
+        const linkMap = await ttuLinkStorage.getValue() || {};
+        const linkedMedia = linkMap[rawTitle];
+        const targetVolume = linkedMedia ? Math.max(1, Number(linkedMedia.volume || 1)) : Math.max(1, Number(parseTitleWithConfig(rawTitle).volume || 1));
 
-          const existing = currentQueue.find((q: any) => {
-            if (q.originalTitle === rawTitle) return true;
-            const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
-            return qParsed.query === parsedRaw && (qParsed.volume || 1) === targetVolume;
-          });
+        const existing = currentQueue.find((q: any) => {
+          if (q.originalTitle === rawTitle) return true;
+          const qParsed = parseTitleWithConfig(q.originalTitle || q.contentTitleNative || '');
+          return qParsed.query === parsedRaw && (qParsed.volume || 1) === targetVolume;
+        });
 
-          if (!existing && ttuState.timeMs > 0) {
-            if (hasSyncedThisSession) {
-              ttuState.timeMs = 0;
-              ttuState.chars = 0;
-              stateRefs.globalLastTick = Date.now();
-              const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-              stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
-              stateRefs.globalManualCharOffset = 0;
+        if (!existing && ttuState.timeMs > 0) {
+          if (hasSyncedThisSession) {
+            ttuState.timeMs = 0;
+            ttuState.chars = 0;
+            stateRefs.globalLastTick = Date.now();
+            const initCount = extractAdvancedCharCount(undefined, ttuState.running);
+            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+            stateRefs.globalManualCharOffset = 0;
 
-              const timeVal = document.querySelector('#nt-ttu-val-time');
-              const charsVal = document.querySelector('#nt-ttu-val-chars');
-              if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
-              if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
+            const timeVal = document.querySelector('#nt-ttu-val-time');
+            const charsVal = document.querySelector('#nt-ttu-val-chars');
+            if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
+            if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
 
-              hasSyncedThisSession = false;
+            hasSyncedThisSession = false;
+          }
+        } else if (existing) {
+          let updated = false;
+          const links = { ...linkMap };
+          if (existing.mediaId && existing.mediaId !== 'web-reading') {
+            if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
+              links[rawTitle] = { mediaId: existing.mediaId, volume: existing.volume || 1, mediaData: existing.mediaData as ReadingMediaData };
+              updated = true;
             }
-          } else if (existing) {
-            let updated = false;
-            const links = { ...linkMap };
-            if (existing.mediaId && existing.mediaId !== 'web-reading') {
-              if (!links[rawTitle] || links[rawTitle].mediaId !== existing.mediaId || links[rawTitle].volume !== existing.volume) {
-                links[rawTitle] = { mediaId: existing.mediaId, volume: existing.volume || 1, mediaData: existing.mediaData as ReadingMediaData };
+          } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
+            if (links[rawTitle]) {
+              const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
+              if (links[rawTitle].volume === parsedVol) {
+                delete links[rawTitle];
                 updated = true;
               }
-            } else if (!existing.mediaId || existing.mediaId === 'web-reading') {
-              if (links[rawTitle]) {
-                const parsedVol = parseTitleWithConfig(rawTitle).volume || 1;
-                if (links[rawTitle].volume === parsedVol) {
-                  delete links[rawTitle];
-                  updated = true;
-                }
-              }
-            }
-            if (updated) {
-              ttuLinkStorage.setValue(links).then(() => {
-                const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-                if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-              });
             }
           }
-        });
-        return;
+          if (updated) {
+            ttuLinkStorage.setValue(links).then(() => {
+              const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+              if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+            });
+          }
+        }
+      });
+      return;
     }
 
     if (isWebsiteOverlaySkipped(cfg)) return;

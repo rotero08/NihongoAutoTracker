@@ -19,6 +19,9 @@ const ttuCharCountCache = new WeakMap<Element, number>();
 let ttuCachedNodes: Element[] = [];
 let ttuCachedAccumulated: number[] = [];
 
+// Module-level cache to track unique section IDs/classes/texts and assign sequential order integers on the fly
+const seenSectionKeys = new Map<string, number>();
+
 // Layout and style caches to avoid forced reflows (Layout Thrashing)
 let cachedIsVertical = false;
 let cachedIsPaginated = false;
@@ -53,20 +56,39 @@ if (typeof window !== 'undefined') {
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
 
-/**
- * Reusable helper to count Japanese characters using a stateful regex.
- * This completely eliminates temporary match array allocations and GC churn.
- */
-function countJapaneseChars(text: string): number {
-    if (!text) return 0;
-    let count = 0;
-    JP_CHAR_PATTERN.lastIndex = 0;
-    while (JP_CHAR_PATTERN.test(text)) {
-        count++;
-    }
-    JP_CHAR_PATTERN.lastIndex = 0; // Reset state
-    return count;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 /**
@@ -110,6 +132,7 @@ function getSectionIndex(container: Element): number | null {
     if (containers.length > 1) {
         const idx = containers.indexOf(container);
         if (idx !== -1) {
+            console.log(`[NT Extractor] getSectionIndex matched DOM array order: index = ${idx}`);
             return idx;
         }
     }
@@ -118,27 +141,66 @@ function getSectionIndex(container: Element): number | null {
         // Look specifically for paragraph index first to prevent matching the first digit of parent chapter id
         const paragraphMatch = id.match(/paragraph-(\d+)/i) || id.match(/p-(\d+)/i);
         if (paragraphMatch) {
-            return parseInt(paragraphMatch[1], 10);
+            const parsed = parseInt(paragraphMatch[1], 10);
+            console.log(`[NT Extractor] getSectionIndex parsed paragraph ID: ${parsed}`);
+            return parsed;
         }
 
         // Standard sequence tracking prefixes
         const ttuIdMatch = id.match(/ttu-id-(?:chapter-)?(\d+)/i);
         if (ttuIdMatch) {
-            return parseInt(ttuIdMatch[1], 10);
+            const parsed = parseInt(ttuIdMatch[1], 10);
+            console.log(`[NT Extractor] getSectionIndex parsed ttu-id ID: ${parsed}`);
+            return parsed;
         }
 
         const trailingMatch = id.match(/(\d+)$/);
         if (trailingMatch) {
-            return parseInt(trailingMatch[1], 10);
+            const parsed = parseInt(trailingMatch[1], 10);
+            console.log(`[NT Extractor] getSectionIndex parsed trailing match: ${parsed}`);
+            return parsed;
         }
 
         const fallbackMatch = id.match(/\d+/);
         if (fallbackMatch) {
-            return parseInt(fallbackMatch[0], 10);
+            const parsed = parseInt(fallbackMatch[0], 10);
+            console.log(`[NT Extractor] getSectionIndex parsed fallback match: ${parsed}`);
+            return parsed;
         }
     }
 
-    return null;
+    // Approach 3 (SPA Fallback): Generate a guaranteed unique key using parent URL and first paragraph text.
+    // This is crucial for single-container SPA environments like Yomiyasu where IDs are absent and class names are statically reused.
+    if (typeof window !== 'undefined') {
+        let parentUrl = '';
+        try {
+            if (window.top && window.top.location) {
+                parentUrl = window.top.location.href;
+            }
+        } catch (e) {
+            parentUrl = window.location.href;
+        }
+
+        const firstP = container.querySelector('p, h1, h2, h3, h4, h5, h6, li');
+        const textSignature = firstP ? (firstP.textContent || '').trim().slice(0, 120) : '';
+        
+        const firstChild = container.firstElementChild;
+        const childSignature = firstChild ? firstChild.tagName + '||' + firstChild.className : '';
+
+        const chapterKey = parentUrl + '||' + textSignature + '||' + childSignature;
+
+        if (!seenSectionKeys.has(chapterKey)) {
+            const nextVal = seenSectionKeys.size;
+            seenSectionKeys.set(chapterKey, nextVal);
+            console.log(`[NT Extractor] SPA Fallback: Mapped new chapter key to sequential index ${nextVal}: "${chapterKey}"`);
+        }
+        const idx = seenSectionKeys.get(chapterKey) ?? 0;
+        console.log(`[NT Extractor] SPA Fallback: Resolved index ${idx} for "${chapterKey}"`);
+        return idx;
+    }
+
+    console.log(`[NT Extractor] getSectionIndex defaulted to 0`);
+    return 0;
 }
 
 /**
@@ -258,13 +320,12 @@ export function extractAdvancedCharCount(
         const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
         const currentContainerId = activeContainer.id || '';
 
-        // If the previously tracked container was removed from the DOM, clean up to prevent detached memory leaks
-        if (lastContainer && !lastContainer.isConnected) {
-            clearExtractorCache();
-        }
+        console.log(`[NT Extractor] [Run] context: ${window.self === window.top ? 'TOP_FRAME' : 'IFRAME'}, containerSelector: "${containerSelector}"`);
+        console.log(`[NT Extractor] [Elements Found] readerContainer: ${readerContainer ? readerContainer.tagName + '.' + readerContainer.className : 'NULL'}, activeContainer: ${activeContainer ? activeContainer.tagName + '.' + activeContainer.className : 'NULL'}, ID: "${currentContainerId}"`);
 
         // Check if the container reference or its ID changed to trigger a cache refresh
         if (readerContainer !== lastContainer || currentContainerId !== lastContainerId) {
+            console.log(`[NT Extractor] [Cache Invalidation] Container changed. lastContainer: ${lastContainer ? lastContainer.className : 'none'} -> ${readerContainer.className}, lastId: "${lastContainerId}" -> "${currentContainerId}"`);
             lastContainer = readerContainer;
             lastContainerId = currentContainerId;
             isCacheValid = false;
@@ -279,18 +340,20 @@ export function extractAdvancedCharCount(
             const style = getComputedStyle(activeContainer);
             cachedWritingMode = style.writingMode || '';
             cachedIsVertical =
-            cachedWritingMode === 'vertical-rl' ||
-            cachedWritingMode === 'vertical-lr' ||
-            readerContainer.classList.contains('book-content--writing-vertical-rl');
+                cachedWritingMode === 'vertical-rl' ||
+                cachedWritingMode === 'vertical-lr' ||
+                readerContainer.classList.contains('book-content--writing-vertical-rl');
 
             const colWidth = style.columnWidth || '';
             const colCount = style.columnCount || '';
 
             cachedIsPaginated =
-            !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
-            !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-            ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
-            (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
+                !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
+                !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
+                ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
+                    (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
+            
+            console.log(`[NT Extractor] [Cache Rebuild Styles] writingMode: "${cachedWritingMode}", cachedIsVertical: ${cachedIsVertical}, colWidth: "${colWidth}", colCount: "${colCount}", cachedIsPaginated: ${cachedIsPaginated}`);
         }
 
         // 2. Query Text-bearing Nodes
@@ -300,17 +363,29 @@ export function extractAdvancedCharCount(
                 if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
                 return (el.textContent || '').trim().length > 0;
             }) as Element[];
+            console.log(`[NT Extractor] [Cache Rebuild Nodes] Re-queried text tags. Count: ${pTags.length}`);
         }
 
-        // Use caching to completely bypass redundant getSectionIndex querySelector runs on every tick
-        let sectionIndex = lastCachedSectionIndex;
-        if (!isCacheValid || lastCachedSectionIndex === null) {
-            sectionIndex = getSectionIndex(activeContainer);
-            lastCachedSectionIndex = sectionIndex;
-        }
+        const sectionIndex = getSectionIndex(activeContainer);
+        lastCachedSectionIndex = sectionIndex;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         if (pTags.length === 0) {
             lastCachedTotal = 0;
+            console.warn(`[NT Extractor] No text paragraph tags found in current container! returning empty baseline progress.`);
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
@@ -318,6 +393,7 @@ export function extractAdvancedCharCount(
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
+            console.log(`[NT Extractor] Layout first paragraph rect width & height are 0. Deferring layout calculations.`);
             return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
@@ -339,13 +415,15 @@ export function extractAdvancedCharCount(
                             text += n.nodeValue || '';
                         }
                     }
-                    count = countJapaneseChars(text);
+                    const matches = text.match(JP_CHAR_PATTERN);
+                    count = matches ? matches.length : 0;
                     ttuCharCountCache.set(el, count);
                 }
                 acc += count;
                 ttuCachedAccumulated[i] = acc;
             }
             isCacheValid = true;
+            console.log(`[NT Extractor] [Cache Build Complete] Total Chapter Chars Summed: ${acc}`);
         }
 
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
@@ -365,19 +443,19 @@ export function extractAdvancedCharCount(
                 explored = true; // Treats unrendered nodes as explored
             } else if (cachedIsVertical) {
                 if (cachedIsPaginated) {
-                    explored = r.bottom <= 1;
+                    explored = r.bottom <= 0.5;
                 } else {
                     if (cachedWritingMode === 'vertical-lr') {
-                        explored = r.right <= 1;
+                        explored = r.right <= 0.5;
                     } else {
-                        explored = r.left >= (cachedVw + 1);
+                        explored = r.left >= (cachedVw + 0.5);
                     }
                 }
             } else {
                 if (cachedIsPaginated) {
-                    explored = r.right <= 1;
+                    explored = r.right <= 0.5;
                 } else {
-                    explored = r.bottom <= 1;
+                    explored = r.bottom <= 0.5;
                 }
             }
 
@@ -390,6 +468,7 @@ export function extractAdvancedCharCount(
         }
 
         let current = lastIdx >= 0 ? ttuCachedAccumulated[lastIdx] : 0;
+        console.log(`[NT Extractor] [Search Progress] Binary check matched last fully explored paragraph index: ${lastIdx} / ${pTags.length - 1}, base char accumulation: ${current}`);
 
         // 5. High-Precision Localized Sub-Paragraph Progress Tracker
         const currentIdx = lastIdx + 1;
@@ -402,25 +481,28 @@ export function extractAdvancedCharCount(
             if (cachedIsPaginated) {
                 // Goal 1: Bypass text-node measurements in columns unless split or highlighted
                 const isSplit = cachedIsVertical
-                ? (r.bottom > cachedVh || r.top < 0)
-                : (r.right > cachedVw || r.left < 0);
+                    ? (r.bottom > cachedVh || r.top < 0)
+                    : (r.right > cachedVw || r.left < 0);
                 needsSubParagraphTracking = isSplit || activeEl.querySelector("[class^='ttu-whispersync-line-highlight-']") !== null;
             } else {
                 if (cachedIsVertical) {
                     if (cachedWritingMode === 'vertical-lr') {
-                        needsSubParagraphTracking = r.left < -1;
+                        needsSubParagraphTracking = r.left < -0.5;
                     } else {
-                        needsSubParagraphTracking = r.right > (cachedVw + 1);
+                        needsSubParagraphTracking = r.right > (cachedVw + 0.5);
                     }
                 } else {
-                    needsSubParagraphTracking = r.top < -1;
+                    needsSubParagraphTracking = r.top < -0.5;
                 }
             }
+
+            console.log(`[NT Extractor] [Sub-Paragraph Tracker] Checking index ${currentIdx}. Rect: {top: ${r.top}, bottom: ${r.bottom}, left: ${r.left}, right: ${r.right}}, needsSubParagraphTracking: ${needsSubParagraphTracking}`);
 
             if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
                 if (spans.length > 0) {
+                    console.log(`[NT Extractor] [Sub-Paragraph Spans] Tracking highlighted line nodes, count: ${spans.length}`);
                     spans.forEach(s => {
                         if (shouldIgnoreNode(s)) return;
 
@@ -428,37 +510,42 @@ export function extractAdvancedCharCount(
                         let sExp = false;
                         if (cachedIsVertical) {
                             if (cachedIsPaginated) {
-                                sExp = sr.bottom <= 1;
+                                sExp = sr.bottom <= 0.5;
                             } else {
                                 if (cachedWritingMode === 'vertical-rl') {
-                                    sExp = sr.left >= (cachedVw + 1);
+                                    sExp = sr.left >= (cachedVw + 0.5);
                                 } else {
-                                    sExp = sr.right <= 1;
+                                    sExp = sr.right <= 0.5;
                                 }
                             }
                         } else {
                             if (cachedIsPaginated) {
-                                sExp = sr.right <= 1;
+                                sExp = sr.right <= 0.5;
                             } else {
-                                sExp = sr.bottom <= 1;
+                                sExp = sr.bottom <= 0.5;
                             }
                         }
 
                         if (sExp) {
-                            current += countJapaneseChars(s.textContent || '');
+                            const m = s.textContent?.match(JP_CHAR_PATTERN);
+                            if (m) {
+                                current += m.length;
+                                console.log(`[NT Extractor] Span matched. Counted characters: +${m.length}`);
+                            }
                         }
                     });
                 } else {
                     // Fallback to text node precision tracking when highlights are absent
                     const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
                     let n;
-                    let checkedNodesCount = 0;
 
                     if (!reusableRange && typeof document !== 'undefined') {
                         reusableRange = document.createRange();
                     }
 
-                    while ((n = walker.nextNode()) && checkedNodesCount < 150) {
+                    // Node limit removed to ensure 100% accuracy on extremely long web novel paragraphs
+                    let fallbackNodeCount = 0;
+                    while ((n = walker.nextNode())) {
                         const parent = n.parentElement;
                         if (!parent || shouldIgnoreNode(parent)) {
                             continue;
@@ -469,8 +556,6 @@ export function extractAdvancedCharCount(
                             continue;
                         }
 
-                        checkedNodesCount++;
-
                         let sExp = false;
                         // Goal 1 Optimization: Measure parent bounding box directly to bypass DOM range creation
                         if (parent.tagName === 'SPAN' || parent.tagName === 'RUBY' || parent.tagName === 'RT') {
@@ -478,19 +563,19 @@ export function extractAdvancedCharCount(
                             if (nr.width > 0 && nr.height > 0) {
                                 if (cachedIsVertical) {
                                     if (cachedIsPaginated) {
-                                        sExp = nr.bottom <= 1;
+                                        sExp = nr.bottom <= 0.5;
                                     } else {
                                         if (cachedWritingMode === 'vertical-rl') {
-                                            sExp = nr.left >= (cachedVw + 1);
+                                            sExp = nr.left >= (cachedVw + 0.5);
                                         } else {
-                                            sExp = nr.right <= 1;
+                                            sExp = nr.right <= 0.5;
                                         }
                                     }
                                 } else {
                                     if (cachedIsPaginated) {
-                                        sExp = nr.right <= 1;
+                                        sExp = nr.right <= 0.5;
                                     } else {
-                                        sExp = nr.bottom <= 1;
+                                        sExp = nr.bottom <= 0.5;
                                     }
                                 }
                             }
@@ -502,33 +587,42 @@ export function extractAdvancedCharCount(
 
                             if (cachedIsVertical) {
                                 if (cachedIsPaginated) {
-                                    sExp = nr.bottom <= 1;
+                                    sExp = nr.bottom <= 0.5;
                                 } else {
                                     if (cachedWritingMode === 'vertical-rl') {
-                                        sExp = nr.left >= (cachedVw + 1);
+                                        sExp = nr.left >= (cachedVw + 0.5);
                                     } else {
-                                        sExp = nr.right <= 1;
+                                        sExp = nr.right <= 0.5;
                                     }
                                 }
                             } else {
                                 if (cachedIsPaginated) {
-                                    sExp = nr.right <= 1;
+                                    sExp = nr.right <= 0.5;
                                 } else {
-                                    sExp = nr.bottom <= 1;
+                                    sExp = nr.bottom <= 0.5;
                                 }
                             }
                         }
 
                         if (sExp) {
-                            current += countJapaneseChars(text);
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) {
+                                current += matches.length;
+                                fallbackNodeCount += matches.length;
+                            }
                         }
+                    }
+                    if (fallbackNodeCount > 0) {
+                        console.log(`[NT Extractor] Fallback text node tracker resolved additional current characters: +${fallbackNodeCount}`);
                     }
                 }
             }
         }
 
+        console.log(`[NT Extractor] [Final Progress Resolved] current: ${current}, total: ${total}, sectionIndex: ${sectionIndex}, isPaginated: ${cachedIsPaginated}`);
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
+        console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
         return null;
     }
 }
