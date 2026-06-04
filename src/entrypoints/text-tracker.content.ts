@@ -193,6 +193,7 @@ interface StateRefs {
   lastSectionIndex: number;
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
+  visitedSectionTotals: Map<number, number>;
 }
 
 const stateRefs: StateRefs = {
@@ -201,7 +202,8 @@ const stateRefs: StateRefs = {
   globalLastTick: Date.now(),
   lastSectionIndex: -1,
   lastSectionTotal: 0,
-  visitedSections: new Map<number, number>()
+  visitedSections: new Map<number, number>(),
+  visitedSectionTotals: new Map<number, number>()
 };
 
 const ttuState = new Proxy({
@@ -257,7 +259,6 @@ function updateCachedActiveTabTitle() {
       .then((response) => {
         if (response?.title) {
           cachedActiveTabTitle = response.title;
-          console.log(`[NT Tracker] [Title Sync] Received parent tab title from background: "${response.title}"`);
         }
       })
       .catch((err) => {
@@ -278,7 +279,6 @@ function getTTUTitle() {
     }
   } catch (e) {
     if (cachedActiveTabTitle) title = cachedActiveTabTitle;
-    console.warn(`[NT Tracker] [Title Extraction] Access to top window blocked or failed. Using fallback: "${title}"`);
   }
   
   const adapter = getActiveReaderAdapter();
@@ -467,11 +467,13 @@ async function saveSessionAndQueue() {
   ttuState.chars = 0;
 
   const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
-  stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
+  const isPag = currentCount !== null ? currentCount.isPaginated : false;
+  stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = -1;
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
+  stateRefs.visitedSectionTotals.clear();
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
   hasSyncedThisSession = false;
@@ -514,24 +516,22 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
  * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
  */
 function checkAndProcessSectionTransition(charData: any): boolean {
-  const { total, sectionIndex, isPaginated } = charData;
+  const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-  // Skip transition checks during loading states or on illustration-only pages to avoid temporary resets
-  if (!total || Number(total) === 0) {
-    console.log(`[NT Tracker] [Transition Guard] Skipping transition checks because total characters is 0 (loading or illustration page).`);
+  // Skip transition checks during active loading or layout-deferred states
+  if (isLayoutDeferred) {
     return false;
   }
 
-  console.log(`[NT Tracker] [State Verification] activeSection: ${activeSection}, total: ${total}, isPaginated: ${isPaginated}, lastSectionIndex: ${stateRefs.lastSectionIndex}, lastSectionTotal: ${stateRefs.lastSectionTotal}, currentOffset: ${stateRefs.globalManualCharOffset}`);
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-    console.warn(`[NT Tracker] [Mode Transition Detected] Mode changed from ${lastLoggedPaginatedMode ? 'Paginated' : 'Continuous'} to ${isPaginated ? 'Paginated' : 'Continuous'}. Resetting tracking references!`);
     stateRefs.globalSessionStartChar = -1;
     stateRefs.globalManualCharOffset = 0;
     stateRefs.lastSectionIndex = -1;
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
+    stateRefs.visitedSectionTotals.clear();
     ttuState.chars = 0;
     ttuState.timeMs = 0;
     stateRefs.globalLastTick = Date.now();
@@ -542,39 +542,54 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 
   lastLoggedPaginatedMode = isPaginated;
 
+  // Commit baseline totals for accurate dynamic summing in Paginated Mode
+  if (isPaginated && activeSection !== -1) {
+    stateRefs.visitedSectionTotals.set(activeSection, total);
+    if (stateRefs.lastSectionIndex !== -1) {
+      stateRefs.visitedSectionTotals.set(stateRefs.lastSectionIndex, stateRefs.lastSectionTotal);
+    }
+  }
+
   if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
-    console.log(`[NT Tracker] [Baseline Initialized] First valid section boundary identified: activeSection = ${activeSection}, chars on start: ${charData.current}`);
     initSessionRefs(charData.current, activeSection, total, isPaginated);
   }
 
   if (stateRefs.lastSectionIndex !== activeSection) {
-    console.log(`[NT Tracker] [Chapter Boundary Jumped] from Section ${stateRefs.lastSectionIndex} to Section ${activeSection}`);
     stabilizer.resetJitenParseFlag();
     if (activeSection === -1) {
       if (!isReadingViewActive()) {
         stateRefs.lastSectionIndex = -1;
         stateRefs.globalManualCharOffset = 0;
         stateRefs.visitedSections.clear();
+        stateRefs.visitedSectionTotals.clear();
       }
     } else {
-      if (activeSection > stateRefs.lastSectionIndex) {
-        if (stateRefs.visitedSections.has(activeSection)) {
-          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-          console.log(`[NT Tracker] [Forward Transition] Restored cached manual offset for Section ${activeSection}: ${stateRefs.globalManualCharOffset}`);
-        } else {
-          // Commit current section total before jumping to ensure mathematical precision
-          stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
-          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-          console.log(`[NT Tracker] [Forward Transition] Section ${activeSection} unvisited. Accumulated manual offset: ${stateRefs.globalManualCharOffset} (+${stateRefs.lastSectionTotal} characters from previous Section)`);
+      if (isPaginated) {
+        // Robust dynamic offset summing to prevent timing issues during fast turns and backtracks
+        let computedOffset = 0;
+        for (const [secIdx, secTotal] of stateRefs.visitedSectionTotals.entries()) {
+          if (secIdx < activeSection) {
+            computedOffset += secTotal;
+          }
         }
+        stateRefs.globalManualCharOffset = computedOffset;
       } else {
-        if (stateRefs.visitedSections.has(activeSection)) {
-          stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
-          console.log(`[NT Tracker] [Backward Transition] Restored cached manual offset for Section ${activeSection}: ${stateRefs.globalManualCharOffset}`);
+        // RETAIN THE ORIGINAL CONTINUOUS MODE OFFSET MECHANISM UNCHANGED
+        if (activeSection > stateRefs.lastSectionIndex) {
+          if (stateRefs.visitedSections.has(activeSection)) {
+            stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+          } else {
+            // Commit current section total before jumping to ensure mathematical precision
+            stateRefs.globalManualCharOffset += stateRefs.lastSectionTotal;
+            stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+          }
         } else {
-          stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
-          stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
-          console.log(`[NT Tracker] [Backward Transition] Section ${activeSection} unvisited. Reduced manual offset: ${stateRefs.globalManualCharOffset} (-${total} characters of current Section)`);
+          if (stateRefs.visitedSections.has(activeSection)) {
+            stateRefs.globalManualCharOffset = stateRefs.visitedSections.get(activeSection) || 0;
+          } else {
+            stateRefs.globalManualCharOffset = Math.max(0, stateRefs.globalManualCharOffset - total);
+            stateRefs.visitedSections.set(activeSection, stateRefs.globalManualCharOffset);
+          }
         }
       }
       if (isPaginated) stateRefs.globalSessionStartChar = 0;
@@ -582,33 +597,38 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       stateRefs.lastSectionIndex = activeSection;
       stateRefs.lastSectionTotal = total;
 
+      _transitionGraceUntil = Date.now() + 400;
+
       if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
       else stabilizer.runGracePeriodIfJiten();
     }
     return true;
   } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
     if (total > stateRefs.lastSectionTotal) {
-      console.log(`[NT Tracker] [Dynamic Section Reflow] Updating total character baseline for Section ${activeSection} from ${stateRefs.lastSectionTotal} to ${total}`);
       stateRefs.lastSectionTotal = total;
+      if (isPaginated) {
+        stateRefs.visitedSectionTotals.set(activeSection, total);
+      }
     }
   }
   return false;
 }
 
-function recalculateChars() {
+function recalculateChars(force = false) {
   // Guard clause to block execution on inactive frames (such as Yomiyasu's parent document)
   if (!document.getElementById('nt-ttu-chrono-wrapper')) {
-    console.log(`[NT Tracker] [Frame Guard] Skipping recalculateChars on inactive frame (no chrono wrapper found).`);
     return;
   }
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
   const now = Date.now();
-  if (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS) {
+  if (!force && (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS)) {
     if (scrollTimeout) clearTimeout(scrollTimeout);
     scrollTimeout = setTimeout(() => { recalculateChars(); }, RECALCULATE_THROTTLE_MS);
     return;
   }
-  _lastRecalculateTime = now;
+  if (!force) {
+    _lastRecalculateTime = now;
+  }
 
   if (!isReadingViewActive()) {
     ttuState.running = false;
@@ -624,24 +644,21 @@ function recalculateChars() {
 
     const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
-      stateRefs.globalSessionStartChar = current;
-      console.log(`[NT Tracker] [Recalculate] Session starting baseline dynamically set to current position count: ${current}`);
+      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
     }
     if (Date.now() < _transitionGraceUntil) {
-      stateRefs.globalSessionStartChar = current;
-      return;
+      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
+      if (!charData.isPaginated) return;
     }
 
-    // If we are on an illustration or loading page (total === 0), preserve and display 
+    // If we are on an illustration or loading page (total === 0) or layout is deferred, preserve and display 
     // the sum of all fully read chapters including the last section's total chars.
-    if (!charData.total || Number(charData.total) === 0) {
+    if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
       ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
-      console.log(`[NT Tracker] [Preserved Offset on Empty/Illustration] chars = ${ttuState.chars} (manualOffset = ${stateRefs.globalManualCharOffset}, lastSectionTotal = ${stateRefs.lastSectionTotal})`);
     } else {
       let diff = current - stateRefs.globalSessionStartChar;
       if (diff < 0) diff = 0;
       ttuState.chars = diff + stateRefs.globalManualCharOffset;
-      console.log(`[NT Tracker] [Calculated Characters] chars = ${ttuState.chars} (diff = ${diff}, manualOffset = ${stateRefs.globalManualCharOffset}, currentCount = ${current}, startBaseline = ${stateRefs.globalSessionStartChar})`);
     }
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -887,16 +904,28 @@ async function setupTTUChronometer() {
         if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
-            const { current } = charData;
+            const { current, total, isLayoutDeferred, isPaginated } = charData;
             if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = current;
+              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
             }
             if (now >= _transitionGraceUntil) {
-              let diff = current - stateRefs.globalSessionStartChar;
-              if (diff < 0) diff = 0;
-              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              if (isLayoutDeferred || !total || Number(total) === 0) {
+                ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+              } else {
+                let diff = current - stateRefs.globalSessionStartChar;
+                if (diff < 0) diff = 0;
+                ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              }
             } else {
-              stateRefs.globalSessionStartChar = current;
+              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+              if (isPaginated) {
+                // Compute and update chars immediately even during grace period in paginated mode!
+                if (isLayoutDeferred || !total || Number(total) === 0) {
+                  ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+                } else {
+                  ttuState.chars = current + stateRefs.globalManualCharOffset;
+                }
+              }
             }
           }
         }
@@ -937,13 +966,13 @@ if (isRelevantFrame) {
   window.addEventListener('click', () => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
-      setTimeout(recalculateChars, 40);
+      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on click!
     }
   }, { passive: true });
   window.addEventListener('keyup', (e) => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
-      setTimeout(recalculateChars, 40);
+      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on page flip key!
     }
   }, { passive: true });
 
@@ -990,6 +1019,10 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.lastSectionTotal = total;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSections.set(activeSection, 0);
+  stateRefs.visitedSectionTotals.clear();
+  if (isPaginated) {
+    stateRefs.visitedSectionTotals.set(activeSection, total);
+  }
 }
 
 function isChapterLoading(): boolean {
@@ -1209,11 +1242,13 @@ function handleMutations() {
     ttuState.running = false;
 
     const currentCount = extractAdvancedCharCount(undefined, true);
-    stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
+    const isPag = currentCount !== null ? currentCount.isPaginated : false;
+    stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
     stateRefs.globalManualCharOffset = 0;
     stateRefs.lastSectionIndex = -1;
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
+    stateRefs.visitedSectionTotals.clear();
     stateRefs.globalLastTick = Date.now();
     hasSyncedThisSession = false;
 
@@ -1269,11 +1304,9 @@ function handleMutations() {
     if (charData !== null) {
       const didTransition = checkAndProcessSectionTransition(charData);
       if (didTransition) {
-          recalculateChars();
+          recalculateChars(true); // Force immediate synchronously drawn update bypassing throttle
       }
     }
-  } else {
-    console.log(`[NT Tracker] [Frame Guard] Skipping section transition check on inactive frame (no chrono wrapper found).`);
   }
 
   if (!adapter) {
@@ -1457,7 +1490,8 @@ export default defineContentScript({
             ttuState.chars = 0;
             stateRefs.globalLastTick = Date.now();
             const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+            const isPag = initCount !== null ? initCount.isPaginated : false;
+            stateRefs.globalSessionStartChar = isPag ? 0 : (initCount !== null ? initCount.current : -1);
             stateRefs.globalManualCharOffset = 0;
 
             const timeVal = document.querySelector('#nt-ttu-val-time');

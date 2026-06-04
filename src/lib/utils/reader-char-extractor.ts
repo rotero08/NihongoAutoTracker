@@ -9,8 +9,7 @@ export interface AdvancedCharData {
     total: number;
     sectionIndex: number | null;
     isPaginated: boolean;
-
-
+    isLayoutDeferred?: boolean;
 }
 
 // Module-level caches to optimize execution overhead
@@ -26,7 +25,7 @@ const seenSectionKeys = new Map<string, number>();
 let cachedIsVertical = false;
 let cachedIsPaginated = false;
 let cachedWritingMode = '';
-let lastContainer: Element | null = null;
+let lastContainer = null as Element | null;
 let lastContainerId = '';
 let isCacheValid = false;
 
@@ -55,41 +54,6 @@ if (typeof window !== 'undefined') {
  * Robust regular expression that captures letters/numbers and placeholder symbols.
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
@@ -132,7 +96,6 @@ function getSectionIndex(container: Element): number | null {
     if (containers.length > 1) {
         const idx = containers.indexOf(container);
         if (idx !== -1) {
-            console.log(`[NT Extractor] getSectionIndex matched DOM array order: index = ${idx}`);
             return idx;
         }
     }
@@ -142,7 +105,6 @@ function getSectionIndex(container: Element): number | null {
         const paragraphMatch = id.match(/paragraph-(\d+)/i) || id.match(/p-(\d+)/i);
         if (paragraphMatch) {
             const parsed = parseInt(paragraphMatch[1], 10);
-            console.log(`[NT Extractor] getSectionIndex parsed paragraph ID: ${parsed}`);
             return parsed;
         }
 
@@ -150,21 +112,18 @@ function getSectionIndex(container: Element): number | null {
         const ttuIdMatch = id.match(/ttu-id-(?:chapter-)?(\d+)/i);
         if (ttuIdMatch) {
             const parsed = parseInt(ttuIdMatch[1], 10);
-            console.log(`[NT Extractor] getSectionIndex parsed ttu-id ID: ${parsed}`);
             return parsed;
         }
 
         const trailingMatch = id.match(/(\d+)$/);
         if (trailingMatch) {
             const parsed = parseInt(trailingMatch[1], 10);
-            console.log(`[NT Extractor] getSectionIndex parsed trailing match: ${parsed}`);
             return parsed;
         }
 
         const fallbackMatch = id.match(/\d+/);
         if (fallbackMatch) {
             const parsed = parseInt(fallbackMatch[0], 10);
-            console.log(`[NT Extractor] getSectionIndex parsed fallback match: ${parsed}`);
             return parsed;
         }
     }
@@ -192,14 +151,11 @@ function getSectionIndex(container: Element): number | null {
         if (!seenSectionKeys.has(chapterKey)) {
             const nextVal = seenSectionKeys.size;
             seenSectionKeys.set(chapterKey, nextVal);
-            console.log(`[NT Extractor] SPA Fallback: Mapped new chapter key to sequential index ${nextVal}: "${chapterKey}"`);
         }
         const idx = seenSectionKeys.get(chapterKey) ?? 0;
-        console.log(`[NT Extractor] SPA Fallback: Resolved index ${idx} for "${chapterKey}"`);
         return idx;
     }
 
-    console.log(`[NT Extractor] getSectionIndex defaulted to 0`);
     return 0;
 }
 
@@ -320,12 +276,8 @@ export function extractAdvancedCharCount(
         const activeContainer = readerContainer.querySelector('.book-content-container') || readerContainer;
         const currentContainerId = activeContainer.id || '';
 
-        console.log(`[NT Extractor] [Run] context: ${window.self === window.top ? 'TOP_FRAME' : 'IFRAME'}, containerSelector: "${containerSelector}"`);
-        console.log(`[NT Extractor] [Elements Found] readerContainer: ${readerContainer ? readerContainer.tagName + '.' + readerContainer.className : 'NULL'}, activeContainer: ${activeContainer ? activeContainer.tagName + '.' + activeContainer.className : 'NULL'}, ID: "${currentContainerId}"`);
-
         // Check if the container reference or its ID changed to trigger a cache refresh
         if (readerContainer !== lastContainer || currentContainerId !== lastContainerId) {
-            console.log(`[NT Extractor] [Cache Invalidation] Container changed. lastContainer: ${lastContainer ? lastContainer.className : 'none'} -> ${readerContainer.className}, lastId: "${lastContainerId}" -> "${currentContainerId}"`);
             lastContainer = readerContainer;
             lastContainerId = currentContainerId;
             isCacheValid = false;
@@ -352,8 +304,6 @@ export function extractAdvancedCharCount(
                 !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
                 ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
                     (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
-            
-            console.log(`[NT Extractor] [Cache Rebuild Styles] writingMode: "${cachedWritingMode}", cachedIsVertical: ${cachedIsVertical}, colWidth: "${colWidth}", colCount: "${colCount}", cachedIsPaginated: ${cachedIsPaginated}`);
         }
 
         // 2. Query Text-bearing Nodes
@@ -363,38 +313,26 @@ export function extractAdvancedCharCount(
                 if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
                 return (el.textContent || '').trim().length > 0;
             }) as Element[];
-            console.log(`[NT Extractor] [Cache Rebuild Nodes] Re-queried text tags. Count: ${pTags.length}`);
         }
 
         const sectionIndex = getSectionIndex(activeContainer);
         lastCachedSectionIndex = sectionIndex;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         if (pTags.length === 0) {
             lastCachedTotal = 0;
-            console.warn(`[NT Extractor] No text paragraph tags found in current container! returning empty baseline progress.`);
-            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
+
+            // Differentiate temporary loading unmounts from permanent cover/illustration pages
+            const hasImages = !!readerContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
+            const isDeferred = !hasImages;
+
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: isDeferred };
         }
 
         // Layout Stability Guard: If layout is not loaded, defer transition processing
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            console.log(`[NT Extractor] Layout first paragraph rect width & height are 0. Deferring layout calculations.`);
-            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: true };
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
@@ -423,7 +361,6 @@ export function extractAdvancedCharCount(
                 ttuCachedAccumulated[i] = acc;
             }
             isCacheValid = true;
-            console.log(`[NT Extractor] [Cache Build Complete] Total Chapter Chars Summed: ${acc}`);
         }
 
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
@@ -468,7 +405,6 @@ export function extractAdvancedCharCount(
         }
 
         let current = lastIdx >= 0 ? ttuCachedAccumulated[lastIdx] : 0;
-        console.log(`[NT Extractor] [Search Progress] Binary check matched last fully explored paragraph index: ${lastIdx} / ${pTags.length - 1}, base char accumulation: ${current}`);
 
         // 5. High-Precision Localized Sub-Paragraph Progress Tracker
         const currentIdx = lastIdx + 1;
@@ -496,13 +432,11 @@ export function extractAdvancedCharCount(
                 }
             }
 
-            console.log(`[NT Extractor] [Sub-Paragraph Tracker] Checking index ${currentIdx}. Rect: {top: ${r.top}, bottom: ${r.bottom}, left: ${r.left}, right: ${r.right}}, needsSubParagraphTracking: ${needsSubParagraphTracking}`);
 
             if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
                 if (spans.length > 0) {
-                    console.log(`[NT Extractor] [Sub-Paragraph Spans] Tracking highlighted line nodes, count: ${spans.length}`);
                     spans.forEach(s => {
                         if (shouldIgnoreNode(s)) return;
 
@@ -530,7 +464,6 @@ export function extractAdvancedCharCount(
                             const m = s.textContent?.match(JP_CHAR_PATTERN);
                             if (m) {
                                 current += m.length;
-                                console.log(`[NT Extractor] Span matched. Counted characters: +${m.length}`);
                             }
                         }
                     });
@@ -544,7 +477,6 @@ export function extractAdvancedCharCount(
                     }
 
                     // Node limit removed to ensure 100% accuracy on extremely long web novel paragraphs
-                    let fallbackNodeCount = 0;
                     while ((n = walker.nextNode())) {
                         const parent = n.parentElement;
                         if (!parent || shouldIgnoreNode(parent)) {
@@ -608,18 +540,13 @@ export function extractAdvancedCharCount(
                             const matches = text.match(JP_CHAR_PATTERN);
                             if (matches) {
                                 current += matches.length;
-                                fallbackNodeCount += matches.length;
                             }
                         }
-                    }
-                    if (fallbackNodeCount > 0) {
-                        console.log(`[NT Extractor] Fallback text node tracker resolved additional current characters: +${fallbackNodeCount}`);
                     }
                 }
             }
         }
 
-        console.log(`[NT Extractor] [Final Progress Resolved] current: ${current}, total: ${total}, sectionIndex: ${sectionIndex}, isPaginated: ${cachedIsPaginated}`);
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
         console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
