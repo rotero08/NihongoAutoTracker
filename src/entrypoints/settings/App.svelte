@@ -1,4 +1,3 @@
-<!-- Settings/App.svelte -->
 <script lang="ts">
   /**
    * ── Settings App.svelte ─────────────────────────────────────────────────────
@@ -267,55 +266,53 @@
     };
   });
 
-  // Safe DOM synchronization observer matching sidebar assets
+  // Safe DOM synchronization observer matching sidebar assets.
+  // Using activeTab and username dependencies ensures sync runs precisely when needed.
   $effect(() => {
-    if (typeof document === "undefined") return; // Fixed conditional SSR guard
+    if (typeof document === "undefined") return;
+    
+    // Explicitly reference reactive dependencies so effect triggers when they modify
+    const _ = activeTab;
+    const currentUsername = username;
 
-    const syncSidebar = () => {
-      // 1. Inject username below brand title with targeted querying
-      const brandEl = document.querySelector('.sidebar .brand-name, .brand-text .brand-name, h2');
-      if (brandEl && brandEl.parentElement) {
-        if (!brandEl.parentElement.querySelector('.injected-username') && username) {
-          const userDiv = document.createElement('div');
+    // 1. Inject username below brand title
+    const brandEl = document.querySelector('.sidebar .brand-name, .brand-text .brand-name, h2');
+    if (brandEl && brandEl.parentElement) {
+      let userDiv = brandEl.parentElement.querySelector('.injected-username');
+      if (currentUsername) {
+        if (!userDiv) {
+          userDiv = document.createElement('div');
           userDiv.className = 'injected-username font-mono';
-          userDiv.textContent = `@${username}`;
           userDiv.setAttribute('style', 'font-size: 10px; color: var(--color-text-muted); font-weight: normal; margin-top: 1px; margin-bottom: 4px; opacity: 0.85;');
           brandEl.insertAdjacentElement('afterend', userDiv);
         }
+        userDiv.textContent = `@${currentUsername}`;
+      } else if (userDiv) {
+        userDiv.remove();
       }
-
-      // 2. Override dashboard icon in the sidebar safely to match popup's dashboard icon
-      const sidebarButtons = document.querySelectorAll('button, a, .sidebar-item');
-      sidebarButtons.forEach(btn => {
-        const txt = btn.textContent?.trim().toLowerCase();
-        if (txt === 'dashboard') {
-          const svg = btn.querySelector('svg');
-          if (svg && !svg.classList.contains('dash-synced')) {
-            svg.classList.add('dash-synced');
-            svg.setAttribute('viewBox', '0 0 24 24');
-            svg.setAttribute('fill', 'none');
-            svg.setAttribute('stroke', 'currentColor');
-            svg.removeAttribute('width');
-            svg.removeAttribute('height');
-            svg.innerHTML = `
-              <line x1="18" y1="20" x2="18" y2="10" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <line x1="12" y1="20" x2="12" y2="4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <line x1="6" y1="20" x2="6" y2="14" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-            `;
-          }
-        }
-      });
-    };
-
-    syncSidebar();
-    const observer = new MutationObserver(syncSidebar);
-    const container = document.querySelector('.shell');
-    if (container) {
-      observer.observe(container, { childList: true, subtree: true });
     }
-    return () => {
-      observer.disconnect();
-    };
+
+    // 2. Override dashboard icon in the sidebar safely to match popup's dashboard icon
+    const sidebarButtons = document.querySelectorAll('button, a, .sidebar-item');
+    sidebarButtons.forEach(btn => {
+      const txt = btn.textContent?.trim().toLowerCase();
+      if (txt === 'dashboard') {
+        const svg = btn.querySelector('svg');
+        if (svg && !svg.classList.contains('dash-synced')) {
+          svg.classList.add('dash-synced');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('fill', 'none');
+          svg.setAttribute('stroke', 'currentColor');
+          svg.removeAttribute('width');
+          svg.removeAttribute('height');
+          svg.innerHTML = `
+            <line x1="18" y1="20" x2="18" y2="10" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="20" x2="12" y2="4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="6" y1="20" x2="6" y2="14" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          `;
+        }
+      }
+    });
   });
 </script>
 

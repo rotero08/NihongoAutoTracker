@@ -37,6 +37,15 @@ export interface PopupStatsSummary {
   longestStreak: number;
 }
 
+export interface CompiledBaseLogs {
+  logsByDayKey: Map<string, any[]>;
+  logsByMonthKey: Map<number, any[]>;
+  todayMins: number;
+  weekMins: number;
+  monthMins: number;
+  totals: any;
+}
+
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // Persistent module-level cache to eliminate repetitive Date-parsing allocations across renders
@@ -57,13 +66,13 @@ export function isReadingType(type?: string): boolean {
   return t === 'reading' || t === 'manga' || t === 'vn' || t === 'book';
 }
 
-function formatMinutesToHoursStr(minutes: number): string {
+export function formatMinutesToHoursStr(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);
   return `${h}:${String(m).padStart(2, '0')}`;
 }
 
-function formatHoursToHMM(totalHours: number): string {
+export function formatHoursToHMM(totalHours: number): string {
   const h = Math.floor(totalHours);
   const m = Math.round((totalHours - h) * 60);
   return `${h}:${String(m).padStart(2, '0')}`;
@@ -93,7 +102,10 @@ export function parsePopupSummary(stats: any): PopupStatsSummary {
 
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d.setDate(diff));
+  
+  // Safe calculation to avoid mutating 'd' in place
+  const monday = new Date(d);
+  monday.setDate(diff);
   monday.setHours(0, 0, 0, 0);
   const startOfWeekTime = monday.getTime();
 
@@ -127,47 +139,26 @@ export function parsePopupSummary(stats: any): PopupStatsSummary {
 }
 
 /**
- * Advanced full analytics compiler for options dashboard representations.
+ * Single-Pass core data compiler compiling and structuring raw tracking data.
  */
-export function parseStats(stats: any, heatmapYear?: number, overviewYear?: number): ParsedStats {
-  const defaultRes: ParsedStats = {
-    todayHours: 0,
-    weekHours: 0,
-    monthHours: 0,
-    allTimeHours: 0,
-    todayHoursStr: "0:00",
-    weekHoursStr: "0:00",
-    monthHoursStr: "0:00",
-    allTimeHoursStr: "0:00",
-    currentStreak: 0,
-    longestStreak: 0,
-    userLevel: 14,
-    userXp: 0,
-    xpToNextLevel: 281449,
-    xpToCurrentLevel: 276059,
-    xpPercent: 68,
-    readingHours: 0,
-    listeningHours: 0,
-    totalChars: 0,
-    readingSpeed: 0,
-    heatmapCells: [],
-    recent7Days: { labels: [], listeningPcts: [], readingPcts: [], listeningMins: [], readingMins: [] },
-    monthlyOverview: []
-  };
-
-  if (!stats) return defaultRes;
-
-  const totals = stats.totals || {};
-  const statsByType = stats.statsByType || [];
-
+export function compileBaseLogs(stats: any, targetOverviewYear: number): CompiledBaseLogs {
   const logsByDayKey = new Map<string, any[]>();
   const logsByMonthKey = new Map<number, any[]>();
+  
+  if (!stats) {
+    return {
+      logsByDayKey,
+      logsByMonthKey,
+      todayMins: 0,
+      weekMins: 0,
+      monthMins: 0,
+      totals: {}
+    };
+  }
 
+  const statsByType = stats.statsByType || [];
   const d = new Date();
   const currentYear = d.getFullYear();
-  const targetHeatmapYear = heatmapYear ?? currentYear;
-  const targetOverviewYear = overviewYear ?? currentYear;
-  
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const r = String(d.getDate()).padStart(2, '0');
   const todayKey = `${currentYear}-${m}-${r}`;
@@ -175,7 +166,10 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
 
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d.setDate(diff));
+  
+  // Safe calculation avoiding mutation of 'd'
+  const monday = new Date(d);
+  monday.setDate(diff);
   monday.setHours(0, 0, 0, 0);
   const startOfWeekTime = monday.getTime();
 
@@ -183,7 +177,6 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
   let weekMins = 0;
   let monthMins = 0;
 
-  // Single-Pass inline compilation (completely removed unused allDates allocations)
   for (let i = 0, typeLen = statsByType.length; i < typeLen; i++) {
     const typeObj = statsByType[i];
     const type = typeObj.type;
@@ -191,8 +184,6 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
     
     for (let j = 0, dateLen = dates.length; j < dateLen; j++) {
       const dObj = dates[j];
-      
-      // Shallow copy protects against read-only storage objects
       const item = { ...dObj, type };
 
       const key = dObj.localDate?.dayKey;
@@ -232,53 +223,27 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
     }
   }
 
-  const allTimeHours = totals.totalTimeHours || 0;
-  const readingHours = totals.readingHours || 0;
-  const listeningHours = totals.listeningHours || 0;
-  const totalChars = totals.totalChars || 0;
-  const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
-
-  const currentStreak = stats.streaks?.currentStreak ?? 0;
-  const longestStreak = stats.streaks?.longestStreak ?? 0;
-
-  const heatmapCells = generateHeatmapCells(targetHeatmapYear, logsByDayKey);
-  const recent7Days = getRecent7DaysData(logsByDayKey);
-  const monthlyOverview = getMonthlyOverviewData(targetOverviewYear, logsByMonthKey);
-
   return {
-    todayHours: todayMins / 60,
-    weekHours: weekMins / 60,
-    monthHours: monthMins / 60,
-    allTimeHours,
-    todayHoursStr: formatMinutesToHoursStr(todayMins),
-    weekHoursStr: formatMinutesToHoursStr(weekMins),
-    monthHoursStr: formatMinutesToHoursStr(monthMins),
-    allTimeHoursStr: formatHoursToHMM(allTimeHours),
-    currentStreak,
-    longestStreak,
-    userLevel: 14,
-    userXp: totals.totalXp || 278050,
-    xpToNextLevel: 281449,
-    xpToCurrentLevel: 276059,
-    xpPercent: 68,
-    readingHours,
-    listeningHours,
-    totalChars,
-    readingSpeed,
-    heatmapCells,
-    recent7Days,
-    monthlyOverview
+    logsByDayKey,
+    logsByMonthKey,
+    todayMins,
+    weekMins,
+    monthMins,
+    totals: stats.totals || {}
   };
 }
 
-function generateHeatmapCells(year: number, logsByDayKey: Map<string, any[]>) {
+/**
+ * Independent generator compiling heatmap coordinate cells.
+ */
+export function generateHeatmapCells(year: number, logsByDayKey: Map<string, any[]>) {
   const jan1 = new Date(year, 0, 1);
   const startDay = jan1.getDay();
   const startDate = new Date(jan1);
   startDate.setDate(jan1.getDate() - startDay);
 
   const cells = [];
-  const runnerDate = new Date(startDate); // Single mutable date pointer to reduce GC allocations
+  const runnerDate = new Date(startDate);
 
   for (let i = 0; i < 371; i++) {
     if (i > 0) {
@@ -310,7 +275,7 @@ function generateHeatmapCells(year: number, logsByDayKey: Map<string, any[]>) {
     const tooltipText = `${formattedDate}: ${logCount} log${logCount === 1 ? '' : 's'} (${totalTime} min${totalTime === 1 ? '' : 's'})`;
 
     cells.push({
-      date: new Date(runnerDate), // Instantiated only once per array index
+      date: new Date(runnerDate),
       dayKey,
       level,
       logCount,
@@ -322,22 +287,26 @@ function generateHeatmapCells(year: number, logsByDayKey: Map<string, any[]>) {
   return cells;
 }
 
-function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
+/**
+ * Independent metrics tracking parser compiling the recent 7 days chart values.
+ */
+export function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
   const labels: string[] = [];
   const keys: string[] = [];
+  const runner = new Date();
+  const nowMs = Date.now();
 
   for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const r = String(d.getDate()).padStart(2, '0');
+    runner.setTime(nowMs - i * 24 * 60 * 60 * 1000);
+    const y = runner.getFullYear();
+    const m = String(runner.getMonth() + 1).padStart(2, '0');
+    const r = String(runner.getDate()).padStart(2, '0');
     keys.push(`${y}-${m}-${r}`);
 
     if (i === 0) {
       labels.push("Today");
     } else {
-      labels.push(d.toLocaleString('en-US', { weekday: 'short' }));
+      labels.push(runner.toLocaleString('en-US', { weekday: 'short' }));
     }
   }
 
@@ -382,7 +351,10 @@ function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
   };
 }
 
-function getMonthlyOverviewData(year: number, logsByMonth: Map<number, any[]>) {
+/**
+ * Independent compiler creating the chronological monthly summary grid lists.
+ */
+export function getMonthlyOverviewData(year: number, logsByMonth: Map<number, any[]>) {
   const monthsData = [];
 
   for (let m = 0; m < 12; m++) {
@@ -427,65 +399,70 @@ function getMonthlyOverviewData(year: number, logsByMonth: Map<number, any[]>) {
   return monthsData;
 }
 
-/* ── Verification Helpers ── */
-import { storage } from 'wxt/utils/storage';
-
-export async function verifyApiKey(key: string): Promise<{ success: boolean; username?: string; error?: string; stats?: any }> {
-  try {
-    const response = await fetch('https://nihongotracker.app/api/auth/verify', {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'X-API-Key': key,
-      },
-    });
-    if (response.ok) {
-      const data = await response.json();
-      if (data.valid && data.user) {
-        return {
-          success: true,
-          username: data.user.username,
-          stats: data.user.stats,
-        };
-      }
-    }
-    return { success: false, error: 'Invalid API Key' };
-  } catch (err: any) {
-    return { success: false, error: err.message };
-  }
-}
-
-export async function fetchUserStats(username: string): Promise<any> {
-  const url = `https://nihongotracker.app/api/users/${encodeURIComponent(username)}/stats`;
-  const response = await fetch(url, {
-    headers: { 'Accept': 'application/json' },
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch stats: ${response.statusText}`);
-  }
-  return await response.json();
-}
-
 /**
- * Cohesive, fetch-and-cache coordinator enforcing standard cache timeout boundaries (5-minute TTL).
- * Prevents redundant server queries across separate options tabs and the popup.
+ * Advanced full analytics compiler for options dashboard representations.
  */
-export async function fetchAndCacheUserStats(username: string, force = false): Promise<any> {
-  try {
-    const FETCH_COOLDOWN = 5 * 60 * 1000;
-    const lastFetched = await storage.getItem<number>('local:userStatsLastFetched') || 0;
-    
-    if (force || (Date.now() - lastFetched > FETCH_COOLDOWN)) {
-      const stats = await fetchUserStats(username);
-      await Promise.all([
-        storage.setItem('local:userStats', stats),
-        storage.setItem('local:userStatsLastFetched', Date.now())
-      ]);
-      return stats;
-    }
-    return await storage.getItem('local:userStats');
-  } catch (err) {
-    console.error('Failed to fetch and cache user stats:', err);
-    return await storage.getItem('local:userStats');
-  }
+export function parseStats(stats: any, heatmapYear?: number, overviewYear?: number): ParsedStats {
+  const defaultRes: ParsedStats = {
+    todayHours: 0,
+    weekHours: 0,
+    monthHours: 0,
+    allTimeHours: 0,
+    todayHoursStr: "0:00",
+    weekHoursStr: "0:00",
+    monthHoursStr: "0:00",
+    allTimeHoursStr: "0:00",
+    currentStreak: 0,
+    longestStreak: 0,
+    userLevel: 14,
+    userXp: 0,
+    xpToNextLevel: 281449,
+    xpToCurrentLevel: 276059,
+    xpPercent: 68,
+    readingHours: 0,
+    listeningHours: 0,
+    totalChars: 0,
+    readingSpeed: 0,
+    heatmapCells: [],
+    recent7Days: { labels: [], listeningPcts: [], readingPcts: [], listeningMins: [], readingMins: [] },
+    monthlyOverview: []
+  };
+
+  if (!stats) return defaultRes;
+
+  const currentYear = new Date().getFullYear();
+  const targetHeatmapYear = heatmapYear ?? currentYear;
+  const targetOverviewYear = overviewYear ?? currentYear;
+
+  const base = compileBaseLogs(stats, targetOverviewYear);
+  const allTimeHours = base.totals.totalTimeHours || 0;
+  const readingHours = base.totals.readingHours || 0;
+  const listeningHours = base.totals.listeningHours || 0;
+  const totalChars = base.totals.totalChars || 0;
+  const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
+
+  return {
+    todayHours: base.todayMins / 60,
+    weekHours: base.weekMins / 60,
+    monthHours: base.monthMins / 60,
+    allTimeHours,
+    todayHoursStr: formatMinutesToHoursStr(base.todayMins),
+    weekHoursStr: formatMinutesToHoursStr(base.weekMins),
+    monthHoursStr: formatMinutesToHoursStr(base.monthMins),
+    allTimeHoursStr: formatHoursToHMM(allTimeHours),
+    currentStreak: stats.streaks?.currentStreak ?? 0,
+    longestStreak: stats.streaks?.longestStreak ?? 0,
+    userLevel: 14,
+    userXp: base.totals.totalXp || 278050,
+    xpToNextLevel: 281449,
+    xpToCurrentLevel: 276059,
+    xpPercent: 68,
+    readingHours,
+    listeningHours,
+    totalChars,
+    readingSpeed,
+    heatmapCells: generateHeatmapCells(targetHeatmapYear, base.logsByDayKey),
+    recent7Days: getRecent7DaysData(base.logsByDayKey),
+    monthlyOverview: getMonthlyOverviewData(targetOverviewYear, base.logsByMonthKey)
+  };
 }

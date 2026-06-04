@@ -15,17 +15,11 @@
   let statsData = $state<any>(null);
   let parsed = $derived(parsePopupSummary(statsData));
 
-  // Safe reactive synchronization using Svelte 5 .pre boundary constraints
-  // svelte-ignore state_referenced_locally
-  let lastHasQueueItems = $state(hasQueueItems);
-  // svelte-ignore state_referenced_locally
-  let expanded = $state(!hasQueueItems);
+  let expanded = $state(false);
 
-  $effect.pre(() => {
-    if (hasQueueItems !== lastHasQueueItems) {
-      lastHasQueueItems = hasQueueItems;
-      expanded = !hasQueueItems;
-    }
+  // Clean, warning-free state coordination when the queue changes
+  $effect(() => {
+    expanded = !hasQueueItems;
   });
 
   async function loadStats() {

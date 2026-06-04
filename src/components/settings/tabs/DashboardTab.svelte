@@ -2,7 +2,14 @@
   import { onMount } from "svelte";
   import { storage } from "wxt/utils/storage";
   import { configStorage } from "@/lib/storage/config";
-  import { parseStats } from "@/lib/utils/stats-parser";
+  import { 
+    compileBaseLogs, 
+    generateHeatmapCells, 
+    getRecent7DaysData, 
+    getMonthlyOverviewData,
+    formatMinutesToHoursStr,
+    formatHoursToHMM 
+  } from "@/lib/utils/stats-parser";
   import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
 
   interface Props {
@@ -12,18 +19,6 @@
   let { onStatus, onConfirm }: Props = $props();
 
   const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-  function formatMinutesToHoursStr(minutes: number): string {
-    const h = Math.floor(minutes / 60);
-    const m = Math.round(minutes % 60);
-    return `${h}:${String(m).padStart(2, '0')}`;
-  }
-
-  function formatHoursToHMM(totalHours: number): string {
-    const h = Math.floor(totalHours);
-    const m = Math.round((totalHours - h) * 60);
-    return `${h}:${String(m).padStart(2, '0')}`;
-  }
 
   function generatePlaceholderCells(year: number) {
     const jan1 = new Date(year, 0, 1);
@@ -65,9 +60,49 @@
   let heatmapYear = $state(2026);
   let overviewYear = $state(2026);
   let monthsExpanded = $state(false);
+  let isDragging = $state(false);
 
-  // Dynamic parameterized derivations from a single optimized parse call
-  let parsed = $derived(parseStats(statsData, heatmapYear, overviewYear));
+  // ── Highly Optimized Decoupled Reactivity Derivations ──
+  // Base single-pass calculation runs ONLY when statsData updates
+  let baseLogs = $derived(compileBaseLogs(statsData, overviewYear));
+
+  // Granular derivations isolate components; updates to one don't trigger recalculations of the other
+  let yearHeatmapCells = $derived(generateHeatmapCells(heatmapYear, baseLogs.logsByDayKey));
+  let finalHeatmapCells = $derived(
+    yearHeatmapCells.length > 0 ? yearHeatmapCells : generatePlaceholderCells(heatmapYear)
+  );
+
+  let recent7Days = $derived(getRecent7DaysData(baseLogs.logsByDayKey));
+  let finalMonthlyOverview = $derived(getMonthlyOverviewData(overviewYear, baseLogs.logsByMonthKey));
+
+  let parsed = $derived.by(() => {
+    const totals = baseLogs.totals;
+    const readingHours = totals.readingHours || 0;
+    const listeningHours = totals.listeningHours || 0;
+    const totalChars = totals.totalChars || 0;
+    const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
+    const allTimeHours = totals.totalTimeHours || 0;
+
+    return {
+      todayHours: baseLogs.todayMins / 60,
+      weekHours: baseLogs.weekMins / 60,
+      monthHours: baseLogs.monthMins / 60,
+      allTimeHours,
+      todayHoursStr: formatMinutesToHoursStr(baseLogs.todayMins),
+      weekHoursStr: formatMinutesToHoursStr(baseLogs.weekMins),
+      monthHoursStr: formatMinutesToHoursStr(baseLogs.monthMins),
+      allTimeHoursStr: formatHoursToHMM(allTimeHours),
+      currentStreak: statsData?.streaks?.currentStreak ?? 0,
+      longestStreak: statsData?.streaks?.longestStreak ?? 0,
+      userLevel: 14,
+      userXp: totals.totalXp || 278050,
+      xpPercent: 68,
+      readingHours,
+      listeningHours,
+      totalChars,
+      readingSpeed
+    };
+  });
 
   // Goal metrics computations
   let dailyGoalMinutes = $derived(config?.dailyGoalMinutes ?? 60); 
@@ -77,13 +112,7 @@
   );
   let hasDailyGoal = $derived(config?.dailyGoalMinutes !== undefined && config?.dailyGoalMinutes !== null && config?.dailyGoalMinutes > 0);
 
-  // Filtered heatmap cells
-  let yearHeatmapCells = $derived(parsed.heatmapCells);
-  let finalHeatmapCells = $derived(
-    yearHeatmapCells.length > 0 ? yearHeatmapCells : generatePlaceholderCells(heatmapYear)
-  );
-
-  // Mathematically accurate month label positions mapped to exact starting grid columns
+  // Chronologically sorted month columns bypasses redundant .sort()
   let monthLabelOffsets = $derived.by(() => {
     const offsets: { name: string; col: number }[] = [];
     const cells = finalHeatmapCells;
@@ -103,11 +132,9 @@
         });
       }
     }
-    return offsets.sort((a, b) => a.col - b.col);
+    return offsets;
   });
 
-  // Grouped monthly timelines
-  let finalMonthlyOverview = $derived(parsed.monthlyOverview);
   let displayedMonths = $derived(
     monthsExpanded ? finalMonthlyOverview : finalMonthlyOverview.slice(0, 4)
   );
@@ -128,7 +155,6 @@
 
     if (config?.username) {
       try {
-        // Shared fetch helper coordinates unified cache TTL metrics cleanly
         statsData = await fetchAndCacheUserStats(config.username);
       } catch (e) {}
     }
@@ -173,27 +199,45 @@
     });
   }
 
-  // Cached dimension coordinates block standard layout reflow loops
-  function handleMouseDown(e: MouseEvent) {
+  // High-performance unified Drag-to-pan scrolling coordinate tracker using requestAnimationFrame
+  function handleDragStart(e: MouseEvent | TouchEvent) {
     if (!heatmapContainer) return;
-    const offsetLeft = heatmapContainer.offsetLeft; // Layout constraint queried once
-    const startX = e.pageX - offsetLeft;
+    isDragging = true;
+    
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as MouseEvent).clientX;
+    const startX = clientX - heatmapContainer.offsetLeft;
     const scrollLeft = heatmapContainer.scrollLeft;
+    
+    let frameId: number;
 
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      if (!heatmapContainer) return;
-      const x = moveEvent.pageX - offsetLeft; // Cached computation avoids DOM thrashing
+    const handleDragMove = (moveEvent: MouseEvent | TouchEvent) => {
+      if (!isDragging || !heatmapContainer) return;
+      
+      const currentClientX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : (moveEvent as MouseEvent).clientX;
+      const x = currentClientX - heatmapContainer.offsetLeft;
       const walk = (x - startX) * 1.5;
-      heatmapContainer.scrollLeft = scrollLeft - walk;
+
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        if (heatmapContainer) {
+          heatmapContainer.scrollLeft = scrollLeft - walk;
+        }
+      });
     };
 
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+    const handleDragEnd = () => {
+      isDragging = false;
+      cancelAnimationFrame(frameId);
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
     };
 
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', handleDragMove, { passive: true });
+    window.addEventListener('mouseup', handleDragEnd);
+    window.addEventListener('touchmove', handleDragMove, { passive: true });
+    window.addEventListener('touchend', handleDragEnd);
   }
 </script>
 
@@ -360,10 +404,11 @@
           <div 
             class="heatmap-scroll-wrapper" 
             bind:this={heatmapContainer}
-            onmousedown={handleMouseDown}
+            onmousedown={handleDragStart}
+            ontouchstart={handleDragStart}
             role="region"
             aria-label="Immersion Heatmap Grid"
-            style="cursor: grab;"
+            style="cursor: {isDragging ? 'grabbing' : 'grab'};"
           >
             <!-- Fixed dimensions lock preserving alignment regardless of viewport bounds -->
             <div class="heatmap-content-inner">
@@ -409,13 +454,13 @@
         <h3 class="section-title">Recent 7 Days Distribution</h3>
         <div class="chart-container">
           <div class="chart-bars">
-            {#each parsed.recent7Days.labels as label, i}
+            {#each recent7Days.labels as label, i}
               <div class="bar-col">
                 <div class="stacked-bar">
                   <!-- Reading segmented layers -->
-                  <div class="bar-segment reading" style="height: {parsed.recent7Days.readingPcts[i]}%;" title="Reading: {formatMinutesToHoursStr(parsed.recent7Days.readingMins[i])}"></div>
+                  <div class="bar-segment reading" style="height: {recent7Days.readingPcts[i]}%;" title="Reading: {formatMinutesToHoursStr(recent7Days.readingMins[i])}"></div>
                   <!-- Listening segmented layers -->
-                  <div class="bar-segment listening" style="height: {parsed.recent7Days.listeningPcts[i]}%;" title="Listening: {formatMinutesToHoursStr(parsed.recent7Days.listeningMins[i])}"></div>
+                  <div class="bar-segment listening" style="height: {recent7Days.listeningPcts[i]}%;" title="Listening: {formatMinutesToHoursStr(recent7Days.listeningMins[i])}"></div>
                 </div>
                 <span class="bar-lbl font-mono">{label}</span>
               </div>
@@ -459,7 +504,7 @@
       <h3 class="section-title">Lifetime Immersion Balance</h3>
       <div class="balance-track">
         <div class="track-fill listening" style="width: {parsed.allTimeHours > 0 ? (parsed.listeningHours / parsed.allTimeHours) * 100 : 50}%;"></div>
-        <div class="track-fill reading" style="width: {parsed.readingHours / parsed.allTimeHours * 100}%;"></div>
+        <div class="track-fill reading" style="width: {parsed.allTimeHours > 0 ? (parsed.readingHours / parsed.allTimeHours) * 100 : 50}%;"></div>
       </div>
       <div class="balance-details font-mono">
         <span>Listening: {parsed.allTimeHours > 0 ? Math.round((parsed.listeningHours / parsed.allTimeHours) * 100) : 0}% ({Math.round(parsed.listeningHours)} hrs)</span>
@@ -492,7 +537,7 @@
         {#each displayedMonths as item (item.monthIndex)}
           <div class="month-timeline-row">
             <span class="month-lbl font-mono">{item.monthName}</span>
-            <span class="month-total-time font-mono" style="white-space: nowrap !important; width: 250px !important;">
+            <span class="month-total-time font-mono">
               Total: <strong>{item.totalTimeStr}</strong> ({item.listeningTimeStr} / {item.readingTimeStr}) hrs
             </span>
             <span class="month-consistency-pill font-mono">{item.activeDays} / {item.totalDays} active days</span>
@@ -763,7 +808,6 @@
   .volumes-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 166px;
     gap: 16px;
   }
 
@@ -990,6 +1034,7 @@
     width: 100%;
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
+    user-select: none;
   }
 
   .heatmap-scroll-wrapper::-webkit-scrollbar {
