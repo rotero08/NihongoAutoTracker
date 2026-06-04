@@ -64,10 +64,14 @@ const THEME_SYNC_THROTTLE_MS = 250;
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
 
+// Stabilization tick check to avoid Svelte re-rendering flashes falsely toggling sidebar states
+let _sidebarClosedTicks = 0;
+const SIDEBAR_CLOSE_REQUIRED_TICKS = 3; // Must remain closed for 3 consecutive intervals (600ms)
+
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
-const YATSU_SIDEBAR_CHECK_TTL = 1000; // Scan the deep DOM at most once every 1000ms during idle reading
+const YATSU_SIDEBAR_CHECK_TTL = 200; // Snappy settings drawer updates
 
 function invalidateYatsuSidebarCache() {
   _lastYatsuSidebarCheckTime = 0;
@@ -77,6 +81,20 @@ function invalidateYatsuSidebarCache() {
 let cachedActiveTabTitle = "";
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
+
+function dispatchLinkerRefresh() {
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  if (wrapper) {
+    wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+    // Fire on next task loop to ensure Svelte has fully batched and committed reactive changes
+    setTimeout(() => {
+      const wr = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wr) {
+        wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      }
+    }, 0);
+  }
+}
 
 const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
   const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLButtonElement;
@@ -223,26 +241,26 @@ const ttuState = new Proxy({
           liveSyncQueue(true);
         }
       }
-      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-      if (wrapper) {
-        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-      }
+      dispatchLinkerRefresh();
       return true;
     }
     if (prop === 'timeMs') {
       const numVal = Number(value) || 0;
-      if (numVal < target.timeMs || numVal === 0) {
+      const oldVal = target.timeMs;
+      target.timeMs = numVal; // Commit target immediately to prevent nested reset calls from recurring
+      
+      if (numVal === 0 && oldVal > 0) {
+        console.log(`[NT Debug] startNewSession: Layout transition triggering metric reset.`);
+        startNewSession();
+      } else if (numVal < oldVal || numVal === 0) {
         stateRefs.globalLastTick = Date.now();
       }
-      target.timeMs = numVal;
+      dispatchLinkerRefresh();
       return true;
     }
     if (prop === 'chars') {
       target.chars = Number(value) || 0;
-      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-      if (wrapper) {
-        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-      }
+      dispatchLinkerRefresh();
       return true;
     }
     (target as any)[prop] = value;
@@ -251,6 +269,35 @@ const ttuState = new Proxy({
 });
 
 let isSyncing = false;
+
+function startNewSession(isPaginated?: boolean) {
+  ttuState.id = crypto.randomUUID();
+  ttuState.timeMs = 0;
+  ttuState.chars = 0;
+  ttuState.running = false; // Always start a new session paused!
+
+  stateRefs.globalSessionStartChar = -1; // Lazy initialize on first active recalculation pass
+  stateRefs.globalManualCharOffset = 0;
+  stateRefs.lastSectionIndex = -1;
+  stateRefs.lastSectionTotal = 0;
+  stateRefs.visitedSections.clear();
+  stateRefs.visitedSectionTotals.clear();
+  stateRefs.globalLastTick = Date.now();
+
+  hasSyncedThisSession = false;
+
+  const currentCount = extractAdvancedCharCount(undefined, false);
+  if (currentCount !== null && !currentCount.isLayoutDeferred && currentCount.total > 0) {
+    const isPag = isPaginated ?? currentCount.isPaginated;
+    stateRefs.lastSectionIndex = currentCount.sectionIndex !== null ? currentCount.sectionIndex : -1;
+    stateRefs.lastSectionTotal = currentCount.total;
+    stateRefs.globalSessionStartChar = currentCount.current; // Correctly initialize the baseline to our active offset position
+    if (isPag && currentCount.sectionIndex !== null) {
+      stateRefs.visitedSectionTotals.set(currentCount.sectionIndex, currentCount.total);
+    }
+  }
+  dispatchLinkerRefresh();
+}
 
 // Query the background frame title cache asynchronously to resolve Cross-Origin DOM blocks securely
 function updateCachedActiveTabTitle() {
@@ -267,6 +314,7 @@ function updateCachedActiveTabTitle() {
   }
 }
 
+// Determine adapt-centric reader labels
 function getTTUTitle() {
   let title = document.title;
   try {
@@ -519,25 +567,19 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-  // Skip transition checks during active loading or layout-deferred states
-  if (isLayoutDeferred) {
-    return false;
-  }
-
-
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-    stateRefs.globalSessionStartChar = -1;
-    stateRefs.globalManualCharOffset = 0;
-    stateRefs.lastSectionIndex = -1;
-    stateRefs.lastSectionTotal = 0;
-    stateRefs.visitedSections.clear();
-    stateRefs.visitedSectionTotals.clear();
-    ttuState.chars = 0;
-    ttuState.timeMs = 0;
-    stateRefs.globalLastTick = Date.now();
+    // Mode changed! Start a new session, reset state, and completely pause
+    startNewSession(isPaginated);
+    ttuState.running = false;
+    _wasTimerRunningBeforeYatsuSidebar = false;
     lastLoggedPaginatedMode = isPaginated;
     if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
     return true;
+  }
+
+  // Skip transition checks during active loading or layout-deferred states
+  if (isLayoutDeferred) {
+    return false;
   }
 
   lastLoggedPaginatedMode = isPaginated;
@@ -632,8 +674,7 @@ function recalculateChars(force = false) {
 
   if (!isReadingViewActive()) {
     ttuState.running = false;
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+    dispatchLinkerRefresh();
     return;
   }
 
@@ -644,10 +685,10 @@ function recalculateChars(force = false) {
 
     const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
-      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
+      stateRefs.globalSessionStartChar = current;
     }
     if (Date.now() < _transitionGraceUntil) {
-      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
+      stateRefs.globalSessionStartChar = current;
       if (!charData.isPaginated) return;
     }
 
@@ -661,8 +702,7 @@ function recalculateChars(force = false) {
       ttuState.chars = diff + stateRefs.globalManualCharOffset;
     }
 
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+    dispatchLinkerRefresh();
   }
 }
 
@@ -731,8 +771,12 @@ function isYatsuSidebarOpen(): boolean {
     return false;
   }
 
-  // Query strictly semantic sidebar, dialog, and accessibility tags.
-  const els = document.querySelectorAll('aside, dialog, [role="dialog"], [role="menu"]');
+  // Query strictly semantic sidebar, dialog, accessibility tags, and classes/ids
+  const els = document.querySelectorAll(
+    'aside, dialog, [role="dialog"], [role="menu"], ' +
+    '[class*="sidebar"], [class*="drawer"], [class*="appearance"], [class*="settings"], [class*="panel"], div[class*="menu"], ' +
+    '[id*="sidebar"], [id*="drawer"], [id*="appearance"], [id*="settings"], [id*="panel"]'
+  );
   if (els.length === 0) {
     _cachedYatsuSidebarOpen = false;
     return false;
@@ -771,10 +815,13 @@ function isYatsuSidebarOpen(): boolean {
       continue;
     }
 
-    // 5. Read computed z-index to isolate overlays and drawers (usually z-index >= 30)
+    // 5. Read computed z-index to isolate overlays and drawers (usually z-index >= 10)
+    // Absolute / fixed elements are exempt from low z-index filtering since they might rely on DOM ordering
     const zIndexStr = style.zIndex;
     const zIndex = parseInt(zIndexStr, 10);
-    if (isNaN(zIndex) || zIndex < 30) {
+    const isPositioned = style.position === 'absolute' || style.position === 'fixed';
+    
+    if (!isPositioned && (isNaN(zIndex) || zIndex < 10)) {
       continue;
     }
 
@@ -871,14 +918,19 @@ async function setupTTUChronometer() {
       if (!isReadingViewActive()) {
         if (ttuState.running) {
           ttuState.running = false;
-          const wr = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          dispatchLinkerRefresh();
         }
         return;
       }
 
       if (window.location.hostname === 'app.yatsu.moe') {
         const sidebarOpen = isYatsuSidebarOpen();
+        if (sidebarOpen) {
+          // Force layout cache clear so any toggle instantly updates computed styles
+          clearExtractorCache();
+          _sidebarClosedTicks = 0; // Reset closed tick counter
+        }
+
         if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen) {
           _isYatsuSidebarCurrentlyOpen = true;
           if (ttuState.running) {
@@ -888,12 +940,22 @@ async function setupTTUChronometer() {
             _wasTimerRunningBeforeYatsuSidebar = false;
           }
         } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
-          _isYatsuSidebarCurrentlyOpen = false;
-          if (_wasTimerRunningBeforeYatsuSidebar) {
-            ttuState.running = true;
-            stateRefs.globalLastTick = Date.now();
+          _sidebarClosedTicks++;
+          if (_sidebarClosedTicks >= SIDEBAR_CLOSE_REQUIRED_TICKS) {
+            _isYatsuSidebarCurrentlyOpen = false;
+            _sidebarClosedTicks = 0;
+            if (_wasTimerRunningBeforeYatsuSidebar) {
+              ttuState.running = true;
+              stateRefs.globalLastTick = Date.now();
+            }
           }
         }
+      }
+
+      // Synchronously check for mode transitions on every tick (handles sidebar setting changes in real-time)
+      const activeCharData = extractAdvancedCharCount(undefined, ttuState.running);
+      if (activeCharData !== null) {
+        checkAndProcessSectionTransition(activeCharData);
       }
 
       if (ttuState.running && !stabilizer.getGracePeriodActive()) {
@@ -909,7 +971,7 @@ async function setupTTUChronometer() {
           if (charData !== null) {
             const { current, total, isLayoutDeferred, isPaginated } = charData;
             if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+              stateRefs.globalSessionStartChar = current;
             }
             if (now >= _transitionGraceUntil) {
               if (isLayoutDeferred || !total || Number(total) === 0) {
@@ -920,13 +982,13 @@ async function setupTTUChronometer() {
                 ttuState.chars = diff + stateRefs.globalManualCharOffset;
               }
             } else {
-              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+              stateRefs.globalSessionStartChar = current;
               if (isPaginated) {
                 // Compute and update chars immediately even during grace period in paginated mode!
                 if (isLayoutDeferred || !total || Number(total) === 0) {
                   ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
                 } else {
-                  ttuState.chars = current + stateRefs.globalManualCharOffset;
+                  ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
                 }
               }
             }
@@ -937,8 +999,7 @@ async function setupTTUChronometer() {
         const lastSec = Math.floor((ttuState.timeMs - elapsed) / 1000);
         const currSec = Math.floor(ttuState.timeMs / 1000);
         if (currSec !== lastSec) {
-          const wr = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          dispatchLinkerRefresh();
         }
         if (_cachedAutoSave !== false) liveSyncQueue();
       }
@@ -1016,7 +1077,7 @@ if (isRelevantFrame) {
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
-  stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+  stateRefs.globalSessionStartChar = current; // Correctly initialize the baseline to our active offset position
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
@@ -1081,6 +1142,18 @@ function setupOptimizedMutationObserver() {
       if (!target) continue;
       if (isInlineTag(target.tagName)) continue;
       if (isTargetInIgnoredContainer(target)) continue;
+
+      let hasStyleOrClassChange = false;
+      if (m.type === 'attributes' && (m.attributeName === 'class' || m.attributeName === 'style' || m.attributeName === 'data-view-mode')) {
+        hasStyleOrClassChange = true;
+      }
+
+      if (hasStyleOrClassChange) {
+        clearExtractorCache();
+        invalidateYatsuSidebarCache();
+        scheduleMutations();
+        break;
+      }
 
       let isDictionaryMutation = true;
       const addedLen = m.addedNodes.length;
@@ -1159,7 +1232,32 @@ function setupOptimizedMutationObserver() {
 
     activeMutationObserver = new MutationObserver(observerCallback);
     currentObservedElement = targetEl;
-    activeMutationObserver.observe(targetEl, { childList: true, subtree: true });
+
+    // Observe child modifications across the subtree
+    activeMutationObserver.observe(targetEl, { 
+      childList: true, 
+      subtree: true 
+    });
+
+    // Observe attribute changes ONLY on the high-level container to prevent infinite performance loops
+    activeMutationObserver.observe(targetEl, {
+      attributes: true,
+      subtree: false,
+      attributeFilter: ['class', 'style', 'data-view-mode']
+    });
+
+    // Track class transitions on root document wrappers directly without subtree costs
+    activeMutationObserver.observe(document.documentElement, {
+      attributes: true,
+      subtree: false,
+      attributeFilter: ['class', 'style', 'data-view-mode']
+    });
+    activeMutationObserver.observe(document.body, {
+      attributes: true,
+      subtree: false,
+      attributeFilter: ['class', 'style', 'data-view-mode']
+    });
+
     handleMutations();
   };
 
@@ -1240,20 +1338,7 @@ function handleMutations() {
     clearThemeDetectionCache();
     scheduleInstantThemeSync();
 
-    ttuState.timeMs = 0;
-    ttuState.chars = 0;
-    ttuState.running = false;
-
-    const currentCount = extractAdvancedCharCount(undefined, true);
-    const isPag = currentCount !== null ? currentCount.isPaginated : false;
-    stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
-    stateRefs.globalManualCharOffset = 0;
-    stateRefs.lastSectionIndex = -1;
-    stateRefs.lastSectionTotal = 0;
-    stateRefs.visitedSections.clear();
-    stateRefs.visitedSectionTotals.clear();
-    stateRefs.globalLastTick = Date.now();
-    hasSyncedThisSession = false;
+    startNewSession();
 
     _wasTimerRunningBeforeYatsuSidebar = false;
     _isYatsuSidebarCurrentlyOpen = false;
@@ -1263,7 +1348,7 @@ function handleMutations() {
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) {
-      wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      dispatchLinkerRefresh();
       wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
     }
   } else if (!isActive) {
@@ -1423,8 +1508,7 @@ export default defineContentScript({
             }
             if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
           } else setupTTUChronometer();
-          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          dispatchLinkerRefresh();
         } else {
           if (isWebsiteOverlaySkipped(newCfg) || newCfg.overlayPosition === 'hidden' || getOverlayDismissed()) {
             const overlay = overlayController.getOverlayElement();
@@ -1523,8 +1607,7 @@ export default defineContentScript({
           }
           if (updated) {
             ttuLinkStorage.setValue(links).then(() => {
-              const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-              if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+              dispatchLinkerRefresh();
             });
           }
         }

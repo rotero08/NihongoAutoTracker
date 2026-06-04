@@ -296,6 +296,31 @@ export function extractAdvancedCharCount(
             watchContainerMutations(readerContainer);
         }
 
+        // Dynamic Mode Change Guard: Check if paginated classes or styles changed in DOM
+        let pagStyle = false;
+        let currentEl: Element | null = activeContainer;
+        while (currentEl && currentEl !== document.body) {
+            const elStyle = getComputedStyle(currentEl);
+            const cw = elStyle.columnWidth || '';
+            const cc = elStyle.columnCount || '';
+            if ((cw !== 'auto' && cw !== 'none' && cw !== '') ||
+                (cc !== 'auto' && cc !== 'none' && cc !== '')) {
+                pagStyle = true;
+                break;
+            }
+            currentEl = currentEl.parentElement;
+        }
+
+        const hasPaginatedClass = !!(
+            document.querySelector('[class*="paginated"], [id*="paginated"], [data-view-mode="paginated"]') ||
+            document.querySelector('.book-reader-paginated') ||
+            activeContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
+            pagStyle
+        );
+        if (hasPaginatedClass !== cachedIsPaginated) {
+            isCacheValid = false;
+        }
+
         // 1. Resolve Style Configurations and Section Index (Cached)
         if (!isCacheValid) {
             const style = getComputedStyle(activeContainer);
@@ -305,14 +330,11 @@ export function extractAdvancedCharCount(
                 cachedWritingMode === 'vertical-lr' ||
                 readerContainer.classList.contains('book-content--writing-vertical-rl');
 
-            const colWidth = style.columnWidth || '';
-            const colCount = style.columnCount || '';
-
             cachedIsPaginated =
-                !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
+                !!document.querySelector('[class*="paginated"], [id*="paginated"], [data-view-mode="paginated"]') ||
+                !!document.querySelector('.book-reader-paginated') ||
                 !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-                ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
-                    (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
+                pagStyle;
 
             cachedSectionIndex = getSectionIndex(activeContainer);
         }
