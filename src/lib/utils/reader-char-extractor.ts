@@ -3,7 +3,6 @@
  * Takes whisper ttsu sync and Jiten into account for its calculations
  */
 
-
 export interface AdvancedCharData {
     current: number;
     total: number;
@@ -28,8 +27,9 @@ let cachedWritingMode = '';
 let lastContainer = null as Element | null;
 let lastContainerId = '';
 let isCacheValid = false;
+let cachedSectionIndex = null as number | null;
 
-// Stopped-state cache references (Goal 3)
+// Stopped-state cache references
 let lastCachedTotal = 0;
 let lastCachedSectionIndex: number | null = null;
 
@@ -53,7 +53,7 @@ if (typeof window !== 'undefined') {
 /**
  * Robust regular expression that captures letters/numbers and placeholder symbols.
  */
-const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
+const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
 
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
@@ -129,7 +129,6 @@ function getSectionIndex(container: Element): number | null {
     }
 
     // Approach 3 (SPA Fallback): Generate a guaranteed unique key using parent URL and first paragraph text.
-    // This is crucial for single-container SPA environments like Yomiyasu where IDs are absent and class names are statically reused.
     if (typeof window !== 'undefined') {
         let parentUrl = '';
         try {
@@ -198,21 +197,28 @@ function watchContainerMutations(container: Element) {
             if (m.type === 'childList') {
                 const checkNode = (node: Node): boolean => {
                     if (node.nodeType !== Node.ELEMENT_NODE) return false;
-                    const el = node as HTMLElement;
+                    
+                    const stack: HTMLElement[] = [node as HTMLElement];
+                    while (stack.length > 0) {
+                        const el = stack.pop()!;
+                        
+                        if (isJitenOrYomichan(el)) continue;
 
-                    // Ignore dictionary dynamic wrappings
-                    if (isJitenOrYomichan(el)) return false;
-
-                    const tag = el.tagName;
-                    if (isBlockTag(tag)) {
-                        if (el.id === 'nt-ttu-chrono-wrapper' || el.closest('#nt-ttu-chrono-wrapper')) {
-                            return false;
+                        const tag = el.tagName;
+                        if (isBlockTag(tag)) {
+                            if (el.id === 'nt-ttu-chrono-wrapper' || el.closest('#nt-ttu-chrono-wrapper')) {
+                                continue;
+                            }
+                            return true;
                         }
-                        return true;
-                    }
 
-                    for (let j = 0; j < el.children.length; j++) {
-                        if (checkNode(el.children[j])) return true;
+                        const children = el.children;
+                        for (let j = children.length - 1; j >= 0; j--) {
+                            const child = children[j];
+                            if (child.nodeType === Node.ELEMENT_NODE) {
+                                stack.push(child as HTMLElement);
+                            }
+                        }
                     }
                     return false;
                 };
@@ -254,6 +260,7 @@ function watchContainerMutations(container: Element) {
 }
 
 export function clearExtractorCache() {
+    ttuCachedNodes.length = 0;
     ttuCachedNodes = [];
     ttuCachedAccumulated = [];
     isCacheValid = false;
@@ -261,6 +268,7 @@ export function clearExtractorCache() {
     lastContainerId = '';
     lastCachedTotal = 0;
     lastCachedSectionIndex = null;
+    cachedSectionIndex = null;
     if (containerObserver) {
         containerObserver.disconnect();
         containerObserver = null;
@@ -282,12 +290,13 @@ export function extractAdvancedCharCount(
             lastContainerId = currentContainerId;
             isCacheValid = false;
             // Solve Detached DOM Memory Leak: Clean cached elements to prevent holding old chapters in memory
+            ttuCachedNodes.length = 0;
             ttuCachedNodes = [];
             ttuCachedAccumulated = [];
             watchContainerMutations(readerContainer);
         }
 
-        // 1. Resolve Style Configurations (Cached)
+        // 1. Resolve Style Configurations and Section Index (Cached)
         if (!isCacheValid) {
             const style = getComputedStyle(activeContainer);
             cachedWritingMode = style.writingMode || '';
@@ -304,7 +313,12 @@ export function extractAdvancedCharCount(
                 !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
                 ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
                     (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
+
+            cachedSectionIndex = getSectionIndex(activeContainer);
         }
+
+        const sectionIndex = cachedSectionIndex;
+        lastCachedSectionIndex = sectionIndex;
 
         // 2. Query Text-bearing Nodes
         let pTags = ttuCachedNodes;
@@ -314,9 +328,6 @@ export function extractAdvancedCharCount(
                 return (el.textContent || '').trim().length > 0;
             }) as Element[];
         }
-
-        const sectionIndex = getSectionIndex(activeContainer);
-        lastCachedSectionIndex = sectionIndex;
 
         if (pTags.length === 0) {
             lastCachedTotal = 0;
@@ -353,8 +364,13 @@ export function extractAdvancedCharCount(
                             text += n.nodeValue || '';
                         }
                     }
-                    const matches = text.match(JP_CHAR_PATTERN);
-                    count = matches ? matches.length : 0;
+                    // Allocation-free character counter loop replacing standard match checks
+                    let matchCount = 0;
+                    JP_CHAR_PATTERN.lastIndex = 0;
+                    while (JP_CHAR_PATTERN.exec(text) !== null) {
+                        matchCount++;
+                    }
+                    count = matchCount;
                     ttuCharCountCache.set(el, count);
                 }
                 acc += count;
@@ -432,7 +448,6 @@ export function extractAdvancedCharCount(
                 }
             }
 
-
             if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
@@ -461,10 +476,13 @@ export function extractAdvancedCharCount(
                         }
 
                         if (sExp) {
-                            const m = s.textContent?.match(JP_CHAR_PATTERN);
-                            if (m) {
-                                current += m.length;
+                            const content = s.textContent || '';
+                            let matchCount = 0;
+                            JP_CHAR_PATTERN.lastIndex = 0;
+                            while (JP_CHAR_PATTERN.exec(content) !== null) {
+                                matchCount++;
                             }
+                            current += matchCount;
                         }
                     });
                 } else {
@@ -484,7 +502,11 @@ export function extractAdvancedCharCount(
                         }
 
                         const text = n.nodeValue || '';
-                        if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
+                        if (!text.trim()) {
+                            continue;
+                        }
+                        JP_CHAR_PATTERN.lastIndex = 0;
+                        if (!JP_CHAR_PATTERN.test(text)) {
                             continue;
                         }
 
@@ -537,10 +559,12 @@ export function extractAdvancedCharCount(
                         }
 
                         if (sExp) {
-                            const matches = text.match(JP_CHAR_PATTERN);
-                            if (matches) {
-                                current += matches.length;
+                            let matchCount = 0;
+                            JP_CHAR_PATTERN.lastIndex = 0;
+                            while (JP_CHAR_PATTERN.exec(text) !== null) {
+                                matchCount++;
                             }
+                            current += matchCount;
                         }
                     }
                 }

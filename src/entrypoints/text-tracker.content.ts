@@ -732,8 +732,11 @@ function isYatsuSidebarOpen(): boolean {
   }
 
   // Query strictly semantic sidebar, dialog, and accessibility tags.
-  // This executes instantly and returns 0 items during active reading (99.9% of the session)
   const els = document.querySelectorAll('aside, dialog, [role="dialog"], [role="menu"]');
+  if (els.length === 0) {
+    _cachedYatsuSidebarOpen = false;
+    return false;
+  }
   
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
