@@ -3,7 +3,8 @@
  * Programmatically mounts the Svelte 5 VideoEditModal.svelte component.
  */
 
-import { getTheme } from '@/lib/ui/themes';
+import { applyThemeToDocument, getTheme, resolveThemeColors } from '@/lib/ui/themes';
+import { configStorage } from '@/lib/storage/config';
 import { mount, unmount } from 'svelte';
 
 let activeModalInstance: any = null;
@@ -37,6 +38,14 @@ export async function showNTEditModal(
   const popupContainer = document.createElement('div');
   popupContainer.id = 'nt-modal-popup';
   document.body.appendChild(popupContainer);
+
+  const config = await configStorage.getValue() as any;
+  if (config) {
+    const font = config.font ?? 'sans';
+    const customColors = resolveThemeColors(themeName, config.customThemes);
+    const useStaticInPageLogo = config.useStaticInPageLogo === true;
+    applyThemeToDocument(themeName, font, customColors, { useStaticInPageLogo });
+  }
 
   // Dynamic import avoids pre-rendering errors during compiling phases
   const VideoEditModal = (await import('@/components/video/VideoEditModal.svelte')).default;
@@ -88,7 +97,7 @@ export function cleanupActiveModal() {
     if (activeModalInstance) {
       try {
         unmount(activeModalInstance);
-      } catch (e) {}
+      } catch (e) { }
       activeModalInstance = null;
     }
     existing.remove();

@@ -25,7 +25,7 @@ import {
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/core/overlay-controller';
-import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { clearExtractorCache, extractAdvancedCharCount, initResizeListener, cleanupResizeListener } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
@@ -88,12 +88,12 @@ const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
 function getLayoutOffset(): number {
   const container = document.querySelector('.book-content-container') ||
-                    document.querySelector('.book-content') ||
-                    document.querySelector('[data-ref="container"]') ||
-                    document.querySelector('.reader-container') ||
-                    document.body;
+    document.querySelector('.book-content') ||
+    document.querySelector('[data-ref="container"]') ||
+    document.querySelector('.reader-container') ||
+    document.body;
   const rect = container.getBoundingClientRect();
-  
+
   let internalScroll = 0;
   if (container) {
     internalScroll += (container.scrollLeft || 0) + (container.scrollTop || 0);
@@ -101,7 +101,7 @@ function getLayoutOffset(): number {
       internalScroll += (container.parentElement.scrollLeft || 0) + (container.parentElement.scrollTop || 0);
     }
   }
-  
+
   return Math.round(Math.abs(rect.left) + Math.abs(rect.top)) + internalScroll;
 }
 
@@ -299,7 +299,7 @@ const ttuState = new Proxy({
       const numVal = Number(value) || 0;
       const oldVal = target.timeMs;
       target.timeMs = numVal; // Commit target immediately to prevent nested reset calls from recurring
-      
+
       if (numVal === 0 && oldVal > 0) {
         startNewSession();
       } else if (numVal < oldVal || numVal === 0) {
@@ -379,7 +379,7 @@ function getTTUTitle() {
   } catch (e) {
     if (cachedActiveTabTitle) title = cachedActiveTabTitle;
   }
-  
+
   const adapter = getActiveReaderAdapter();
   if (adapter) {
     return adapter.getTitle(title);
@@ -453,7 +453,7 @@ function safelySetAdapterName(adapter: any, name: string | null) {
   } catch (e) {
     try {
       adapter.name = name;
-    } catch (err) {}
+    } catch (err) { }
   }
 }
 
@@ -612,7 +612,7 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
-/**
+/**<<<<<<<
  * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
  */
 function checkAndProcessSectionTransition(charData: any): boolean {
@@ -826,7 +826,7 @@ function runInstantThemeSync() {
   if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
     safelySetAdapterName(adapter, 'ッツ Ebook Reader');
   }
-  applyActiveTheme(activeThemeCfg).catch(() => {});
+  applyActiveTheme(activeThemeCfg).catch(() => { });
   if (adapter && originalName) {
     safelySetAdapterName(adapter, originalName);
   }
@@ -882,12 +882,12 @@ function isYatsuSidebarOpen(): boolean {
     _cachedYatsuSidebarOpen = false;
     return false;
   }
-  
+
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
     const id = el.id || '';
     const className = el.className || '';
-    
+
     const idStr = typeof id === 'string' ? id.toLowerCase() : '';
     const classStr = typeof className === 'string' ? className.toLowerCase() : '';
 
@@ -921,13 +921,13 @@ function isYatsuSidebarOpen(): boolean {
     const zIndexStr = style.zIndex;
     const zIndex = parseInt(zIndexStr, 10);
     const isPositioned = style.position === 'absolute' || style.position === 'fixed';
-    
+
     if (!isPositioned && (isNaN(zIndex) || zIndex < 10)) {
       continue;
     }
 
     // 6. Geometric Classification:
-    
+
     // A. Backdrop / Full Screen Overlay: covers almost the entire viewport
     const isBackdrop = rect.width >= window.innerWidth * 0.9 && rect.height >= window.innerHeight * 0.9;
 
@@ -1007,7 +1007,7 @@ async function setupTTUChronometer() {
       if (adapter && originalName) {
         safelySetAdapterName(adapter, originalName);
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
 
@@ -1016,7 +1016,7 @@ async function setupTTUChronometer() {
         if (ttuState.running) stateRefs.globalLastTick = Date.now();
         return;
       }
-      
+
       const isActiveNow = isReadingViewActive();
       if (isActiveNow) {
         _readingViewInactiveTicks = 0;
@@ -1084,7 +1084,7 @@ async function setupTTUChronometer() {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
             let { current, total, isLayoutDeferred, isPaginated } = charData;
-            
+
             const scrollOffset = getLayoutOffset();
 
             if (total === 0 || isLayoutDeferred) {
@@ -1381,9 +1381,9 @@ function setupOptimizedMutationObserver() {
     currentObservedElement = targetEl;
 
     // Observe child modifications across the subtree
-    activeMutationObserver.observe(targetEl, { 
-      childList: true, 
-      subtree: true 
+    activeMutationObserver.observe(targetEl, {
+      childList: true,
+      subtree: true
     });
 
     // Observe attribute changes ONLY on the high-level container to prevent infinite performance loops
@@ -1436,10 +1436,10 @@ function setupOptimizedMutationObserver() {
   rootStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
   rootStyleObserver.observe(document.body, { attributes: true, attributeFilter: ['style'] });
 
-  bodyObserver = new MutationObserver(() => { 
-    invalidateReadingViewCache(); 
+  bodyObserver = new MutationObserver(() => {
+    invalidateReadingViewCache();
     invalidateYatsuSidebarCache();
-    handleMutations(); 
+    handleMutations();
   });
   bodyObserver.observe(document.body, { childList: true, subtree: false });
 
@@ -1539,7 +1539,7 @@ function handleMutations() {
     if (charData !== null) {
       const didTransition = checkAndProcessSectionTransition(charData);
       if (didTransition) {
-          recalculateChars(true); // Force immediate synchronously drawn update bypassing throttle
+        recalculateChars(true); // Force immediate synchronously drawn update bypassing throttle
       }
     }
   }
@@ -1589,7 +1589,7 @@ if (isRelevantFrame) {
 
 function startTimeTracker() {
   if ((window as any).__nt_timer_instance__) {
-    try { (window as any).__nt_timer_instance__.destroy(); } catch (e) {}
+    try { (window as any).__nt_timer_instance__.destroy(); } catch (e) { }
   }
   const timer = new TimerEngine();
   (window as any).__nt_timer_instance__ = timer;
@@ -1637,7 +1637,7 @@ export default defineContentScript({
         if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
           safelySetAdapterName(adapter, 'ッツ Ebook Reader');
         }
-        
+
         applyActiveTheme(activeThemeCfg);
 
         if (adapter && originalName) safelySetAdapterName(adapter, originalName);

@@ -42,12 +42,24 @@ let cachedVh = typeof window !== 'undefined' ? window.innerHeight : 768;
 // Reusable DOM Range to completely eliminate GC allocation spikes during search loops
 let reusableRange: Range | null = null;
 
-if (typeof window !== 'undefined') {
-    window.addEventListener('resize', () => {
-        cachedVw = window.innerWidth;
-        cachedVh = window.innerHeight;
-        isCacheValid = false; // Invalidate cache for layout recalculated positions
-    }, { passive: true });
+let resizeHandler: (() => void) | null = null;
+
+export function initResizeListener() {
+    if (typeof window !== 'undefined' && !resizeHandler) {
+        resizeHandler = () => {
+            cachedVw = window.innerWidth;
+            cachedVh = window.innerHeight;
+            isCacheValid = false; // Invalidate cache for layout recalculated positions
+        };
+        window.addEventListener('resize', resizeHandler, { passive: true });
+    }
+}
+
+export function cleanupResizeListener() {
+    if (typeof window !== 'undefined' && resizeHandler) {
+        window.removeEventListener('resize', resizeHandler);
+        resizeHandler = null;
+    }
 }
 
 /**
@@ -141,7 +153,7 @@ function getSectionIndex(container: Element): number | null {
 
         const firstP = container.querySelector('p, h1, h2, h3, h4, h5, h6, li');
         const textSignature = firstP ? (firstP.textContent || '').trim().slice(0, 120) : '';
-        
+
         const firstChild = container.firstElementChild;
         const childSignature = firstChild ? firstChild.tagName + '||' + firstChild.className : '';
 
@@ -197,11 +209,11 @@ function watchContainerMutations(container: Element) {
             if (m.type === 'childList') {
                 const checkNode = (node: Node): boolean => {
                     if (node.nodeType !== Node.ELEMENT_NODE) return false;
-                    
+
                     const stack: HTMLElement[] = [node as HTMLElement];
                     while (stack.length > 0) {
                         const el = stack.pop()!;
-                        
+
                         if (isJitenOrYomichan(el)) continue;
 
                         const tag = el.tagName;

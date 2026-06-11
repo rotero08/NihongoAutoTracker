@@ -16,6 +16,7 @@
   } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import QueueList from "@/components/popup/QueueList.svelte";
+  import PopupStats from "@/components/popup/PopupStats.svelte";
   import ConfirmModal from "@/components/common/ConfirmModal.svelte";
   import CustomSelect from "@/components/common/CustomSelect.svelte";
   import { notify } from "@/lib/utils/toast";
@@ -38,7 +39,6 @@
     THEME_CACHE_KEY,
     FONT_CACHE_KEY,
     CUSTOM_COLORS_CACHE_KEY,
-    ACTIVE_SETTINGS_TAB_KEY,
   } from "@/lib/constants";
   import { storage } from "wxt/utils/storage";
   import "@/styles/popup-shared.css";
@@ -55,6 +55,7 @@
   let readingQueue: any[] = $state([]);
   let stremioQueue: any[] = $state([]);
   let hasApiKey = $state(false);
+  let username = $state("");
   let currentFilter = $state("all");
   let isSendingAll = $state(false);
   let confirmModal = $state<any>(null);
@@ -249,6 +250,7 @@
     readingQueue = rQueue;
     stremioQueue = sQueue;
     hasApiKey = !!cfg?.apiKey;
+    username = cfg?.username ?? "";
     customThemes = cfg?.customThemes ?? [];
 
     selectedTheme = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
@@ -278,26 +280,31 @@
   onMount(() => {
     initialLoadPromise.catch(() => {});
 
-    const storageListener = (changes: any, area: string) => {
-      if (
-        area === "local" &&
-        (changes["videoQueue"] || changes["readingQueue"] || changes["stremioQueue"])
-      ) {
-        const focusedTag = document.activeElement?.tagName;
-        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-        loadData();
-      }
-      if (area === "local" && changes["config"]) {
-        const val = changes["config"].newValue as any;
-        const nextTheme = val?.theme ?? "dark-amber";
-        const nextFont = val?.font ?? "sans";
-        const useStaticInPageLogo = val?.useStaticInPageLogo === true;
+    const unwatches = [
+      videoQueueStorage.watch((newVal) => {
+        videoQueue = newVal || [];
+      }),
+      readingQueueStorage.watch((newVal) => {
+        readingQueue = newVal || [];
+      }),
+      stremioQueueStorage.watch((newVal) => {
+        stremioQueue = newVal || [];
+      }),
+      configStorage.watch((val) => {
+        const v = val as any;
+        if (!v) return;
+        const nextTheme = v.theme ?? "dark-amber";
+        const nextFont = v.font ?? "sans";
+        const useStaticInPageLogo = v.useStaticInPageLogo === true;
+        username = v.username ?? "";
+        hasApiKey = !!v.apiKey;
+        customThemes = v.customThemes ?? [];
+        syncPopupWithReaderTheme = v.syncPopupWithReaderTheme !== false;
 
         if (isCustomThemeId(nextTheme)) {
           const themeId = nextTheme
             .replace("custom_", "")
             .replace("custom-", "");
-          const customThemes = val?.customThemes || [];
           const targetTheme = customThemes.find(
             (t: any) => t.id === themeId || t.id === nextTheme,
           );
@@ -315,16 +322,11 @@
         } else {
           syncThemeCache(nextTheme, nextFont, null);
           applyThemeToDocument(nextTheme, nextFont, undefined, {
-              useStaticInPageLogo,
+            useStaticInPageLogo,
           });
         }
-      }
-    };
-
-    if (browser?.storage?.onChanged) {
-      browser.storage.onChanged.removeListener(storageListener);
-      browser.storage.onChanged.addListener(storageListener);
-    }
+      })
+    ];
 
     const clickOutsideOrDelete = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -341,7 +343,6 @@
 
     let isEditingActive = false;
 
-    // Prevent Escape from closing the extension popup when editing standard fields or elements
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" || e.key === "Esc") {
         if (e.type === "keydown") {
@@ -355,7 +356,6 @@
               active.closest(".qi") ||
               active.closest(".compact-popover"));
 
-          // If active is editing, or it is a repeat keydown event of a prevented edit session
           if (isTargetEditable || (e.repeat && isEditingActive)) {
             e.preventDefault();
             isEditingActive = true;
@@ -371,7 +371,6 @@
       }
     };
 
-    // Redundant captures ensure native browser close triggers are cleanly stopped on keydown and keyup
     window.addEventListener("keydown", handleGlobalKey, true);
     window.addEventListener("keyup", handleGlobalKey, true);
     document.addEventListener("keydown", handleGlobalKey, true);
@@ -383,9 +382,7 @@
       window.removeEventListener("keyup", handleGlobalKey, true);
       document.removeEventListener("keydown", handleGlobalKey, true);
       document.removeEventListener("keyup", handleGlobalKey, true);
-      if (browser?.storage?.onChanged) {
-        browser.storage.onChanged.removeListener(storageListener);
-      }
+      unwatches.forEach((unwatch) => unwatch());
     };
   });
 
@@ -556,7 +553,6 @@
       if (!ok) return;
     }
 
-    // Unmatched logs warning logic during Send All
     const hasUnmatched = readingQueue.some(
       (item) => !item.mediaId || item.mediaId === "web-reading",
     );
@@ -768,16 +764,6 @@
       ...sItems.filter((item: any) => failedStremioIds.has(item.id)),
     ]);
 
-    if (totalFailed > 0) {
-      if (totalSent > 0) {
-        showStatus(`Sent ${totalSent} logs, but ${totalFailed} failed`, true);
-      } else {
-        showStatus(`Failed to send logs`, true);
-      }
-    } else if (totalSent > 0) {
-      showStatus(`Successfully sent all ${totalSent} logs`);
-    }
-
     isSendingAll = false;
     await loadData();
   }
@@ -821,7 +807,10 @@
     </div>
   </div>
 
-  <div style="display: flex; gap: 6px; position: relative;">
+  <div style="display: flex; gap: 6px; position: relative; align-items: center;">
+    {#if username}
+      <span class="font-mono" style="font-size: 10px; color: var(--color-text-dimmed, #7a8ca5); margin-right: 4px; opacity: 0.8;">@{username}</span>
+    {/if}
     <button
       class="icon-btn appearance-toggle"
       title="Appearance Settings"
@@ -929,6 +918,8 @@
 
 <div class="sep"></div>
 
+<PopupStats hasQueueItems={total > 0} />
+
 <div class="queue-header">
   <div class="queue-header-left">
     <span class="queue-label">QUEUE</span>
@@ -988,17 +979,16 @@
     background: var(--color-background);
     color: var(--color-text);
     width: 380px;
-    min-height: 380px;
+    height: 515px;
     font-size: 13px;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden !important;
     margin: 0;
     padding: 0;
   }
   :global(#app) {
     display: flex;
     flex-direction: column;
-    min-height: 380px;
+    height: 100%;
     width: 100%;
   }
   :global(*, *::before, *::after) {
@@ -1010,7 +1000,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 14px;
+    padding: 8px 12px;
     flex-shrink: 0;
   }
   .brand {
@@ -1040,7 +1030,7 @@
     font-weight: bold;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 2px 6px;
+    padding: 1px 5px;
     border-radius: 8px;
   }
   .pill-ok {
@@ -1083,7 +1073,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 9px 14px 6px;
+    padding: 6px 12px 4px;
     flex-shrink: 0;
   }
   .queue-header-left {
@@ -1141,7 +1131,7 @@
   .queue-tabs {
     display: flex;
     gap: 8px;
-    padding: 0 14px 8px;
+    padding: 0 12px 6px;
     border-bottom: 1px solid var(--color-border);
     flex-shrink: 0;
   }
@@ -1149,7 +1139,7 @@
     background: transparent;
     border: 1px solid var(--color-border);
     color: var(--color-text-dimmed);
-    padding: 4px 12px;
+    padding: 3px 10px;
     border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
@@ -1173,6 +1163,10 @@
     min-height: 0;
     overflow: hidden;
   }
+  .queue-container :global(.queue-list) {
+    max-height: none !important;
+    flex: 1 !important;
+  }
   .queue-container :global(.empty-state),
   .queue-container :global(.empty-message),
   .queue-container :global(.queue-empty),
@@ -1190,7 +1184,7 @@
     color: var(--color-text-muted) !important;
   }
   .footer {
-    padding: 9px 12px 12px;
+    padding: 6px 12px 8px;
     flex-shrink: 0;
   }
   .open-btn {
@@ -1199,7 +1193,7 @@
     color: var(--color-text-dimmed);
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    padding: 7px;
+    padding: 6px;
     font-family: var(--font-mono);
     font-size: 11px;
     font-weight: bold;

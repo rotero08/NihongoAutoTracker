@@ -1,4 +1,3 @@
-<!-- Settings/App.svelte -->
 <script lang="ts">
   /**
    * ── Settings App.svelte ─────────────────────────────────────────────────────
@@ -10,6 +9,7 @@
   import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
   import Sidebar from "@/components/settings/layout/Sidebar.svelte";
   import QueueTab from "@/components/settings/tabs/QueueTab.svelte";
+  import DashboardTab from "@/components/settings/tabs/DashboardTab.svelte";
   import ApiKeyTab from "@/components/settings/tabs/ApiKeyTab.svelte";
   import ThemeTab from "@/components/settings/tabs/ThemeTab.svelte";
   import VideoTab from "@/components/settings/tabs/VideoTab.svelte";
@@ -36,6 +36,7 @@
   let activeTab = $state("queue");
   let queueCount = $state(0);
   let debugMode = $state(false);
+  let username = $state("");
 
   let confirmModal = $state<any>(null);
   let themeTab = $state<any>(null);
@@ -160,6 +161,7 @@
       ]);
 
       debugMode = cfg.debugMode ?? false;
+      username = cfg.username ?? "";
       queueCount = (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0);
 
       const applyTheme = (c: any) => {
@@ -213,10 +215,11 @@
         const nextTheme = val?.theme ?? "dark-amber";
         const nextFont = val?.font ?? "sans";
         const useStaticInPageLogo = val?.useStaticInPageLogo === true;
+        username = val?.username ?? "";
 
         if (isCustomThemeId(nextTheme)) {
           const themeId = nextTheme
-            .replace("custom_", "")
+            .replace("custom_", "custom_")
             .replace("custom-", "");
           const customThemes = val?.customThemes || [];
           const targetTheme = customThemes.find(
@@ -262,6 +265,8 @@
       browser.storage.onChanged.removeListener(storageListener);
     };
   });
+
+
 </script>
 
 <div class="shell">
@@ -269,12 +274,15 @@
     {activeTab}
     {queueCount}
     {debugMode}
+    {username}
     onTabChange={handleTabChange}
     onDebugToggle={handleDebugToggle}
   />
 
-  <main class="main">
-    {#if activeTab === "queue"}
+  <main class="main" class:dashboard-layout={activeTab === "dashboard"}>
+    {#if activeTab === "dashboard"}
+      <DashboardTab onStatus={showStatus} onConfirm={handleConfirm} />
+    {:else if activeTab === "queue"}
       <QueueTab
         onStatus={showStatus}
         onQueueCountChange={handleQueueCountChange}
@@ -321,6 +329,10 @@
   :global(.main) {
     background-color: var(--color-background) !important;
     flex: 1;
+  }
+  :global(.main.dashboard-layout) {
+    max-width: 1200px !important;
+    width: 100% !important;
   }
   :global(.qi-link-status, .api-status.ok, .pill-ok) {
     color: var(--color-api-green) !important;

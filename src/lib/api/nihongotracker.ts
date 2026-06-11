@@ -352,3 +352,90 @@ export async function searchMedia(input: {
   if (Array.isArray(data?.media)) return data.media;
   return [];
 }
+
+/* ── Stats & Verification Helpers ── */
+import { storage } from 'wxt/utils/storage';
+
+export async function verifyApiKey(key: string): Promise<{ success: boolean; username?: string; error?: string; stats?: any }> {
+  try {
+    const response = await fetch(`${API_BASE}/auth/verify`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'X-API-Key': key,
+      },
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.valid && data.user) {
+        return {
+          success: true,
+          username: data.user.username,
+          stats: data.user.stats,
+        };
+      }
+    }
+    return { success: false, error: 'Invalid API Key' };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+export async function fetchUserStats(username: string): Promise<any> {
+  const url = `${API_BASE}/users/${encodeURIComponent(username)}/stats`;
+  const response = await fetch(url, {
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch stats: ${response.statusText}`);
+  }
+  return await response.json();
+}
+
+/**
+ * Cohesive, fetch-and-cache coordinator enforcing standard cache timeout boundaries (5-minute TTL).
+ * Prevents redundant server queries across separate options tabs and the popup using a storage-backed lock.
+ */
+export async function fetchAndCacheUserStats(username: string, force = false): Promise<any> {
+  const FETCH_COOLDOWN = 5 * 60 * 1000;
+  const LOCK_TIMEOUT = 15000; // 15-second safety boundary
+  const lockKey = 'local:userStatsFetchingLock';
+  const lastFetchedKey = 'local:userStatsLastFetched';
+  const statsKey = 'local:userStats';
+
+  try {
+    const lastFetched = await storage.getItem<number>(lastFetchedKey) || 0;
+    const now = Date.now();
+
+    if (!force && (now - lastFetched <= FETCH_COOLDOWN)) {
+      return await storage.getItem(statsKey);
+    }
+
+    // Check if another context is already fetching (lock is active and not stale)
+    const lockActiveSince = await storage.getItem<number>(lockKey);
+    if (lockActiveSince && (now - lockActiveSince < LOCK_TIMEOUT)) {
+      // Another context is actively fetching — return cached data to avoid a duplicate request
+      return await storage.getItem(statsKey);
+    }
+
+    // Acquire lock
+    await storage.setItem(lockKey, now);
+
+    try {
+      const stats = await fetchUserStats(username);
+      await Promise.all([
+        storage.setItem(statsKey, stats),
+        storage.setItem(lastFetchedKey, Date.now())
+      ]);
+      return stats;
+    } finally {
+      // Release lock — use removeItem for reliable cleanup across all storage backends
+      await storage.removeItem(lockKey);
+    }
+  } catch (err) {
+    console.error('Failed to fetch and cache user stats:', err);
+    // Ensure lock is released even on unexpected errors
+    try { await storage.removeItem(lockKey); } catch {}
+    return await storage.getItem(statsKey);
+  }
+}

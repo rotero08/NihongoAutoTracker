@@ -10,11 +10,12 @@ import { submitLog } from '@/lib/api/nihongotracker';
 import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
 import { configStorage } from '@/lib/storage/config';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
+import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { DEFAULT_THEME } from '@/lib/types';
 import { cleanupPlaylistModal, showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
 import { applyThemeToDocument, getTheme, resolveThemeColors } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
-import { injectModalStyles, showNTEditModal } from '@/lib/ui/video-modal';
+import { injectModalStyles, showNTEditModal, cleanupActiveModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
@@ -451,7 +452,7 @@ function runPlaylistInjection(): boolean {
   let injectedAny = false;
   const adapter = getActiveVideoAdapter();
   if (!adapter) return false;
-  
+
   for (const targetContainer of targets) {
     const existingBtn = targetContainer.querySelector('.nt-playlist-logger') as HTMLElement;
     if (existingBtn) {
@@ -524,7 +525,7 @@ function runVideoInjection() {
   }
   const vid = document.querySelector<HTMLVideoElement>('video');
   if (vid) {
-    try { attach(vid); } catch (err) {}
+    try { attach(vid); } catch (err) { }
   }
 }
 
@@ -534,12 +535,12 @@ function applyCachedTheme(c: any) {
   const useStaticInPageLogo = c.useStaticInPageLogo === true;
   const customColors = resolveThemeColors(theme, c.customThemes);
   applyThemeToDocument(theme, font, customColors, { useStaticInPageLogo });
-  
+
   const activeTheme = getTheme(theme) || JSON.parse(JSON.stringify(DEFAULT_THEME));
   if (customColors && activeTheme.colors) {
     activeTheme.colors = { ...activeTheme.colors, ...customColors };
   }
-  
+
   injectModalStyles(activeTheme);
   injectThemeVariables(activeTheme);
 }
@@ -548,22 +549,48 @@ function injectThemeVariables(theme: any) {
   if (!theme || !theme.colors) return;
 
   const colors = theme.colors;
-  
-  const rootStyle = document.documentElement.style;
+
+  const isExtensionPage = typeof window !== 'undefined' &&
+    (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+  const isReaderPage = typeof window !== 'undefined' && typeof getActiveReaderAdapter === 'function' && !!getActiveReaderAdapter();
+  const shouldInjectRoot = isExtensionPage || isReaderPage;
+
+  const containers = [
+    document.getElementById('nt-modal-popup'),
+    document.getElementById('nt-playlist-modal'),
+    document.getElementById('nt-status-badge'),
+    document.getElementById('nt-overlay')
+  ].filter(Boolean) as HTMLElement[];
+
+  document.querySelectorAll('.nt-playlist-logger').forEach((el) => {
+    containers.push(el as HTMLElement);
+  });
+
+  const variables: Record<string, string> = {
+    '--color-background': colors.background,
+    '--color-surface': colors.surface,
+    '--color-surface-alt': colors.surfaceAlt,
+    '--color-border': colors.border,
+    '--color-border-hover': colors.borderHover,
+    '--color-text': colors.text,
+    '--color-text-muted': colors.muted,
+    '--color-text-dimmed': colors.muted,
+    '--color-accent': colors.accent,
+    '--nt-accent': colors.accent,
+    '--color-accent-hover': colors.accentHover,
+    '--color-success': colors.success,
+    '--color-error': colors.error,
+  };
+
   try {
-    rootStyle.setProperty('--color-background', colors.background, 'important');
-    rootStyle.setProperty('--color-surface', colors.surface, 'important');
-    rootStyle.setProperty('--color-surface-alt', colors.surfaceAlt, 'important');
-    rootStyle.setProperty('--color-border', colors.border, 'important');
-    rootStyle.setProperty('--color-border-hover', colors.borderHover, 'important');
-    rootStyle.setProperty('--color-text', colors.text, 'important');
-    rootStyle.setProperty('--color-text-muted', colors.muted, 'important');
-    rootStyle.setProperty('--color-text-dimmed', colors.muted, 'important');
-    rootStyle.setProperty('--color-accent', colors.accent, 'important');
-    rootStyle.setProperty('--nt-accent', colors.accent, 'important');
-    rootStyle.setProperty('--color-accent-hover', colors.accentHover, 'important');
-    rootStyle.setProperty('--color-success', colors.success, 'important');
-    rootStyle.setProperty('--color-error', colors.error, 'important');
+    Object.entries(variables).forEach(([key, value]) => {
+      if (shouldInjectRoot) {
+        document.documentElement.style.setProperty(key, value, 'important');
+      }
+      containers.forEach((container) => {
+        container.style.setProperty(key, value, 'important');
+      });
+    });
   } catch (err) {
   }
 }
@@ -577,22 +604,26 @@ export default defineContentScript({
   ],
   cssInjectionMode: 'manifest',
 
-  async main() {
+  async main(ctx) {
     cachedConfig = await configStorage.getValue() || {};
 
     applyCachedTheme(cachedConfig);
 
-    window.addEventListener('play', (e) => {
-      if (isYouTubeShorts()) return;
-      const target = e.target as HTMLVideoElement;
-      if (target && target.tagName === 'VIDEO') attach(target);
-    }, true);
+    const unwatches: (() => void)[] = [];
 
-    window.addEventListener('playing', (e) => {
+    const handlePlayEvent = (e: Event) => {
       if (isYouTubeShorts()) return;
       const target = e.target as HTMLVideoElement;
       if (target && target.tagName === 'VIDEO') attach(target);
-    }, true);
+    };
+    window.addEventListener('play', handlePlayEvent, true);
+
+    const handlePlayingEvent = (e: Event) => {
+      if (isYouTubeShorts()) return;
+      const target = e.target as HTMLVideoElement;
+      if (target && target.tagName === 'VIDEO') attach(target);
+    };
+    window.addEventListener('playing', handlePlayingEvent, true);
 
     let healingLoopTimer: any = null;
     const startHealingLoop = (intervalTime = 1000) => {
@@ -619,10 +650,11 @@ export default defineContentScript({
 
     startHealingLoop(1000);
 
-    document.addEventListener('visibilitychange', () => {
+    const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') startHealingLoop(5000);
       else startHealingLoop(1000);
-    });
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     let pageObserver: MutationObserver | null = null;
     let pageObserverTimeout: number | null = null;
@@ -632,7 +664,7 @@ export default defineContentScript({
         document.getElementById(BADGE_ID)?.remove();
         return;
       }
-      
+
       // Clean up past observers to resolve memory leak risks
       if (pageObserver) {
         pageObserver.disconnect();
@@ -696,10 +728,10 @@ export default defineContentScript({
 
     startTargetedObserver();
 
-    // Bind navigation hooks directly on script execution boundaries
-    window.addEventListener('yt-navigate-finish', startTargetedObserver);
+    const handleYtNavigateFinish = startTargetedObserver;
+    window.addEventListener('yt-navigate-finish', handleYtNavigateFinish);
 
-    window.addEventListener('yt-navigate-start', () => {
+    const handleYtNavigateStart = () => {
       window.removeEventListener('yt-navigate-finish', startTargetedObserver);
       clearExtractionCaches();
       if (typeof cleanupPlaylistModal === 'function') {
@@ -713,45 +745,98 @@ export default defineContentScript({
       unbindActiveVideoListeners();
       trackedVideo = null;
       window.addEventListener('yt-navigate-finish', startTargetedObserver);
+    };
+    window.addEventListener('yt-navigate-start', handleYtNavigateStart);
+
+    ctx.onInvalidated(() => {
+      // 1. Clear intervals
+      if (healingLoopTimer) clearInterval(healingLoopTimer);
+      if (channelPollInterval) {
+        clearInterval(channelPollInterval);
+        channelPollInterval = null;
+      }
+      if (pageObserverTimeout) {
+        clearTimeout(pageObserverTimeout);
+        pageObserverTimeout = null;
+      }
+
+      // 2. Disconnect observers
+      if (pageObserver) {
+        pageObserver.disconnect();
+        pageObserver = null;
+      }
+
+      // 3. Remove event listeners
+      window.removeEventListener('play', handlePlayEvent, true);
+      window.removeEventListener('playing', handlePlayingEvent, true);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('yt-navigate-finish', handleYtNavigateFinish);
+      window.removeEventListener('yt-navigate-start', handleYtNavigateStart);
+
+      // 4. Clean up video elements and active video listeners
+      unbindActiveVideoListeners();
+      trackedVideo = null;
+
+      // 5. Clean up modals, badges, and elements
+      if (typeof cleanupPlaylistModal === 'function') {
+        cleanupPlaylistModal();
+      } else {
+        const modal = document.getElementById('nt-playlist-modal');
+        if (modal) modal.remove();
+      }
+      if (typeof cleanupActiveModal === 'function') {
+        cleanupActiveModal();
+      } else {
+        document.getElementById('nt-modal-popup')?.remove();
+      }
+      document.getElementById(BADGE_ID)?.remove();
+      document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
+
+      // 6. Run storage unwatches
+      unwatches.forEach(fn => fn());
     });
 
-    configStorage.watch((newCfg) => {
-      if (newCfg) {
-        cachedConfig = newCfg;
-        applyCachedTheme(newCfg);
+    unwatches.push(
+      configStorage.watch((newCfg) => {
+        if (newCfg) {
+          cachedConfig = newCfg;
+          applyCachedTheme(newCfg);
 
-        const badge = document.getElementById(BADGE_ID);
-        if (badge && trackedVideo) {
-          resolvePageLanguageAndType();
-          const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();
-          if (shouldHide) badge.remove();
-          else {
-            badgeRenderer.ensureCounter(
-              engine.getLiveWatched(),
-              engine.getTotal(),
-              currentUrl,
-              channelId,
-              cachedChannelName,
-              newCfg,
-              trackedVideo,
-              state,
-              handleBadgeClick
-            );
+          const badge = document.getElementById(BADGE_ID);
+          if (badge && trackedVideo) {
+            resolvePageLanguageAndType();
+            const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();
+            if (shouldHide) badge.remove();
+            else {
+              badgeRenderer.ensureCounter(
+                engine.getLiveWatched(),
+                engine.getTotal(),
+                currentUrl,
+                channelId,
+                cachedChannelName,
+                newCfg,
+                trackedVideo,
+                state,
+                handleBadgeClick
+              );
+            }
           }
+
+          if (newCfg.enablePlaylistLogger === false || newCfg.hidePlaylistBadgeIcon === true) {
+            document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
+          } else runPlaylistInjection();
         }
+      })
+    );
 
-        if (newCfg.enablePlaylistLogger === false || newCfg.hidePlaylistBadgeIcon === true) {
-          document.querySelectorAll('.nt-playlist-logger').forEach(el => el.remove());
-        } else runPlaylistInjection();
-      }
-    });
-
-    videoQueueStorage.watch((queue) => {
-      if (isYouTubeShorts()) return;
-      const clean = cleanUrl(window.location.href);
-      if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
-        if (engine.getLastSyncSecs() > 0) resetSession();
-      }
-    });
+    unwatches.push(
+      videoQueueStorage.watch((queue) => {
+        if (isYouTubeShorts()) return;
+        const clean = cleanUrl(window.location.href);
+        if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
+          if (engine.getLastSyncSecs() > 0) resetSession();
+        }
+      })
+    );
   },
 });

@@ -4,6 +4,7 @@
 
 import { CUSTOM_COLORS_CACHE_KEY, FONT_CACHE_KEY, THEME_CACHE_KEY } from '@/lib/constants';
 import type { UITheme } from '@/lib/types';
+import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 
 export const DYNAMIC_LOGO_SVG = `
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" style="display: block; width: 100%; height: 100%;" viewBox="0 0 1996 2000" preserveAspectRatio="xMidYMid meet">
@@ -307,7 +308,14 @@ export function applyThemeToDocument(
     const root = document.documentElement;
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
 
-    root.setAttribute('data-theme', themeName);
+    const isExtensionPage = typeof window !== 'undefined' &&
+        (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+    const isReaderPage = typeof window !== 'undefined' && !!getActiveReaderAdapter();
+    const shouldInjectRoot = isExtensionPage || isReaderPage;
+
+    if (shouldInjectRoot) {
+        root.setAttribute('data-theme', themeName);
+    }
 
     const selectedFont = FONTS[fontName as keyof typeof FONTS] || theme.typography.sans;
 
@@ -384,11 +392,25 @@ export function applyThemeToDocument(
         '--nt-success': success,
     };
 
+    const containers = [
+        wrapper,
+        document.getElementById('nt-modal-popup'),
+        document.getElementById('nt-playlist-modal'),
+        document.getElementById('nt-status-badge'),
+        document.getElementById('nt-overlay')
+    ].filter(Boolean) as HTMLElement[];
+
+    document.querySelectorAll('.nt-playlist-logger').forEach((el) => {
+        containers.push(el as HTMLElement);
+    });
+
     Object.entries(variables).forEach(([key, value]) => {
-        root.style.setProperty(key, value);
-        if (wrapper) {
-            wrapper.style.setProperty(key, value, 'important');
+        if (shouldInjectRoot) {
+            root.style.setProperty(key, value);
         }
+        containers.forEach((container) => {
+            container.style.setProperty(key, value, 'important');
+        });
     });
 }
 
@@ -423,12 +445,32 @@ export function applyCustomThemeToDoc(customColors: any) {
         "--nt-success": customColors.success || customColors.accent,
         "--nt-logger-accent": customColors.accent,
     };
+
+    const isExtensionPage = typeof window !== 'undefined' &&
+        (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+    const isReaderPage = typeof window !== 'undefined' && !!getActiveReaderAdapter();
+    const shouldInjectRoot = isExtensionPage || isReaderPage;
+
+    const containers = [
+        wrapper,
+        document.getElementById('nt-modal-popup'),
+        document.getElementById('nt-playlist-modal'),
+        document.getElementById('nt-status-badge'),
+        document.getElementById('nt-overlay')
+    ].filter(Boolean) as HTMLElement[];
+
+    document.querySelectorAll('.nt-playlist-logger').forEach((el) => {
+        containers.push(el as HTMLElement);
+    });
+
     for (const [prop, val] of Object.entries(mapping)) {
         if (val) {
-            root.style.setProperty(prop, val, 'important');
-            if (wrapper) {
-                wrapper.style.setProperty(prop, val, 'important');
+            if (shouldInjectRoot) {
+                root.style.setProperty(prop, val, 'important');
             }
+            containers.forEach((container) => {
+                container.style.setProperty(prop, val, 'important');
+            });
         }
     }
 }

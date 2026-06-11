@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { configStorage } from "@/lib/storage/config";
+  import { verifyApiKey, fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -28,10 +29,30 @@
   }
 
   async function save() {
+    const trimmedKey = apiKey.trim();
     const cfg = (await configStorage.getValue()) as any;
-    await configStorage.setValue({ ...cfg, apiKey: apiKey.trim() });
-    updateStatus(apiKey.trim());
+    
+    // Save API key
+    await configStorage.setValue({ ...cfg, apiKey: trimmedKey });
+    updateStatus(trimmedKey);
     onStatus("✓ API Key Saved");
+
+    if (trimmedKey) {
+      try {
+        const res = await verifyApiKey(trimmedKey);
+        if (res.success && res.username) {
+          const freshCfg = (await configStorage.getValue()) as any;
+          await configStorage.setValue({
+            ...freshCfg,
+            username: res.username,
+            userStatsCache: res.stats
+          });
+          await fetchAndCacheUserStats(res.username);
+        }
+      } catch (e) {
+        console.error("Auto key verification failed:", e);
+      }
+    }
   }
 
   load();
@@ -104,7 +125,6 @@
 >
 
 <style>
-  /* Force adaptive, theme-bound green color with 100% Svelte compiler reliability */
   .api-status.ok {
     color: var(--color-api-green) !important;
   }
