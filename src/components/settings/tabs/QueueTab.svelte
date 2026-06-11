@@ -5,7 +5,7 @@
   minutes, dates, dropdown matching, and auto-sum persistence.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import SettingsQueueItem from "./SettingsQueueItem.svelte";
@@ -272,6 +272,8 @@
     localStorage.setItem("nt-queue-guide-open", String(isOpen));
   }
 
+  let unwatches: (() => void)[] = [];
+
   onMount(() => {
     load();
 
@@ -281,21 +283,27 @@
       isGuideOpen = saved === "true";
     }
 
-    readingQueueStorage.watch(() => {
-      const focusedTag = document.activeElement?.tagName;
-      if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-      load();
-    });
-    videoQueueStorage.watch(() => {
-      const focusedTag = document.activeElement?.tagName;
-      if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-      load();
-    });
-    stremioQueueStorage.watch(() => {
-      const focusedTag = document.activeElement?.tagName;
-      if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-      load();
-    });
+    unwatches = [
+      readingQueueStorage.watch(() => {
+        const focusedTag = document.activeElement?.tagName;
+        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
+        load();
+      }),
+      videoQueueStorage.watch(() => {
+        const focusedTag = document.activeElement?.tagName;
+        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
+        load();
+      }),
+      stremioQueueStorage.watch(() => {
+        const focusedTag = document.activeElement?.tagName;
+        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
+        load();
+      })
+    ];
+  });
+
+  onDestroy(() => {
+    unwatches.forEach((unwatch) => unwatch());
   });
 </script>
 

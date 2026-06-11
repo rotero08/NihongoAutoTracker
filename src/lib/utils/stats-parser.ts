@@ -1,3 +1,12 @@
+export interface RecentDayData {
+  label: string;
+  dayKey: string;
+  listeningPct: number;
+  readingPct: number;
+  listeningMins: number;
+  readingMins: number;
+}
+
 export interface ParsedStats {
   todayHours: number;
   weekHours: number;
@@ -11,21 +20,15 @@ export interface ParsedStats {
   longestStreak: number;
   userLevel: number;
   userXp: number;
-  xpToNextLevel: number;
-  xpToCurrentLevel: number;
+  xpInLevel: number;
+  xpForNextLevel: number;
   xpPercent: number;
   readingHours: number;
   listeningHours: number;
   totalChars: number;
   readingSpeed: number;
   heatmapCells: any[];
-  recent7Days: {
-    labels: string[];
-    listeningPcts: number[];
-    readingPcts: number[];
-    listeningMins: number[];
-    readingMins: number[];
-  };
+  recent7Days: RecentDayData[];
   monthlyOverview: any[];
 }
 
@@ -48,10 +51,51 @@ export interface CompiledBaseLogs {
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// ── Level Progression System ──
+// Calibrated using NihongoTracker's native formulas.
+// Formula:
+//   level = Math.floor(Math.pow(xp, 1 / 1.75) * 0.07)
+//   cumulativeXp(level) = Math.floor(Math.pow(level / 0.07, 1.75))
+
+const XP_VAR = 0.07;
+const XP_DIFF = 1.75;
+
+/** Total cumulative XP needed to reach a given level from level 0. */
+export function cumulativeXpToLevel(level: number): number {
+  if (level <= 0) return 0;
+  return Math.floor(Math.pow(level / XP_VAR, XP_DIFF));
+}
+
+/** XP required to advance from a given level to the next. */
+export function xpRequiredForLevel(level: number): number {
+  return cumulativeXpToLevel(level + 1) - cumulativeXpToLevel(level);
+}
+
+/** Compute the current level, XP progress within the level, and percent from total XP. */
+export function computeLevelFromXp(totalXp: number): {
+  level: number;
+  xpInLevel: number;
+  xpForNextLevel: number;
+  xpPercent: number;
+} {
+  if (totalXp <= 0) {
+    return { level: 1, xpInLevel: 0, xpForNextLevel: xpRequiredForLevel(1), xpPercent: 0 };
+  }
+  const level = Math.max(1, Math.floor(Math.pow(totalXp, 1 / XP_DIFF) * XP_VAR));
+  const xpAtLevel = cumulativeXpToLevel(level);
+  const xpInLevel = totalXp - xpAtLevel;
+  const xpForNextLevel = xpRequiredForLevel(level);
+  const xpPercent = xpForNextLevel > 0 ? Math.min(100, Math.round((xpInLevel / xpForNextLevel) * 100)) : 0;
+  return { level, xpInLevel, xpForNextLevel, xpPercent };
+}
+
 // Persistent module-level cache to eliminate repetitive Date-parsing allocations across renders
 const dateTimestampCache = new Map<string, number>();
 
 function getCachedTimestamp(dateStr: string): number {
+  if (dateTimestampCache.size > 5000) {
+    dateTimestampCache.clear();
+  }
   let t = dateTimestampCache.get(dateStr);
   if (t === undefined) {
     t = new Date(dateStr).getTime();
@@ -184,6 +228,10 @@ export function compileBaseLogs(stats: any, targetOverviewYear: number): Compile
     
     for (let j = 0, dateLen = dates.length; j < dateLen; j++) {
       const dObj = dates[j];
+      
+      // Create a shallow copy with the type tag attached.
+      // We MUST NOT mutate dObj in place — statsData is a Svelte 5 $state proxy,
+      // and writing through it inside a $derived computation breaks the reactive graph.
       const item = { ...dObj, type };
 
       const key = dObj.localDate?.dayKey;
@@ -250,9 +298,9 @@ export function generateHeatmapCells(year: number, logsByDayKey: Map<string, any
       runnerDate.setDate(runnerDate.getDate() + 1);
     }
     const yearKey = runnerDate.getFullYear();
-    const month = runnerDate.getMonth() + 1;
+    const month = runnerDate.getMonth(); // 0-11
     const day = runnerDate.getDate();
-    const dayKey = `${yearKey}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayKey = `${yearKey}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
     const dayLogs = logsByDayKey.get(dayKey) || [];
     const logCount = dayLogs.length;
@@ -270,12 +318,14 @@ export function generateHeatmapCells(year: number, logsByDayKey: Map<string, any
       else level = 4;
     }
 
-    const monthName = MONTH_NAMES[runnerDate.getMonth()];
+    const monthName = MONTH_NAMES[month];
     const formattedDate = `${monthName} ${String(day).padStart(2, '0')}, ${yearKey}`;
     const tooltipText = `${formattedDate}: ${logCount} log${logCount === 1 ? '' : 's'} (${totalTime} min${totalTime === 1 ? '' : 's'})`;
 
+    // Avoid allocating separate Date objects in cell entries.
+    // Instead store month number directly to reduce GC churn and memory consumption.
     cells.push({
-      date: new Date(runnerDate),
+      month,
       dayKey,
       level,
       logCount,
@@ -289,32 +339,30 @@ export function generateHeatmapCells(year: number, logsByDayKey: Map<string, any
 
 /**
  * Independent metrics tracking parser compiling the recent 7 days chart values.
+ * Aggregates logs into a single structured array of RecentDayData objects.
  */
-export function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
-  const labels: string[] = [];
-  const keys: string[] = [];
+export function getRecent7DaysData(logsByDayKey: Map<string, any[]>): RecentDayData[] {
+  const days: RecentDayData[] = [];
   const runner = new Date();
   const nowMs = Date.now();
+
+  const listeningMins = Array(7).fill(0);
+  const readingMins = Array(7).fill(0);
+  const dayKeys: string[] = [];
+  const labels: string[] = [];
 
   for (let i = 6; i >= 0; i--) {
     runner.setTime(nowMs - i * 24 * 60 * 60 * 1000);
     const y = runner.getFullYear();
     const m = String(runner.getMonth() + 1).padStart(2, '0');
     const r = String(runner.getDate()).padStart(2, '0');
-    keys.push(`${y}-${m}-${r}`);
+    const key = `${y}-${m}-${r}`;
+    dayKeys.push(key);
 
-    if (i === 0) {
-      labels.push("Today");
-    } else {
-      labels.push(runner.toLocaleString('en-US', { weekday: 'short' }));
-    }
-  }
+    const label = i === 0 ? "Today" : runner.toLocaleString('en-US', { weekday: 'short' });
+    labels.push(label);
 
-  const listeningMins: number[] = Array(7).fill(0);
-  const readingMins: number[] = Array(7).fill(0);
-
-  for (let i = 0; i < 7; i++) {
-    const dayLogs = logsByDayKey.get(keys[i]) || [];
+    const dayLogs = logsByDayKey.get(key) || [];
     let readSum = 0;
     let listenSum = 0;
 
@@ -327,8 +375,8 @@ export function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
       }
     }
 
-    readingMins[i] = readSum;
-    listeningMins[i] = listenSum;
+    readingMins[6 - i] = readSum;
+    listeningMins[6 - i] = listenSum;
   }
 
   let maxDayTotal = 1;
@@ -339,16 +387,18 @@ export function getRecent7DaysData(logsByDayKey: Map<string, any[]>) {
     }
   }
 
-  const listeningPcts = listeningMins.map(val => (val / maxDayTotal) * 100);
-  const readingPcts = readingMins.map(val => (val / maxDayTotal) * 100);
+  for (let i = 0; i < 7; i++) {
+    days.push({
+      label: labels[i],
+      dayKey: dayKeys[i],
+      listeningMins: listeningMins[i],
+      readingMins: readingMins[i],
+      listeningPct: (listeningMins[i] / maxDayTotal) * 100,
+      readingPct: (readingMins[i] / maxDayTotal) * 100
+    });
+  }
 
-  return {
-    labels,
-    listeningPcts,
-    readingPcts,
-    listeningMins,
-    readingMins
-  };
+  return days;
 }
 
 /**
@@ -414,17 +464,17 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
     allTimeHoursStr: "0:00",
     currentStreak: 0,
     longestStreak: 0,
-    userLevel: 14,
+    userLevel: 1,
     userXp: 0,
-    xpToNextLevel: 281449,
-    xpToCurrentLevel: 276059,
-    xpPercent: 68,
+    xpInLevel: 0,
+    xpForNextLevel: xpRequiredForLevel(1),
+    xpPercent: 0,
     readingHours: 0,
     listeningHours: 0,
     totalChars: 0,
     readingSpeed: 0,
     heatmapCells: [],
-    recent7Days: { labels: [], listeningPcts: [], readingPcts: [], listeningMins: [], readingMins: [] },
+    recent7Days: [],
     monthlyOverview: []
   };
 
@@ -452,11 +502,11 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
     allTimeHoursStr: formatHoursToHMM(allTimeHours),
     currentStreak: stats.streaks?.currentStreak ?? 0,
     longestStreak: stats.streaks?.longestStreak ?? 0,
-    userLevel: 14,
-    userXp: base.totals.totalXp || 278050,
-    xpToNextLevel: 281449,
-    xpToCurrentLevel: 276059,
-    xpPercent: 68,
+    ...(() => {
+      const lv = computeLevelFromXp(base.totals.totalXp || 0);
+      return { userLevel: lv.level, xpInLevel: lv.xpInLevel, xpForNextLevel: lv.xpForNextLevel, xpPercent: lv.xpPercent };
+    })(),
+    userXp: base.totals.totalXp || 0,
     readingHours,
     listeningHours,
     totalChars,

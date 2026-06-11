@@ -11,7 +11,7 @@ import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { showToast } from '@/lib/utils/toast';
 import { fetchYouTubeVideoData, getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 import { mount, unmount } from 'svelte';
-import { getTheme } from './themes';
+import { applyThemeToDocument, getTheme, resolveThemeColors } from './themes';
 import { injectModalStyles } from './video-modal';
 
 const inlineLogo = DYNAMIC_LOGO_SVG;
@@ -21,6 +21,36 @@ let activeObservedElements: HTMLElement[] = [];
 let pendingMaskUpdates = new Set<HTMLElement>();
 let maskRafId: number | null = null;
 let activePlaylistModalInstance: any = null;
+
+// Simple cache store mapping playlist IDs to parsed video arrays
+const playlistVideosCache = new Map<string, any[]>();
+
+/**
+ * Extracts the playlist parameter value ('list=...') from the given URL.
+ */
+function getPlaylistIdFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get('list');
+  } catch (e) {
+    const match = url.match(/[?&]list=([^&]+)/);
+    return match ? match[1] : null;
+  }
+}
+
+/**
+ * Parses and extracts a standard YouTube video ID from any watch or short URL string.
+ */
+function extractVideoId(url: string): string | null {
+  if (!url) return null;
+  const watchMatch = url.match(/[?&]v=([^&]+)/);
+  if (watchMatch) return watchMatch[1];
+  const shortMatch = url.match(/youtu\.be\/([^?&#]+)/);
+  if (shortMatch) return shortMatch[1];
+  const pathMatch = url.match(/(?:embed|v|shorts)\/([^?&#]+)/);
+  if (pathMatch) return pathMatch[1];
+  return null;
+}
 
 function scheduleMaskUpdate(el: HTMLElement) {
   pendingMaskUpdates.add(el);
@@ -80,7 +110,7 @@ export function cleanupPlaylistModal() {
     if (typeof el.__unmount === 'function') {
       try {
         el.__unmount();
-      } catch (e) {}
+      } catch (e) { }
     }
     el.remove();
   });
@@ -101,64 +131,121 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   // Pre-clean existing containers to guarantee only one exists at a time
   cleanupPlaylistModal();
 
-  const parent = isInline
-    ? document.querySelector('ytd-playlist-panel-renderer')
-    : (document.querySelector('ytd-browse') || document.querySelector('ytd-two-column-browse-results-renderer #primary') || document.body);
+  const playlistId = getPlaylistIdFromUrl(window.location.href);
+  let videos: any[] = [];
 
-  const rendererSelector = isInline
-    ? 'ytd-playlist-panel-video-renderer'
-    : 'ytd-playlist-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
+  // Attempt to load from cache, but ignore empty cached arrays to allow re-evaluation
+  if (playlistId && playlistVideosCache.has(playlistId)) {
+    const cached = playlistVideosCache.get(playlistId) || [];
+    if (cached.length > 0) {
+      videos = cached;
+    }
+  }
 
-  const items = Array.from(parent?.querySelectorAll(rendererSelector) || []);
+  // If no cached videos are present, query the DOM and compile the list
+  if (videos.length === 0) {
+    const parent = isInline
+      ? (btn.closest('ytd-playlist-panel-renderer') || document.querySelector('ytd-playlist-panel-renderer'))
+      : (btn.closest('ytd-browse') || document.querySelector('ytd-playlist-video-list-renderer') || document.querySelector('ytd-browse:not([hidden])') || document.querySelector('ytd-two-column-browse-results-renderer #primary') || document.body);
 
-  const config = await configStorage.getValue() as any;
-  const hideNonJp = config.playlistHideNonJapanese ?? true;
+    const rendererSelector = isInline
+      ? 'ytd-playlist-panel-video-renderer'
+      : 'ytd-playlist-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
 
-  const videos = items.map(el => {
-    const titleEl = el.querySelector('#video-title') || el.querySelector('#title') || el.querySelector('.yt-core-attributed-string');
-    const titleText = titleEl?.textContent?.trim() || el.querySelector('a')?.textContent?.trim() || 'Unknown';
+    let items = Array.from(parent?.querySelectorAll(rendererSelector) || []);
 
-    const urlEl = el.querySelector('a#wc-endpoint') || el.querySelector('a#video-title-link') || el.querySelector('a[href*="watch?v="]') || el.querySelector('a');
-    const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer') || el.querySelector('.badge-shape-wiz__text');
-
-    let domTime = 1;
-    const timeText = lengthEl?.textContent?.trim() || "";
-
-    const match = timeText.match(/\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/);
-    if (match) {
-      const hrs = match[1] ? parseInt(match[1], 10) : 0;
-      const mins = parseInt(match[2], 10);
-      const secs = parseInt(match[3], 10);
-      const totalSeconds = hrs * 3600 + mins * 60 + secs;
-      domTime = Math.max(1, Math.round(totalSeconds / 60));
+    // Fallback 1: search inside standard list container globally if container is cached/hidden
+    if (items.length === 0 && !isInline) {
+      const globalList = document.querySelector('ytd-playlist-video-list-renderer') || document;
+      items = Array.from(globalList.querySelectorAll(rendererSelector));
     }
 
-    const url = urlEl?.getAttribute('href') || '';
-    const idMatch = url.match(/[?&]v=([^&]+)/);
+    // Fallback 2: search globally across the entire document for any renderer
+    if (items.length === 0 && !isInline) {
+      items = Array.from(document.querySelectorAll('ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer'));
+    }
 
-    return {
-      title: titleText,
-      url: url,
-      id: idMatch ? idMatch[1] : null,
-      time: domTime,
-      isJp: (titleText.match(JP_RE) || []).length > 0,
-      channelId: null as string | null,
-      channelTitle: null as string | null,
-      channelImage: null as string | null,
-      channelDesc: null as string | null
-    };
-  }).filter(v => v.id);
+    videos = items.map(el => {
+      const titleEl = el.querySelector('#video-title')
+        || el.querySelector('#video-title-link')
+        || el.querySelector('#title')
+        || el.querySelector('.yt-core-attributed-string');
+      const titleText = titleEl?.textContent?.trim() || el.querySelector('a')?.textContent?.trim() || 'Unknown';
+
+      // Prioritize ID/Class-based selectors first for fast lookup, unaffected by dynamic layout changes
+      const urlEl = el.querySelector('a#video-title')
+        || el.querySelector('a#video-title-link')
+        || el.querySelector('a#wc-endpoint')
+        || el.querySelector('a#thumbnail')
+        || el.querySelector('a[href*="watch?v="]')
+        || el.querySelector('a[href*="/watch?v="]')
+        || Array.from(el.querySelectorAll('a')).find(a => {
+          const href = (a as any).href || a.getAttribute('href') || '';
+          return href.includes('watch?v=') || href.includes('/watch?v=');
+        })
+        || el.querySelector('a');
+
+      const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer')
+        || el.querySelector('span.ytd-thumbnail-overlay-time-status-renderer')
+        || el.querySelector('.badge-shape-wiz__text')
+        || el.querySelector('#time-status');
+
+      let domTime = 1;
+      const timeText = lengthEl?.textContent?.trim() || "";
+
+      const match = timeText.match(/\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/);
+      if (match) {
+        const hrs = match[1] ? parseInt(match[1], 10) : 0;
+        const mins = parseInt(match[2], 10);
+        const secs = parseInt(match[3], 10);
+        const totalSeconds = hrs * 3600 + mins * 60 + secs;
+        domTime = Math.max(1, Math.round(totalSeconds / 60));
+      }
+
+      // Read direct element property if set dynamically rather than HTML attribute
+      const url = (urlEl as any)?.href || urlEl?.getAttribute('href') || '';
+      const videoId = extractVideoId(url);
+
+      return {
+        title: titleText,
+        url: url,
+        id: videoId,
+        time: domTime,
+        isJp: (titleText.match(JP_RE) || []).length > 0,
+        channelId: null as string | null,
+        channelTitle: null as string | null,
+        channelImage: null as string | null,
+        channelDesc: null as string | null
+      };
+    }).filter(v => v.id);
+
+    // Save populated array into cache for fast retrieval on future transitions
+    if (playlistId && videos.length > 0) {
+      playlistVideosCache.set(playlistId, videos);
+    }
+  }
 
   if (videos.length === 0) { showToast("Playlist Error", "No valid videos found in playlist", true); return; }
 
   const modalContainer = document.createElement('div');
   modalContainer.id = 'nt-playlist-modal';
   // Removed "nt-modal" from the wrapper element to completely eliminate the double nesting box shadow
-  modalContainer.className = 'nt-playlist-modal-wrapper'; 
+  modalContainer.className = 'nt-playlist-modal-wrapper';
   modalContainer.style.position = 'fixed';
   modalContainer.style.visibility = 'hidden';
   modalContainer.style.zIndex = '2147483647';
   document.body.appendChild(modalContainer);
+
+  const config = await configStorage.getValue() as any;
+  const hideNonJp = config.playlistHideNonJapanese ?? true;
+
+  if (config) {
+    const themeName = config.theme ?? 'dark-amber';
+    const font = config.font ?? 'sans';
+    const customColors = resolveThemeColors(themeName, config.customThemes);
+    const useStaticInPageLogo = config.useStaticInPageLogo === true;
+    applyThemeToDocument(themeName, font, customColors, { useStaticInPageLogo });
+  }
 
   const PlaylistModal = (await import('@/components/video/PlaylistModal.svelte')).default as any;
 
@@ -179,7 +266,7 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   (modalContainer as any).__unmount = () => {
     try {
       unmount(instance);
-    } catch (e) {}
+    } catch (e) { }
   };
 
   activePlaylistModalInstance = instance;
@@ -295,7 +382,7 @@ async function executeBulkLogging(checkedVideos: any[]) {
           channelImage = data.channel.contentImage ?? '';
           channelDesc = data.channel.description?.[0]?.description ?? '';
         }
-      } catch (e) {}
+      } catch (e) { }
 
       const mediaId = (channelId && channelId !== "web-video") ? channelId : "web-video";
       const ok = await submitLog({

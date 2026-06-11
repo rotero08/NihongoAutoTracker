@@ -8,7 +8,8 @@
     getRecent7DaysData, 
     getMonthlyOverviewData,
     formatMinutesToHoursStr,
-    formatHoursToHMM 
+    formatHoursToHMM,
+    computeLevelFromXp
   } from "@/lib/utils/stats-parser";
   import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
 
@@ -39,7 +40,7 @@
       const dayKeyStr = `${yearKey}-${monthKey}-${dayKey}`;
 
       cells.push({
-        date: currentDate,
+        month: currentDate.getMonth(),
         dayKey: dayKeyStr,
         level: 0,
         logCount: 0,
@@ -82,6 +83,8 @@
     const totalChars = totals.totalChars || 0;
     const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
     const allTimeHours = totals.totalTimeHours || 0;
+    const totalXp = totals.totalXp || 0;
+    const levelInfo = computeLevelFromXp(totalXp);
 
     return {
       todayHours: baseLogs.todayMins / 60,
@@ -94,9 +97,11 @@
       allTimeHoursStr: formatHoursToHMM(allTimeHours),
       currentStreak: statsData?.streaks?.currentStreak ?? 0,
       longestStreak: statsData?.streaks?.longestStreak ?? 0,
-      userLevel: 14,
-      userXp: totals.totalXp || 278050,
-      xpPercent: 68,
+      userLevel: levelInfo.level,
+      userXp: totalXp,
+      xpInLevel: levelInfo.xpInLevel,
+      xpForNextLevel: levelInfo.xpForNextLevel,
+      xpPercent: levelInfo.xpPercent,
       readingHours,
       listeningHours,
       totalChars,
@@ -120,8 +125,7 @@
 
     for (let i = 0; i < cells.length; i++) {
       const cell = cells[i];
-      const cellDate = cell.date;
-      const month = cellDate.getMonth();
+      const month = cell.month;
 
       if (!seenMonths.has(month) && cell.inYear) {
         seenMonths.add(month);
@@ -213,6 +217,11 @@
     const handleDragMove = (moveEvent: MouseEvent | TouchEvent) => {
       if (!isDragging || !heatmapContainer) return;
       
+      // Prevent standard browser touch action scroll from interfering with horizontal drag-to-pan gesture
+      if (moveEvent.cancelable) {
+        moveEvent.preventDefault();
+      }
+
       const currentClientX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : (moveEvent as MouseEvent).clientX;
       const x = currentClientX - heatmapContainer.offsetLeft;
       const walk = (x - startX) * 1.5;
@@ -236,7 +245,8 @@
 
     window.addEventListener('mousemove', handleDragMove, { passive: true });
     window.addEventListener('mouseup', handleDragEnd);
-    window.addEventListener('touchmove', handleDragMove, { passive: true });
+    // passive: false is required to permit preventDefault() within the move handler
+    window.addEventListener('touchmove', handleDragMove, { passive: false });
     window.addEventListener('touchend', handleDragEnd);
   }
 </script>
@@ -300,14 +310,17 @@
         <!-- Level Progress Gauge -->
         <div class="level-gauge-block">
           <div class="level-header-row">
-            <span class="lvl-title">Immersion Level</span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <span class="lvl-title">Immersion Level</span>
+              <span class="lvl-total-xp font-mono" style="font-size: 9px; color: var(--color-text-muted, #7a8ca5);">{parsed.userXp.toLocaleString()} Total XP</span>
+            </div>
             <span class="lvl-number font-mono">{parsed.userLevel}</span>
           </div>
           <div class="lvl-bar-track">
             <div class="lvl-bar-fill" style="width: {parsed.xpPercent}%;"></div>
           </div>
           <div class="lvl-xp-meta font-mono">
-            <span>{parsed.userXp.toLocaleString()} total XP</span>
+            <span>{parsed.xpInLevel.toLocaleString()}/{parsed.xpForNextLevel.toLocaleString()} XP</span>
             <span>{parsed.xpPercent}% to Level {parsed.userLevel + 1}</span>
           </div>
         </div>
@@ -454,15 +467,15 @@
         <h3 class="section-title">Recent 7 Days Distribution</h3>
         <div class="chart-container">
           <div class="chart-bars">
-            {#each recent7Days.labels as label, i}
+            {#each recent7Days as day (day.dayKey)}
               <div class="bar-col">
                 <div class="stacked-bar">
                   <!-- Reading segmented layers -->
-                  <div class="bar-segment reading" style="height: {recent7Days.readingPcts[i]}%;" title="Reading: {formatMinutesToHoursStr(recent7Days.readingMins[i])}"></div>
+                  <div class="bar-segment reading" style="height: {day.readingPct}%;" title="Reading: {formatMinutesToHoursStr(day.readingMins)}"></div>
                   <!-- Listening segmented layers -->
-                  <div class="bar-segment listening" style="height: {recent7Days.listeningPcts[i]}%;" title="Listening: {formatMinutesToHoursStr(recent7Days.listeningMins[i])}"></div>
+                  <div class="bar-segment listening" style="height: {day.listeningPct}%;" title="Listening: {formatMinutesToHoursStr(day.listeningMins)}"></div>
                 </div>
-                <span class="bar-lbl font-mono">{label}</span>
+                <span class="bar-lbl font-mono">{day.label}</span>
               </div>
             {/each}
           </div>
@@ -1035,6 +1048,8 @@
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
     user-select: none;
+    will-change: scroll-position;
+    transform: translate3d(0, 0, 0);
   }
 
   .heatmap-scroll-wrapper::-webkit-scrollbar {
@@ -1064,12 +1079,14 @@
     grid-auto-flow: column;
     gap: 2px;
     width: 100%;
+    will-change: transform;
+    transform: translate3d(0, 0, 0);
   }
 
   .cell {
     width: 10px;
     height: 10px;
-    border-radius: 1.5px;
+    border-radius: 2px;
     cursor: help;
     transition: outline 0.1s ease-in-out;
   }
@@ -1079,7 +1096,7 @@
   }
 
   .cell:hover {
-    outline: 1.5px solid var(--color-text);
+    outline: 2px solid var(--color-text);
   }
 
   .cell.level-0 {

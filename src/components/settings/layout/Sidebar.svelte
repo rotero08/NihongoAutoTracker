@@ -10,11 +10,12 @@
     activeTab: string;
     queueCount: number;
     debugMode: boolean;
+    username: string;
     onTabChange: (tab: string) => void;
     onDebugToggle: (enabled: boolean) => void;
   }
 
-  let { activeTab, queueCount, debugMode, onTabChange, onDebugToggle }: Props =
+  let { activeTab, queueCount, debugMode, username, onTabChange, onDebugToggle }: Props =
     $props();
 
   async function handleDebugToggle(e: Event) {
@@ -32,6 +33,9 @@
     </div>
     <div>
       <div class="brand-name">NihongoAutoTracker</div>
+      {#if username}
+        <div class="injected-username font-mono" style="font-size: 10px; color: var(--color-text-muted); font-weight: normal; margin-top: 1px; margin-bottom: 4px; opacity: 0.85;">@{username}</div>
+      {/if}
     </div>
   </div>
 
@@ -74,11 +78,13 @@
         onTabChange("dashboard");
       }}
     >
-      <span class="nav-icon"
-        ><svg viewBox="0 0 16 16"
-          ><rect x="2" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9" y="2" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="9" y="9" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg
-        ></span
-      >
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6" y1="20" x2="6" y2="14"/>
+        </svg>
+      </span>
       Dashboard
     </a>
 

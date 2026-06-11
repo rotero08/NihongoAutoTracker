@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { storage } from "wxt/utils/storage";
   import { configStorage } from "@/lib/storage/config";
   import { ACTIVE_SETTINGS_TAB_KEY } from "@/lib/constants";
@@ -18,8 +18,18 @@
   let expanded = $state(false);
 
   // Clean, warning-free state coordination when the queue changes
+  let prevHasQueueItems = $state<boolean | null>(null);
   $effect(() => {
-    expanded = !hasQueueItems;
+    const current = hasQueueItems;
+    if (prevHasQueueItems === null) {
+      prevHasQueueItems = current;
+      expanded = !current;
+    } else if (current !== prevHasQueueItems) {
+      prevHasQueueItems = current;
+      untrack(() => {
+        expanded = !current;
+      });
+    }
   });
 
   async function loadStats() {
@@ -43,15 +53,14 @@
   });
 
   async function openDashboard() {
+    // Store the target tab in case the settings page needs to open fresh
     await storage.setItem(ACTIVE_SETTINGS_TAB_KEY, "dashboard");
-    if (browser?.runtime?.openOptionsPage) {
-      try {
-        await browser.runtime.openOptionsPage();
-        return;
-      } catch (e) {}
-    }
+    // Route through the background script which handles:
+    // 1. Finding and focusing an existing settings tab
+    // 2. Sending SWITCH_SETTINGS_TAB to switch to dashboard
+    // 3. Opening a new settings tab if none exists
     if (browser?.runtime?.sendMessage) {
-      browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
+      browser.runtime.sendMessage({ action: "OPEN_SETTINGS", tab: "dashboard" }).catch(() => {});
     }
   }
 
