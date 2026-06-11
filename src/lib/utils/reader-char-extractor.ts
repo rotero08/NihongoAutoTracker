@@ -9,6 +9,7 @@ export interface AdvancedCharData {
     sectionIndex: number | null;
     isPaginated: boolean;
     isLayoutDeferred?: boolean;
+    visible?: number;
 }
 
 // Module-level caches to optimize execution overhead
@@ -142,6 +143,19 @@ function getSectionIndex(container: Element): number | null {
 
     // Approach 3 (SPA Fallback): Generate a guaranteed unique key using parent URL and first paragraph text.
     if (typeof window !== 'undefined') {
+        // Try page indicators first for page-by-page readers (such as Yomiyasu)
+        const pageElements = document.querySelectorAll('.page-indicator, [data-page], .current-page');
+        for (let i = 0; i < pageElements.length; i++) {
+            const text = (pageElements[i] as HTMLElement).innerText || '';
+            const match = text.match(/(\d+)\s*\/\s*(\d+)/);
+            if (match) {
+                const parsed = parseInt(match[1], 10);
+                if (!isNaN(parsed) && parsed >= 0) {
+                    return parsed;
+                }
+            }
+        }
+
         let parentUrl = '';
         try {
             if (window.top && window.top.location) {
@@ -606,8 +620,28 @@ export function extractAdvancedCharCount(
             }
         }
 
-        console.log(`[NT DEBUG extractor] pTags=${ttuCachedNodes.length} current=${current} total=${total} sectionIndex=${sectionIndex} isPag=${cachedIsPaginated}`);
-        return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
+        let visible = 0;
+        for (let i = lastIdx + 1; i < ttuCachedNodes.length; i++) {
+            const r = ttuCachedNodes[i].getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) continue;
+
+            let isVisible = false;
+            if (cachedIsVertical) {
+                isVisible = r.top < cachedVh && r.bottom > 0;
+            } else {
+                isVisible = r.left < cachedVw && r.right > 0;
+            }
+
+            if (isVisible) {
+                const count = ttuCharCountCache.get(ttuCachedNodes[i]) || 0;
+                visible += count;
+            } else {
+                break;
+            }
+        }
+
+        console.log(`[NT DEBUG extractor] pTags=${ttuCachedNodes.length} current=${current} visible=${visible} total=${total} sectionIndex=${sectionIndex} isPag=${cachedIsPaginated}`);
+        return { current, total, sectionIndex, isPaginated: cachedIsPaginated, visible };
     } catch (e) {
         console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
         return null;

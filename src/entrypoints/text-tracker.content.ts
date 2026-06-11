@@ -746,25 +746,37 @@ function recalculateChars(force = false) {
 
     const scrollOffset = getLayoutOffset();
 
+    const container = document.querySelector('.book-content-container') ||
+                      document.querySelector('.book-content') ||
+                      document.querySelector('[data-ref="container"]') ||
+                      document.querySelector('.reader-container') ||
+                      document.body;
+    const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
+
     if (total === 0 || charData.isLayoutDeferred) {
-      // Find the best matching character count from previous pages
-      let bestOffset = -1;
-      let bestCurrent = 0;
-      for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
-        if (offset <= scrollOffset && offset > bestOffset) {
-          bestOffset = offset;
-          bestCurrent = charProgress;
-        }
-      }
-      if (bestOffset !== -1) {
-        current = bestCurrent;
-        console.log(`[NT DEBUG recalc] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+      if (total === 0 && !charData.isLayoutDeferred && scrollOffset <= 50) {
+        current = 0;
+        console.log(`[NT DEBUG recalc] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
       } else {
-        // No prior offset mapping exists — DOM is temporarily unmounted or we
-        // navigated backward before all mapped entries. Hold the current char
-        // count by skipping this update entirely.
-        console.log(`[NT DEBUG recalc] DEFERRED no-match: scrollOffset=${scrollOffset} mapSize=${stateRefs.offsetToCharMap.size} → HOLDING chars=${ttuState.chars}`);
-        return;
+        // Find the best matching character count from previous pages
+        let bestOffset = -1;
+        let bestCurrent = 0;
+        for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
+          if (offset <= scrollOffset && offset > bestOffset) {
+            bestOffset = offset;
+            bestCurrent = charProgress;
+          }
+        }
+        if (bestOffset !== -1) {
+          current = bestCurrent;
+          console.log(`[NT DEBUG recalc] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+        } else {
+          // No prior offset mapping exists — DOM is temporarily unmounted or we
+          // navigated backward before all mapped entries. Hold the current char
+          // count by skipping this update entirely.
+          console.log(`[NT DEBUG recalc] DEFERRED no-match: scrollOffset=${scrollOffset} mapSize=${stateRefs.offsetToCharMap.size} → HOLDING chars=${ttuState.chars}`);
+          return;
+        }
       }
     } else {
       // Valid text page — save scroll offset mapping with monotonic guard.
@@ -777,11 +789,18 @@ function recalculateChars(force = false) {
       if (prevMapValue === undefined || current >= prevMapValue) {
         stateRefs.offsetToCharMap.set(scrollOffset, current);
       }
+      if (charData.isPaginated) {
+        const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
+        const nextCurrent = current + (charData.visible || 0);
+        if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
+          stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
+        }
+      }
     }
 
     const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
     if (stateRefs.globalSessionStartChar === -1) {
-      stateRefs.globalSessionStartChar = current;
+      stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
     } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
       if (activeSection === stateRefs.globalSessionStartSection) {
         if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
@@ -1087,23 +1106,35 @@ async function setupTTUChronometer() {
 
             const scrollOffset = getLayoutOffset();
 
+            const container = document.querySelector('.book-content-container') ||
+                              document.querySelector('.book-content') ||
+                              document.querySelector('[data-ref="container"]') ||
+                              document.querySelector('.reader-container') ||
+                              document.body;
+            const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
+
             if (total === 0 || isLayoutDeferred) {
-              let bestOffset = -1;
-              let bestCurrent = 0;
-              for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
-                if (offset <= scrollOffset && offset > bestOffset) {
-                  bestOffset = offset;
-                  bestCurrent = charProgress;
-                }
-              }
-              if (bestOffset !== -1) {
-                current = bestCurrent;
-                console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+              if (total === 0 && !isLayoutDeferred && scrollOffset <= 50) {
+                current = 0;
+                console.log(`[NT DEBUG tick] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
               } else {
-                // No prior offset mapping — hold current chars by reconstructing
-                // the previous current value so the diff produces no change
-                current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
-                console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
+                let bestOffset = -1;
+                let bestCurrent = 0;
+                for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
+                  if (offset <= scrollOffset && offset > bestOffset) {
+                    bestOffset = offset;
+                    bestCurrent = charProgress;
+                  }
+                }
+                if (bestOffset !== -1) {
+                  current = bestCurrent;
+                  console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+                } else {
+                  // No prior offset mapping — hold current chars by reconstructing
+                  // the previous current value so the diff produces no change
+                  current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
+                  console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
+                }
               }
             } else {
               // Monotonic guard — see recalculateChars for full explanation
@@ -1111,11 +1142,18 @@ async function setupTTUChronometer() {
               if (prevMapValue === undefined || current >= prevMapValue) {
                 stateRefs.offsetToCharMap.set(scrollOffset, current);
               }
+              if (isPaginated) {
+                const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
+                const nextCurrent = current + (charData.visible || 0);
+                if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
+                  stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
+                }
+              }
             }
 
             const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
             if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = current;
+              stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
             } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
               if (activeSection === stateRefs.globalSessionStartSection) {
                 if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
