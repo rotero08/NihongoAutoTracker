@@ -52,6 +52,64 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
+/**
+ * Performs a deep recursive search crossing any open shadow DOM boundaries to collect matches.
+ */
+function querySelectorAllDeep(selector: string, root: Node = document): HTMLElement[] {
+  const elements: HTMLElement[] = [];
+
+  function traverse(node: Node) {
+    if (node instanceof HTMLElement) {
+      if (node.matches(selector)) {
+        elements.push(node);
+      }
+    }
+
+    const children = node.childNodes;
+    for (let i = 0; i < children.length; i++) {
+      traverse(children[i]);
+    }
+
+    if (node instanceof HTMLElement && node.shadowRoot) {
+      traverse(node.shadowRoot);
+    }
+  }
+
+  traverse(root);
+  return elements;
+}
+
+/**
+ * Performs a deep recursive search crossing any open shadow DOM boundaries to locate a single match.
+ */
+function querySelectorDeep(selector: string, root: Node): HTMLElement | null {
+  let found: HTMLElement | null = null;
+
+  function traverse(node: Node) {
+    if (found) return;
+
+    if (node instanceof HTMLElement) {
+      if (node.matches(selector)) {
+        found = node;
+        return;
+      }
+    }
+
+    const children = node.childNodes;
+    for (let i = 0; i < children.length; i++) {
+      traverse(children[i]);
+      if (found) return;
+    }
+
+    if (node instanceof HTMLElement && node.shadowRoot) {
+      traverse(node.shadowRoot);
+    }
+  }
+
+  traverse(root);
+  return found;
+}
+
 function scheduleMaskUpdate(el: HTMLElement) {
   pendingMaskUpdates.add(el);
   if (maskRafId === null) {
@@ -152,43 +210,43 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
       ? 'ytd-playlist-panel-video-renderer'
       : 'ytd-playlist-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-rich-grid-media, ytd-compact-video-renderer';
 
-    let items = Array.from(parent?.querySelectorAll(rendererSelector) || []);
+    let items = Array.from(parent ? querySelectorAllDeep(rendererSelector, parent) : []);
 
     // Fallback 1: search inside standard list container globally if container is cached/hidden
     if (items.length === 0 && !isInline) {
       const globalList = document.querySelector('ytd-playlist-video-list-renderer') || document;
-      items = Array.from(globalList.querySelectorAll(rendererSelector));
+      items = querySelectorAllDeep(rendererSelector, globalList);
     }
 
     // Fallback 2: search globally across the entire document for any renderer
     if (items.length === 0 && !isInline) {
-      items = Array.from(document.querySelectorAll('ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer'));
+      items = querySelectorAllDeep('ytd-playlist-video-renderer, ytd-playlist-panel-video-renderer, ytd-podcast-episode-row-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer');
     }
 
     videos = items.map(el => {
-      const titleEl = el.querySelector('#video-title')
-        || el.querySelector('#video-title-link')
-        || el.querySelector('#title')
-        || el.querySelector('.yt-core-attributed-string');
-      const titleText = titleEl?.textContent?.trim() || el.querySelector('a')?.textContent?.trim() || 'Unknown';
+      const titleEl = querySelectorDeep('#video-title', el)
+        || querySelectorDeep('#video-title-link', el)
+        || querySelectorDeep('#title', el)
+        || querySelectorDeep('.yt-core-attributed-string', el);
+      const titleText = titleEl?.textContent?.trim() || querySelectorDeep('a', el)?.textContent?.trim() || 'Unknown';
 
       // Prioritize ID/Class-based selectors first for fast lookup, unaffected by dynamic layout changes
-      const urlEl = el.querySelector('a#video-title')
-        || el.querySelector('a#video-title-link')
-        || el.querySelector('a#wc-endpoint')
-        || el.querySelector('a#thumbnail')
-        || el.querySelector('a[href*="watch?v="]')
-        || el.querySelector('a[href*="/watch?v="]')
-        || Array.from(el.querySelectorAll('a')).find(a => {
+      const urlEl = querySelectorDeep('a#video-title', el)
+        || querySelectorDeep('a#video-title-link', el)
+        || querySelectorDeep('a#wc-endpoint', el)
+        || querySelectorDeep('a#thumbnail', el)
+        || querySelectorDeep('a[href*="watch?v="]', el)
+        || querySelectorDeep('a[href*="/watch?v="]', el)
+        || Array.from(querySelectorAllDeep('a', el)).find(a => {
           const href = (a as any).href || a.getAttribute('href') || '';
           return href.includes('watch?v=') || href.includes('/watch?v=');
         })
-        || el.querySelector('a');
+        || querySelectorDeep('a', el);
 
-      const lengthEl = el.querySelector('ytd-thumbnail-overlay-time-status-renderer')
-        || el.querySelector('span.ytd-thumbnail-overlay-time-status-renderer')
-        || el.querySelector('.badge-shape-wiz__text')
-        || el.querySelector('#time-status');
+      const lengthEl = querySelectorDeep('ytd-thumbnail-overlay-time-status-renderer', el)
+        || querySelectorDeep('span.ytd-thumbnail-overlay-time-status-renderer', el)
+        || querySelectorDeep('.badge-shape-wiz__text', el)
+        || querySelectorDeep('#time-status', el);
 
       let domTime = 1;
       const timeText = lengthEl?.textContent?.trim() || "";
