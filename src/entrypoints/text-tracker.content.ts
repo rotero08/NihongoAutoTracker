@@ -747,10 +747,10 @@ function recalculateChars(force = false) {
     const scrollOffset = getLayoutOffset();
 
     const container = document.querySelector('.book-content-container') ||
-                      document.querySelector('.book-content') ||
-                      document.querySelector('[data-ref="container"]') ||
-                      document.querySelector('.reader-container') ||
-                      document.body;
+      document.querySelector('.book-content') ||
+      document.querySelector('[data-ref="container"]') ||
+      document.querySelector('.reader-container') ||
+      document.body;
     const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
 
     if (total === 0 || charData.isLayoutDeferred) {
@@ -1107,10 +1107,10 @@ async function setupTTUChronometer() {
             const scrollOffset = getLayoutOffset();
 
             const container = document.querySelector('.book-content-container') ||
-                              document.querySelector('.book-content') ||
-                              document.querySelector('[data-ref="container"]') ||
-                              document.querySelector('.reader-container') ||
-                              document.body;
+              document.querySelector('.book-content') ||
+              document.querySelector('[data-ref="container"]') ||
+              document.querySelector('.reader-container') ||
+              document.body;
             const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
 
             if (total === 0 || isLayoutDeferred) {
