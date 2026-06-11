@@ -619,6 +619,10 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
+  if (isPaginated && total === 0) {
+    return false;
+  }
+
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
     // Mode changed! Start a new session, reset state, and completely pause
     console.log(`[NT DEBUG transition] MODE CHANGE: ${lastLoggedPaginatedMode} → ${isPaginated}`);
@@ -738,13 +742,20 @@ function recalculateChars(force = false) {
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
+    const scrollOffset = getLayoutOffset();
+    const total = charData.total;
+
+    // Freeze progress updates during unmounted/loading states in Paginated Mode,
+    // unless we are at the beginning of the page/book (scrollOffset <= 50),
+    // in which case we want to force current = 0 and let the progress update.
+    if (charData.isPaginated && total === 0 && scrollOffset > 50) {
+      return;
+    }
+
     // Synchronize section boundary and manual offset before applying the local paragraph count
     checkAndProcessSectionTransition(charData);
 
     let current = charData.current;
-    const total = charData.total;
-
-    const scrollOffset = getLayoutOffset();
 
     const container = document.querySelector('.book-content-container') ||
       document.querySelector('.book-content') ||
@@ -754,7 +765,7 @@ function recalculateChars(force = false) {
     const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
 
     if (total === 0 || charData.isLayoutDeferred) {
-      if (total === 0 && !charData.isLayoutDeferred && scrollOffset <= 50) {
+      if (scrollOffset <= 50) {
         current = 0;
         console.log(`[NT DEBUG recalc] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
       } else {
@@ -1106,72 +1117,79 @@ async function setupTTUChronometer() {
 
             const scrollOffset = getLayoutOffset();
 
-            const container = document.querySelector('.book-content-container') ||
-              document.querySelector('.book-content') ||
-              document.querySelector('[data-ref="container"]') ||
-              document.querySelector('.reader-container') ||
-              document.body;
-            const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
+            // Freeze progress updates during unmounted/loading states in Paginated Mode,
+            // unless we are at the beginning of the page/book (scrollOffset <= 50),
+            // in which case we want to force current = 0 and let the progress update.
+            if (isPaginated && total === 0 && scrollOffset > 50) {
+              // Skip updating chars, let it hold
+            } else {
+              const container = document.querySelector('.book-content-container') ||
+                document.querySelector('.book-content') ||
+                document.querySelector('[data-ref="container"]') ||
+                document.querySelector('.reader-container') ||
+                document.body;
+              const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
 
-            if (total === 0 || isLayoutDeferred) {
-              if (total === 0 && !isLayoutDeferred && scrollOffset <= 50) {
-                current = 0;
-                console.log(`[NT DEBUG tick] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
-              } else {
-                let bestOffset = -1;
-                let bestCurrent = 0;
-                for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
-                  if (offset <= scrollOffset && offset > bestOffset) {
-                    bestOffset = offset;
-                    bestCurrent = charProgress;
+              if (total === 0 || isLayoutDeferred) {
+                if (scrollOffset <= 50) {
+                  current = 0;
+                  console.log(`[NT DEBUG tick] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
+                } else {
+                  let bestOffset = -1;
+                  let bestCurrent = 0;
+                  for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
+                    if (offset <= scrollOffset && offset > bestOffset) {
+                      bestOffset = offset;
+                      bestCurrent = charProgress;
+                    }
+                  }
+                  if (bestOffset !== -1) {
+                    current = bestCurrent;
+                    console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
+                  } else {
+                    // No prior offset mapping — hold current chars by reconstructing
+                    // the previous current value so the diff produces no change
+                    current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
+                    console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
                   }
                 }
-                if (bestOffset !== -1) {
-                  current = bestCurrent;
-                  console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
-                } else {
-                  // No prior offset mapping — hold current chars by reconstructing
-                  // the previous current value so the diff produces no change
-                  current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
-                  console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
-                }
-              }
-            } else {
-              // Monotonic guard — see recalculateChars for full explanation
-              const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
-              if (prevMapValue === undefined || current >= prevMapValue) {
-                stateRefs.offsetToCharMap.set(scrollOffset, current);
-              }
-              if (isPaginated) {
-                const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
-                const nextCurrent = current + (charData.visible || 0);
-                if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
-                  stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
-                }
-              }
-            }
-
-            const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
-            if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
-            } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
-              if (activeSection === stateRefs.globalSessionStartSection) {
-                if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
-                  stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
-                }
               } else {
-                if (stateRefs.globalSessionStartChar !== 0) {
-                  stateRefs.globalSessionStartChar = 0;
+                // Monotonic guard — see recalculateChars for full explanation
+                const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
+                if (prevMapValue === undefined || current >= prevMapValue) {
+                  stateRefs.offsetToCharMap.set(scrollOffset, current);
+                }
+                if (isPaginated) {
+                  const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
+                  const nextCurrent = current + (charData.visible || 0);
+                  if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
+                    stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
+                  }
                 }
               }
-            }
-            if (now >= _transitionGraceUntil) {
-              let diff = current - stateRefs.globalSessionStartChar;
-              if (diff < 0) diff = 0;
-              ttuState.chars = diff + stateRefs.globalManualCharOffset;
-            } else {
-              if (isPaginated) {
-                ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
+
+              const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
+              if (stateRefs.globalSessionStartChar === -1) {
+                stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
+              } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
+                if (activeSection === stateRefs.globalSessionStartSection) {
+                  if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
+                    stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
+                  }
+                } else {
+                  if (stateRefs.globalSessionStartChar !== 0) {
+                    stateRefs.globalSessionStartChar = 0;
+                  }
+                }
+              }
+              if (now >= _transitionGraceUntil) {
+                let diff = current - stateRefs.globalSessionStartChar;
+                if (diff < 0) diff = 0;
+                ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              } else {
+                if (isPaginated) {
+                  ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
+                }
               }
             }
           }

@@ -143,19 +143,6 @@ function getSectionIndex(container: Element): number | null {
 
     // Approach 3 (SPA Fallback): Generate a guaranteed unique key using parent URL and first paragraph text.
     if (typeof window !== 'undefined') {
-        // Try page indicators first for page-by-page readers (such as Yomiyasu)
-        const pageElements = document.querySelectorAll('.page-indicator, [data-page], .current-page');
-        for (let i = 0; i < pageElements.length; i++) {
-            const text = (pageElements[i] as HTMLElement).innerText || '';
-            const match = text.match(/(\d+)\s*\/\s*(\d+)/);
-            if (match) {
-                const parsed = parseInt(match[1], 10);
-                if (!isNaN(parsed) && parsed >= 0) {
-                    return parsed;
-                }
-            }
-        }
-
         let parentUrl = '';
         try {
             if (window.top && window.top.location) {
