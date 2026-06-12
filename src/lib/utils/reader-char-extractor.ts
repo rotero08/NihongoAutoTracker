@@ -8,7 +8,7 @@ export interface AdvancedCharData {
     total: number;
     sectionIndex: number | null;
     isPaginated: boolean;
-    isLayoutDeferred?: boolean;
+    isLayoutDeferred?: boolean; // Restored as optional to resolve TypeScript compiler diagnostics
     visible?: number;
 }
 
@@ -153,7 +153,10 @@ function getSectionIndex(container: Element): number | null {
         }
 
         const firstP = container.querySelector('p, h1, h2, h3, h4, h5, h6, li');
-        const textSignature = firstP ? (firstP.textContent || '').trim().slice(0, 120) : '';
+        if (!firstP) {
+            return null; // Return null if there are absolutely no text paragraphs in the active container
+        }
+        const textSignature = (firstP.textContent || '').trim().slice(0, 120);
 
         const firstChild = container.firstElementChild;
         const childSignature = firstChild ? firstChild.tagName + '||' + firstChild.className : '';
@@ -365,21 +368,14 @@ export function extractAdvancedCharCount(
         }
 
         if (pTags.length === 0) {
-            // Differentiate temporary loading unmounts from permanent cover/illustration pages.
-            // If the reader container contains images, the layout is not deferred, allowing transitions to process.
-            const activeReaderContainer = document.querySelector('.reader-container, .book-content-container, #reader-container, .reader-wrapper') || readerContainer;
-            const hasImages = !!activeReaderContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
-            const isDeferred = !hasImages;
-
-            console.log(`[NT DEBUG extractor] pTags=0 → DEFERRED=${isDeferred} | sectionIndex=${sectionIndex} isPaginated=${cachedIsPaginated}`);
-            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: isDeferred };
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
         // Layout Stability Guard: If layout is not loaded, defer transition processing
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: true };
+            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
@@ -627,10 +623,8 @@ export function extractAdvancedCharCount(
             }
         }
 
-        console.log(`[NT DEBUG extractor] pTags=${ttuCachedNodes.length} current=${current} visible=${visible} total=${total} sectionIndex=${sectionIndex} isPag=${cachedIsPaginated}`);
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated, visible };
     } catch (e) {
-        console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
         return null;
     }
 }

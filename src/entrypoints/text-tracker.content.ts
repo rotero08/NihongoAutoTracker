@@ -105,6 +105,15 @@ function getLayoutOffset(): number {
   return Math.round(Math.abs(rect.left) + Math.abs(rect.top)) + internalScroll;
 }
 
+// Hoisted lexically to resolve TS2304 "Cannot find name 'isChapterLoading'"
+function isChapterLoading(): boolean {
+  const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
+  if (loader && loader.querySelector('svg')) return true;
+  const contentContainer = document.querySelector('.book-content-container') || document.querySelector('.reader-container');
+  if (!contentContainer) return true;
+  return contentContainer.children.length === 0;
+}
+
 function dispatchLinkerRefresh() {
   const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
   if (wrapper) {
@@ -238,6 +247,7 @@ interface StateRefs {
   offsetToCharMap: Map<number, number>;
   globalSessionStartSection?: number;
   globalSessionStartCharInternal?: number;
+  lastNonZeroCurrentInChapter: number;
 }
 
 let _globalSessionStartChar = -1;
@@ -272,7 +282,8 @@ const stateRefs: StateRefs = {
   lastSectionTotal: 0,
   visitedSections: new Map<number, number>(),
   visitedSectionTotals: new Map<number, number>(),
-  offsetToCharMap: new Map<number, number>()
+  offsetToCharMap: new Map<number, number>(),
+  lastNonZeroCurrentInChapter: 0
 };
 
 const ttuState = new Proxy({
@@ -320,6 +331,63 @@ const ttuState = new Proxy({
 
 let isSyncing = false;
 
+// Local cache to count characters of container elements in Flat DOM
+const localContainerCharCountCache = new WeakMap<Element, number>();
+
+function getContainerTotalChars(container: Element): number {
+  let cached = localContainerCharCountCache.get(container);
+  if (cached !== undefined) return cached;
+
+  const paragraphs = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
+    if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
+    return (el.textContent || '').trim().length > 0;
+  });
+
+  const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
+
+  const shouldIgnoreNode = (node: Node | null): boolean => {
+    let current = node;
+    while (current && current.nodeType === Node.ELEMENT_NODE) {
+      const el = current as Element;
+      const tag = el.tagName;
+      if (tag === 'RT' || tag === 'RP' || tag === 'SVG' || tag === 'FIGCAPTION' || tag === 'NOSCRIPT') {
+        return true;
+      }
+      const cl = el.classList;
+      if (cl && (cl.contains('ttu-illustration-container') || cl.contains('ttu-img-container'))) {
+        return true;
+      }
+      if (tag === 'P' || tag === 'LI' || /^(H[1-6])$/i.test(tag)) {
+        break;
+      }
+      current = current.parentNode;
+    }
+    return false;
+  };
+
+  let total = 0;
+  for (let i = 0; i < paragraphs.length; i++) {
+    const el = paragraphs[i];
+    let text = '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (!shouldIgnoreNode(n.parentElement)) {
+        text += n.nodeValue || '';
+      }
+    }
+    let matchCount = 0;
+    JP_CHAR_PATTERN.lastIndex = 0;
+    while (JP_CHAR_PATTERN.exec(text) !== null) {
+      matchCount++;
+    }
+    total += matchCount;
+  }
+
+  localContainerCharCountCache.set(container, total);
+  return total;
+}
+
 function startNewSession(isPaginated?: boolean) {
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
@@ -334,15 +402,17 @@ function startNewSession(isPaginated?: boolean) {
   stateRefs.visitedSectionTotals.clear();
   stateRefs.offsetToCharMap.clear();
   stateRefs.globalLastTick = Date.now();
+  stateRefs.lastNonZeroCurrentInChapter = 0;
 
   hasSyncedThisSession = false;
 
   const currentCount = extractAdvancedCharCount(undefined, false);
-  if (currentCount !== null && !currentCount.isLayoutDeferred && currentCount.total > 0) {
+  if (currentCount !== null && currentCount.total > 0) {
     const isPag = isPaginated ?? currentCount.isPaginated;
     stateRefs.lastSectionIndex = currentCount.sectionIndex !== null ? currentCount.sectionIndex : -1;
     stateRefs.lastSectionTotal = currentCount.total;
     stateRefs.globalSessionStartChar = currentCount.current; // Correctly initialize the baseline to our active offset position
+    stateRefs.lastNonZeroCurrentInChapter = currentCount.current;
     if (isPag && currentCount.sectionIndex !== null) {
       stateRefs.visitedSectionTotals.set(currentCount.sectionIndex, currentCount.total);
     }
@@ -575,6 +645,7 @@ async function saveSessionAndQueue() {
   stateRefs.visitedSectionTotals.clear();
   stateRefs.offsetToCharMap.clear();
   stateRefs.globalLastTick = Date.now();
+  stateRefs.lastNonZeroCurrentInChapter = 0;
   ttuState.running = false;
   hasSyncedThisSession = false;
 
@@ -616,16 +687,27 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
  * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
  */
 function checkAndProcessSectionTransition(charData: any): boolean {
-  const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
+  if (isChapterLoading()) {
+    return false;
+  }
+
+  const { total, sectionIndex, isPaginated } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-  if (isPaginated && total === 0) {
-    return false;
+  let containers = Array.from(document.querySelectorAll('.book-content-container'));
+  if (containers.length === 0) {
+    containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
+  }
+  const isFlatDOM = containers.length > 1;
+
+  // Safe-handle forward skip-scrolling in non-flat DOM (Yomiyasu) by starting a new session
+  if (!isFlatDOM && activeSection > stateRefs.lastSectionIndex + 1 && stateRefs.lastSectionIndex !== -1) {
+    startNewSession(isPaginated);
+    return true;
   }
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
     // Mode changed! Start a new session, reset state, and completely pause
-    console.log(`[NT DEBUG transition] MODE CHANGE: ${lastLoggedPaginatedMode} → ${isPaginated}`);
     startNewSession(isPaginated);
     ttuState.running = false;
     _wasTimerRunningBeforeYatsuSidebar = false;
@@ -634,19 +716,41 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     return true;
   }
 
-  // Skip transition checks during active loading or layout-deferred states
-  if (isLayoutDeferred) {
-    console.log(`[NT DEBUG transition] DEFERRED — skipping | activeSection=${activeSection} lastSection=${stateRefs.lastSectionIndex}`);
-    return false;
-  }
-
   lastLoggedPaginatedMode = isPaginated;
+
+  // Clear future section caches when scrolling backward to prevent stale remnants
+  if (activeSection < stateRefs.lastSectionIndex && activeSection !== -1) {
+    for (const key of Array.from(stateRefs.visitedSectionTotals.keys())) {
+      if (key > activeSection) {
+        stateRefs.visitedSectionTotals.delete(key);
+      }
+    }
+    for (const key of Array.from(stateRefs.visitedSections.keys())) {
+      if (key > activeSection) {
+        stateRefs.visitedSections.delete(key);
+      }
+    }
+    // Pristine Backtrack Resets: Reset session start baseline trackers cleanly
+    stateRefs.globalSessionStartCharInternal = -1;
+    stateRefs.globalSessionStartChar = isPaginated ? 0 : charData.current;
+    stateRefs.globalSessionStartSection = activeSection;
+  }
 
   // Commit baseline totals for accurate dynamic summing in Paginated Mode
   if (isPaginated && activeSection !== -1) {
     stateRefs.visitedSectionTotals.set(activeSection, total);
     if (stateRefs.lastSectionIndex !== -1) {
       stateRefs.visitedSectionTotals.set(stateRefs.lastSectionIndex, stateRefs.lastSectionTotal);
+    }
+
+    // Fill in skipped sections if we are in Flat DOM (multiple containers)
+    if (isFlatDOM) {
+      for (let i = 0; i < activeSection; i++) {
+        if (!stateRefs.visitedSectionTotals.has(i) && containers[i]) {
+          const computedSecTotal = getContainerTotalChars(containers[i]);
+          stateRefs.visitedSectionTotals.set(i, computedSecTotal);
+        }
+      }
     }
   }
 
@@ -666,7 +770,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       }
     } else {
       stateRefs.offsetToCharMap.clear(); // Clear mapping context on any chapter transitions
-      console.log(`[NT DEBUG transition] SECTION CHANGE: ${stateRefs.lastSectionIndex} → ${activeSection} | total=${total} isPag=${isPaginated}`);
+      stateRefs.lastNonZeroCurrentInChapter = 0; // Reset chapter progress baseline on chapter changes
       if (isPaginated) {
         // Robust dynamic offset summing to prevent timing issues during fast turns and backtracks
         let computedOffset = 0;
@@ -705,7 +809,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
       else stabilizer.runGracePeriodIfJiten();
     }
-    console.log(`[NT DEBUG transition] POST-CHANGE: lastSection=${stateRefs.lastSectionIndex} manualOffset=${stateRefs.globalManualCharOffset} startChar=${stateRefs.globalSessionStartChar} visitedTotals=${JSON.stringify([...stateRefs.visitedSectionTotals.entries()])}`);
     return true;
   } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
     if (total > stateRefs.lastSectionTotal) {
@@ -724,6 +827,11 @@ function recalculateChars(force = false) {
     return;
   }
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
+
+  if (isChapterLoading()) {
+    return; // Hold previous progress stable during loading
+  }
+
   const now = Date.now();
   if (!force && (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS)) {
     if (scrollTimeout) clearTimeout(scrollTimeout);
@@ -742,74 +850,39 @@ function recalculateChars(force = false) {
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
-    const scrollOffset = getLayoutOffset();
-    const total = charData.total;
-
-    // Freeze progress updates during unmounted/loading states in Paginated Mode,
-    // unless we are at the beginning of the page/book (scrollOffset <= 50),
-    // in which case we want to force current = 0 and let the progress update.
-    if (charData.isPaginated && total === 0 && scrollOffset > 50) {
-      return;
-    }
-
     // Synchronize section boundary and manual offset before applying the local paragraph count
     checkAndProcessSectionTransition(charData);
 
+    const scrollOffset = getLayoutOffset();
+    const total = charData.total;
     let current = charData.current;
 
-    const container = document.querySelector('.book-content-container') ||
-      document.querySelector('.book-content') ||
-      document.querySelector('[data-ref="container"]') ||
-      document.querySelector('.reader-container') ||
-      document.body;
-    const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
+    const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
 
-    if (total === 0 || charData.isLayoutDeferred) {
-      if (scrollOffset <= 50) {
-        current = 0;
-        console.log(`[NT DEBUG recalc] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
-      } else {
-        // Find the best matching character count from previous pages
-        let bestOffset = -1;
-        let bestCurrent = 0;
-        for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
-          if (offset <= scrollOffset && offset > bestOffset) {
-            bestOffset = offset;
-            bestCurrent = charProgress;
-          }
-        }
-        if (bestOffset !== -1) {
-          current = bestCurrent;
-          console.log(`[NT DEBUG recalc] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
-        } else {
-          // No prior offset mapping exists — DOM is temporarily unmounted or we
-          // navigated backward before all mapped entries. Hold the current char
-          // count by skipping this update entirely.
-          console.log(`[NT DEBUG recalc] DEFERRED no-match: scrollOffset=${scrollOffset} mapSize=${stateRefs.offsetToCharMap.size} → HOLDING chars=${ttuState.chars}`);
-          return;
-        }
-      }
+    let containers = Array.from(document.querySelectorAll('.book-content-container'));
+    if (containers.length === 0) {
+      containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
+    }
+    const isFlatDOM = containers.length > 1;
+
+    const isResetTriggered = isFlatDOM
+      ? (scrollOffset <= 50 && (activeSection === 0 || activeSection === -1))
+      : (scrollOffset <= 50 && activeSection === 0);
+
+    if (isResetTriggered) {
+      current = 0;
+      stateRefs.globalSessionStartCharInternal = -1; // Fix baseline pinning
+      stateRefs.globalSessionStartChar = 0;
+      stateRefs.globalSessionStartSection = -1;
+      stateRefs.lastNonZeroCurrentInChapter = 0;
     } else {
-      // Valid text page — save scroll offset mapping with monotonic guard.
-      // In paginated mode scrollOffset is constant, so the map has one key.
-      // During DOM transitions the extractor briefly returns current=0 before
-      // fully unmounting (pTags > 0 but elements repositioned). Without this
-      // guard that transient 0 overwrites the real value, poisoning the
-      // deferred fallback on the next (image/empty) page.
-      const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
-      if (prevMapValue === undefined || current >= prevMapValue) {
-        stateRefs.offsetToCharMap.set(scrollOffset, current);
-      }
-      if (charData.isPaginated) {
-        const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
-        const nextCurrent = current + (charData.visible || 0);
-        if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
-          stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
-        }
+      if (total === 0 || charData.isLayoutDeferred) {
+        current = stateRefs.lastNonZeroCurrentInChapter;
+      } else {
+        stateRefs.lastNonZeroCurrentInChapter = current;
       }
     }
 
-    const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
     if (stateRefs.globalSessionStartChar === -1) {
       stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
     } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
@@ -824,13 +897,14 @@ function recalculateChars(force = false) {
       }
     }
     if (Date.now() < _transitionGraceUntil) {
-      if (!charData.isPaginated) return;
+      if (!charData.isPaginated) {
+        return;
+      }
     }
 
     let diff = current - stateRefs.globalSessionStartChar;
     if (diff < 0) diff = 0;
     const newChars = diff + stateRefs.globalManualCharOffset;
-    console.log(`[NT DEBUG recalc] current=${current} startChar=${stateRefs.globalSessionStartChar} diff=${diff} manualOffset=${stateRefs.globalManualCharOffset} → chars=${newChars} (was ${ttuState.chars})`);
     ttuState.chars = newChars;
 
     dispatchLinkerRefresh();
@@ -1067,6 +1141,11 @@ async function setupTTUChronometer() {
         return;
       }
 
+      if (isChapterLoading()) {
+        if (ttuState.running) stateRefs.globalLastTick = Date.now();
+        return;
+      }
+
       if (window.location.hostname === 'app.yatsu.moe') {
         const sidebarOpen = isYatsuSidebarOpen();
         if (sidebarOpen) {
@@ -1113,83 +1192,56 @@ async function setupTTUChronometer() {
         if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
-            let { current, total, isLayoutDeferred, isPaginated } = charData;
+            let { current, total, isPaginated } = charData;
 
             const scrollOffset = getLayoutOffset();
 
-            // Freeze progress updates during unmounted/loading states in Paginated Mode,
-            // unless we are at the beginning of the page/book (scrollOffset <= 50),
-            // in which case we want to force current = 0 and let the progress update.
-            if (isPaginated && total === 0 && scrollOffset > 50) {
-              // Skip updating chars, let it hold
+            const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
+
+            let containers = Array.from(document.querySelectorAll('.book-content-container'));
+            if (containers.length === 0) {
+              containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
+            }
+            const isFlatDOM = containers.length > 1;
+
+            const isResetTriggered = isFlatDOM
+              ? (scrollOffset <= 50 && (activeSection === 0 || activeSection === -1))
+              : (scrollOffset <= 50 && activeSection === 0);
+
+            if (isResetTriggered) {
+              current = 0;
+              stateRefs.globalSessionStartCharInternal = -1; // Fix baseline pinning
+              stateRefs.globalSessionStartChar = 0;
+              stateRefs.globalSessionStartSection = -1;
+              stateRefs.lastNonZeroCurrentInChapter = 0;
             } else {
-              const container = document.querySelector('.book-content-container') ||
-                document.querySelector('.book-content') ||
-                document.querySelector('[data-ref="container"]') ||
-                document.querySelector('.reader-container') ||
-                document.body;
-              const pageWidth = container ? container.getBoundingClientRect().width : window.innerWidth;
+              if (total === 0 || charData.isLayoutDeferred) {
+                current = stateRefs.lastNonZeroCurrentInChapter;
+              } else {
+                stateRefs.lastNonZeroCurrentInChapter = current;
+              }
+            }
 
-              if (total === 0 || isLayoutDeferred) {
-                if (scrollOffset <= 50) {
-                  current = 0;
-                  console.log(`[NT DEBUG tick] DEFERRED beginning of book: scrollOffset=${scrollOffset} → current=0`);
-                } else {
-                  let bestOffset = -1;
-                  let bestCurrent = 0;
-                  for (const [offset, charProgress] of stateRefs.offsetToCharMap.entries()) {
-                    if (offset <= scrollOffset && offset > bestOffset) {
-                      bestOffset = offset;
-                      bestCurrent = charProgress;
-                    }
-                  }
-                  if (bestOffset !== -1) {
-                    current = bestCurrent;
-                    console.log(`[NT DEBUG tick] DEFERRED fallback: scrollOffset=${scrollOffset} bestOffset=${bestOffset} → current=${current}`);
-                  } else {
-                    // No prior offset mapping — hold current chars by reconstructing
-                    // the previous current value so the diff produces no change
-                    current = stateRefs.globalSessionStartChar + (ttuState.chars - stateRefs.globalManualCharOffset);
-                    console.log(`[NT DEBUG tick] DEFERRED no-match: reconstructed current=${current} (startChar=${stateRefs.globalSessionStartChar} chars=${ttuState.chars} manualOffset=${stateRefs.globalManualCharOffset})`);
-                  }
+            if (stateRefs.globalSessionStartChar === -1) {
+              stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
+            } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
+              if (activeSection === stateRefs.globalSessionStartSection) {
+                if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
+                  stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
                 }
               } else {
-                // Monotonic guard — see recalculateChars for full explanation
-                const prevMapValue = stateRefs.offsetToCharMap.get(scrollOffset);
-                if (prevMapValue === undefined || current >= prevMapValue) {
-                  stateRefs.offsetToCharMap.set(scrollOffset, current);
-                }
-                if (isPaginated) {
-                  const nextMapValue = stateRefs.offsetToCharMap.get(scrollOffset + pageWidth);
-                  const nextCurrent = current + (charData.visible || 0);
-                  if (nextMapValue === undefined || nextCurrent >= nextMapValue) {
-                    stateRefs.offsetToCharMap.set(scrollOffset + pageWidth, nextCurrent);
-                  }
+                if (stateRefs.globalSessionStartChar !== 0) {
+                  stateRefs.globalSessionStartChar = 0;
                 }
               }
-
-              const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
-              if (stateRefs.globalSessionStartChar === -1) {
-                stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
-              } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
-                if (activeSection === stateRefs.globalSessionStartSection) {
-                  if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
-                    stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
-                  }
-                } else {
-                  if (stateRefs.globalSessionStartChar !== 0) {
-                    stateRefs.globalSessionStartChar = 0;
-                  }
-                }
-              }
-              if (now >= _transitionGraceUntil) {
-                let diff = current - stateRefs.globalSessionStartChar;
-                if (diff < 0) diff = 0;
-                ttuState.chars = diff + stateRefs.globalManualCharOffset;
-              } else {
-                if (isPaginated) {
-                  ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
-                }
+            }
+            if (now >= _transitionGraceUntil) {
+              let diff = current - stateRefs.globalSessionStartChar;
+              if (diff < 0) diff = 0;
+              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+            } else {
+              if (isPaginated) {
+                ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
               }
             }
           }
@@ -1287,16 +1339,10 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.visitedSections.set(activeSection, 0);
   stateRefs.visitedSectionTotals.clear();
   stateRefs.offsetToCharMap.clear();
+  stateRefs.lastNonZeroCurrentInChapter = current;
   if (isPaginated) {
     stateRefs.visitedSectionTotals.set(activeSection, total);
   }
-}
-
-function isChapterLoading(): boolean {
-  const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
-  if (loader && loader.querySelector('svg')) return true;
-  const contentContainer = document.querySelector('.book-content-container');
-  return !!(contentContainer && contentContainer.children.length === 0);
 }
 
 function isDictNode(node: Node): boolean {
@@ -1783,6 +1829,7 @@ export default defineContentScript({
             const isPag = initCount !== null ? initCount.isPaginated : false;
             stateRefs.globalSessionStartChar = isPag ? 0 : (initCount !== null ? initCount.current : -1);
             stateRefs.globalManualCharOffset = 0;
+            stateRefs.lastNonZeroCurrentInChapter = 0;
 
             const timeVal = document.querySelector('#nt-ttu-val-time');
             const charsVal = document.querySelector('#nt-ttu-val-chars');
