@@ -398,11 +398,31 @@ export async function searchMedia(input: {
   const response = await fetchNHTApi(endpoint);
   if (!response.ok) return [];
   const data = await response.json();
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.results)) return data.results;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.media)) return data.media;
-  return [];
+
+  let rawResults: any[] = [];
+  if (Array.isArray(data)) {
+    rawResults = data;
+  } else if (Array.isArray(data?.results)) {
+    rawResults = data.results;
+  } else if (Array.isArray(data?.data)) {
+    rawResults = data.data;
+  } else if (Array.isArray(data?.media)) {
+    rawResults = data.media;
+  }
+
+  return rawResults.map((item: any) => {
+    if (!item) return item;
+
+    // Prioritize the portrait contentImage as primary cover art, falling back to coverImage landscape banner
+    const portraitImage = item.contentImage || item.coverImage;
+    const fallbackImage = item.coverImage || item.contentImage;
+
+    return {
+      ...item,
+      contentImage: portraitImage || undefined,
+      coverImage: portraitImage || fallbackImage || undefined,
+    };
+  });
 }
 
 /* ── Stats & Verification Helpers ── */
