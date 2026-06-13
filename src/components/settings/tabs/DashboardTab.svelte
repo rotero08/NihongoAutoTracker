@@ -9,7 +9,9 @@
     getMonthlyOverviewData,
     formatMinutesToHoursStr,
     formatHoursToHMM,
-    computeLevelFromXp
+    computeLevelFromXp,
+    computeRecentReadingSpeed,
+    formatMinutesToHuman
   } from "@/lib/utils/stats-parser";
   import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
 
@@ -73,18 +75,48 @@
     yearHeatmapCells.length > 0 ? yearHeatmapCells : generatePlaceholderCells(heatmapYear)
   );
 
-  let recent7Days = $derived(getRecent7DaysData(baseLogs.logsByDayKey));
+  let recent7DaysResult = $derived(getRecent7DaysData(baseLogs.logsByDayKey));
+  let recent7Days = $derived(recent7DaysResult.days);
+  let ceilingHours = $derived(recent7DaysResult.ceilingHours);
   let finalMonthlyOverview = $derived(getMonthlyOverviewData(overviewYear, baseLogs.logsByMonthKey));
+
+  let todayKey = $derived.by(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+
+  function formatHourTick(h: number) {
+    if (h % 1 === 0) return `${h}h`;
+    return `${h.toFixed(1).replace('.0', '')}h`;
+  }
 
   let parsed = $derived.by(() => {
     const totals = baseLogs.totals;
     const readingHours = totals.readingHours || 0;
     const listeningHours = totals.listeningHours || 0;
     const totalChars = totals.totalChars || 0;
-    const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
+    const readingSpeed = computeRecentReadingSpeed(statsData);
     const allTimeHours = totals.totalTimeHours || 0;
-    const totalXp = totals.totalXp || 0;
-    const levelInfo = computeLevelFromXp(totalXp);
+
+    const totalXp = statsData?.userXp ?? totals.totalXp ?? 0;
+
+    let userLevel = statsData?.userLevel;
+    let xpInLevel = 0;
+    let xpForNextLevel = 0;
+    let xpPercent = 0;
+
+    if (statsData?.userXp !== undefined && statsData?.userLevel !== undefined && statsData?.userXpToNextLevel !== undefined && statsData?.userXpToCurrentLevel !== undefined) {
+      userLevel = statsData.userLevel;
+      xpInLevel = statsData.userXp - statsData.userXpToCurrentLevel;
+      xpForNextLevel = statsData.userXpToNextLevel - statsData.userXpToCurrentLevel;
+      xpPercent = xpForNextLevel > 0 ? Math.min(100, Math.round((xpInLevel / xpForNextLevel) * 100)) : 0;
+    } else {
+      const levelInfo = computeLevelFromXp(totalXp);
+      userLevel = levelInfo.level;
+      xpInLevel = levelInfo.xpInLevel;
+      xpForNextLevel = levelInfo.xpForNextLevel;
+      xpPercent = levelInfo.xpPercent;
+    }
 
     return {
       todayHours: baseLogs.todayMins / 60,
@@ -97,11 +129,11 @@
       allTimeHoursStr: formatHoursToHMM(allTimeHours),
       currentStreak: statsData?.streaks?.currentStreak ?? 0,
       longestStreak: statsData?.streaks?.longestStreak ?? 0,
-      userLevel: levelInfo.level,
+      userLevel,
       userXp: totalXp,
-      xpInLevel: levelInfo.xpInLevel,
-      xpForNextLevel: levelInfo.xpForNextLevel,
-      xpPercent: levelInfo.xpPercent,
+      xpInLevel,
+      xpForNextLevel,
+      xpPercent,
       readingHours,
       listeningHours,
       totalChars,
@@ -437,6 +469,7 @@
                   <div 
                     class="cell level-{cell.level}" 
                     class:outside-year={!cell.inYear}
+                    class:is-today={cell.dayKey === todayKey}
                     title={cell.tooltip}
                   ></div>
                 {/each}
@@ -466,14 +499,21 @@
       <div class="chart-section">
         <h3 class="section-title">Recent 7 Days Distribution</h3>
         <div class="chart-container">
+          <div class="chart-y-axis">
+            <span class="y-tick">{formatHourTick(ceilingHours)}</span>
+            <span class="y-tick">{formatHourTick(ceilingHours / 2)}</span>
+            <span class="y-tick">0h</span>
+          </div>
           <div class="chart-bars">
             {#each recent7Days as day (day.dayKey)}
               <div class="bar-col">
-                <div class="stacked-bar">
+                <div class="stacked-bar" title="Total: {formatMinutesToHuman(day.readingMins + day.listeningMins)}
+Reading: {formatMinutesToHuman(day.readingMins)}
+Listening: {formatMinutesToHuman(day.listeningMins)}">
                   <!-- Reading segmented layers -->
-                  <div class="bar-segment reading" style="height: {day.readingPct}%;" title="Reading: {formatMinutesToHoursStr(day.readingMins)}"></div>
+                  <div class="bar-segment reading" style="height: {day.readingPct}%;"></div>
                   <!-- Listening segmented layers -->
-                  <div class="bar-segment listening" style="height: {day.listeningPct}%;" title="Listening: {formatMinutesToHoursStr(day.listeningMins)}"></div>
+                  <div class="bar-segment listening" style="height: {day.listeningPct}%;"></div>
                 </div>
                 <span class="bar-lbl font-mono">{day.label}</span>
               </div>
@@ -1050,6 +1090,7 @@
     user-select: none;
     will-change: scroll-position;
     transform: translate3d(0, 0, 0);
+    padding: 4px;
   }
 
   .heatmap-scroll-wrapper::-webkit-scrollbar {
@@ -1433,5 +1474,31 @@
     width: 10px;
     height: 10px;
     transition: transform 0.2s ease;
+  }
+
+  .chart-y-axis {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 80px;
+    margin-bottom: 15px;
+    font-size: 8px;
+    color: var(--color-text-muted, #7a8ca5);
+    text-align: right;
+    width: 24px;
+    flex-shrink: 0;
+  }
+
+  .y-tick {
+    line-height: 1;
+  }
+
+  .cell.is-today {
+    box-shadow: inset 0 0 0 1.5px var(--color-accent) !important;
+  }
+
+  .cell.is-today:hover {
+    box-shadow: none !important;
+    outline: 2px solid var(--color-text) !important;
   }
 </style>

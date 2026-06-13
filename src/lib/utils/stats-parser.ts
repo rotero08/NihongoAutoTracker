@@ -337,11 +337,49 @@ export function generateHeatmapCells(year: number, logsByDayKey: Map<string, any
   return cells;
 }
 
+export function formatMinutesToHuman(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h > 0) {
+    return `${h}h ${m}m`;
+  }
+  return `${m}m`;
+}
+
+export function computeRecentReadingSpeed(stats: any): number {
+  if (!stats) return 0;
+  const statsByType = stats.statsByType || [];
+  let recentReadingMins = 0;
+  let recentReadingChars = 0;
+  const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  for (let i = 0, typeLen = statsByType.length; i < typeLen; i++) {
+    const typeObj = statsByType[i];
+    const type = typeObj.type;
+    if (!isReadingType(type)) continue;
+
+    const dates = typeObj.dates || [];
+    for (let j = 0, dateLen = dates.length; j < dateLen; j++) {
+      const dObj = dates[j];
+      if (dObj.date) {
+        const t = getCachedTimestamp(dObj.date);
+        if (t >= thirtyDaysAgo) {
+          recentReadingMins += dObj.time || 0;
+          recentReadingChars += dObj.chars || 0;
+        }
+      }
+    }
+  }
+
+  const recentReadingHours = recentReadingMins / 60;
+  return recentReadingHours > 0 ? Math.round(recentReadingChars / recentReadingHours) : 0;
+}
+
 /**
  * Independent metrics tracking parser compiling the recent 7 days chart values.
- * Aggregates logs into a single structured array of RecentDayData objects.
+ * Aggregates logs into a single structured array of RecentDayData objects and returns a ceiling value in hours.
  */
-export function getRecent7DaysData(logsByDayKey: Map<string, any[]>): RecentDayData[] {
+export function getRecent7DaysData(logsByDayKey: Map<string, any[]>): { days: RecentDayData[]; ceilingHours: number } {
   const days: RecentDayData[] = [];
   const runner = new Date();
   const nowMs = Date.now();
@@ -387,18 +425,31 @@ export function getRecent7DaysData(logsByDayKey: Map<string, any[]>): RecentDayD
     }
   }
 
+  const maxHoursRaw = maxDayTotal / 60;
+  let ceilingHours = 1;
+  if (maxHoursRaw <= 0.5) ceilingHours = 0.5;
+  else if (maxHoursRaw <= 1) ceilingHours = 1;
+  else if (maxHoursRaw <= 2) ceilingHours = 2;
+  else if (maxHoursRaw <= 4) ceilingHours = 4;
+  else if (maxHoursRaw <= 6) ceilingHours = 6;
+  else if (maxHoursRaw <= 8) ceilingHours = 8;
+  else if (maxHoursRaw <= 12) ceilingHours = 12;
+  else ceilingHours = Math.ceil(maxHoursRaw / 4) * 4;
+
+  const ceilingMins = ceilingHours * 60;
+
   for (let i = 0; i < 7; i++) {
     days.push({
       label: labels[i],
       dayKey: dayKeys[i],
       listeningMins: listeningMins[i],
       readingMins: readingMins[i],
-      listeningPct: (listeningMins[i] / maxDayTotal) * 100,
-      readingPct: (readingMins[i] / maxDayTotal) * 100
+      listeningPct: (listeningMins[i] / ceilingMins) * 100,
+      readingPct: (readingMins[i] / ceilingMins) * 100
     });
   }
 
-  return days;
+  return { days, ceilingHours };
 }
 
 /**
@@ -489,7 +540,33 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
   const readingHours = base.totals.readingHours || 0;
   const listeningHours = base.totals.listeningHours || 0;
   const totalChars = base.totals.totalChars || 0;
-  const readingSpeed = readingHours > 0 ? Math.round(totalChars / readingHours) : 0;
+  const readingSpeed = computeRecentReadingSpeed(stats);
+
+  const profileXp = stats.userXp;
+  const profileLevel = stats.userLevel;
+  const profileXpToNextLevel = stats.userXpToNextLevel;
+  const profileXpToCurrentLevel = stats.userXpToCurrentLevel;
+
+  let finalLevel = 1;
+  let finalXp = 0;
+  let finalXpInLevel = 0;
+  let finalXpForNextLevel = xpRequiredForLevel(1);
+  let finalXpPercent = 0;
+
+  if (profileXp !== undefined && profileLevel !== undefined && profileXpToNextLevel !== undefined && profileXpToCurrentLevel !== undefined) {
+    finalXp = profileXp;
+    finalLevel = profileLevel;
+    finalXpForNextLevel = profileXpToNextLevel - profileXpToCurrentLevel;
+    finalXpInLevel = profileXp - profileXpToCurrentLevel;
+    finalXpPercent = finalXpForNextLevel > 0 ? Math.min(100, Math.round((finalXpInLevel / finalXpForNextLevel) * 100)) : 0;
+  } else {
+    finalXp = base.totals.totalXp ?? 0;
+    const lv = computeLevelFromXp(finalXp);
+    finalLevel = lv.level;
+    finalXpInLevel = lv.xpInLevel;
+    finalXpForNextLevel = lv.xpForNextLevel;
+    finalXpPercent = lv.xpPercent;
+  }
 
   return {
     todayHours: base.todayMins / 60,
@@ -502,17 +579,17 @@ export function parseStats(stats: any, heatmapYear?: number, overviewYear?: numb
     allTimeHoursStr: formatHoursToHMM(allTimeHours),
     currentStreak: stats.streaks?.currentStreak ?? 0,
     longestStreak: stats.streaks?.longestStreak ?? 0,
-    ...(() => {
-      const lv = computeLevelFromXp(base.totals.totalXp || 0);
-      return { userLevel: lv.level, xpInLevel: lv.xpInLevel, xpForNextLevel: lv.xpForNextLevel, xpPercent: lv.xpPercent };
-    })(),
-    userXp: base.totals.totalXp || 0,
+    userLevel: finalLevel,
+    userXp: finalXp,
+    xpInLevel: finalXpInLevel,
+    xpForNextLevel: finalXpForNextLevel,
+    xpPercent: finalXpPercent,
     readingHours,
     listeningHours,
     totalChars,
     readingSpeed,
     heatmapCells: generateHeatmapCells(targetHeatmapYear, base.logsByDayKey),
-    recent7Days: getRecent7DaysData(base.logsByDayKey),
+    recent7Days: getRecent7DaysData(base.logsByDayKey).days,
     monthlyOverview: getMonthlyOverviewData(targetOverviewYear, base.logsByMonthKey)
   };
 }

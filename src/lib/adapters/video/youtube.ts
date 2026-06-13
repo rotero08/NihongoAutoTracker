@@ -2,6 +2,21 @@ import { JP_RE } from '@/lib/constants';
 import type { TrackerConfig, VideoSiteAdapter } from '@/lib/types';
 import { getChannelNameFallback, getYouTubeChannelId } from '@/lib/utils/youtube-extraction';
 
+function getLivePlayerResponse(): any {
+  if (typeof document === 'undefined') return null;
+  let attr = document.documentElement.getAttribute('data-yt-player-response');
+  if (!attr) {
+    window.dispatchEvent(new CustomEvent('nat-request-player-response'));
+    attr = document.documentElement.getAttribute('data-yt-player-response');
+  }
+  if (attr) {
+    try {
+      return JSON.parse(attr);
+    } catch (e) { }
+  }
+  return null;
+}
+
 export const youtubeAdapter: VideoSiteAdapter = {
   name: 'YouTube',
   matchPatterns: [
@@ -23,7 +38,7 @@ export const youtubeAdapter: VideoSiteAdapter = {
     if (host.includes('youtube.com')) {
       const isLive = !!document.querySelector('.ytp-live, .re-live-badge, [is-live]');
       const hasMusicMetadata = !!document.querySelector('ytd-structured-description-content-renderer');
-      const playerResponse = (window as any).ytInitialPlayerResponse;
+      const playerResponse = getLivePlayerResponse();
       const isMusicCategory = playerResponse?.videoDetails?.categoryId === '10';
 
       if (isLive) return hasMusicMetadata;
@@ -46,7 +61,7 @@ export const youtubeAdapter: VideoSiteAdapter = {
 
     if (host.includes('youtube.com')) {
       try {
-        const playerResponse = (window as any).ytInitialPlayerResponse;
+        const playerResponse = getLivePlayerResponse();
         const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         if (tracks) {
           for (const track of tracks) if (track.languageCode === 'ja') return true;

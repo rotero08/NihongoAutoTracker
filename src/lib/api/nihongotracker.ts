@@ -491,7 +491,20 @@ export async function fetchAndCacheUserStats(username: string, force = false): P
     await storage.setItem(lockKey, now);
 
     try {
-      const stats = await fetchUserStats(username);
+      const statsPromise = fetchUserStats(username);
+      const profilePromise = fetchNHTApi(`/users/${encodeURIComponent(username)}`)
+        .then(res => res.ok ? res.json() : null)
+        .catch(() => null);
+
+      const [stats, profile] = await Promise.all([statsPromise, profilePromise]);
+
+      if (stats && profile?.stats) {
+        stats.userXp = profile.stats.userXp;
+        stats.userLevel = profile.stats.userLevel;
+        stats.userXpToNextLevel = profile.stats.userXpToNextLevel;
+        stats.userXpToCurrentLevel = profile.stats.userXpToCurrentLevel;
+      }
+
       await Promise.all([
         storage.setItem(statsKey, stats),
         storage.setItem(lastFetchedKey, Date.now())

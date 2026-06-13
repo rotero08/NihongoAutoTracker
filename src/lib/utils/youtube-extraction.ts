@@ -3,6 +3,21 @@
  */
 import { resolveVideoChannelMedia } from '@/lib/api/nihongotracker';
 
+function getLivePlayerResponse(): any {
+    if (typeof document === 'undefined') return null;
+    let attr = document.documentElement.getAttribute('data-yt-player-response');
+    if (!attr) {
+        window.dispatchEvent(new CustomEvent('nat-request-player-response'));
+        attr = document.documentElement.getAttribute('data-yt-player-response');
+    }
+    if (attr) {
+        try {
+            return JSON.parse(attr);
+        } catch (e) { }
+    }
+    return null;
+}
+
 const activeHandleFetches = new Map<string, Promise<string | null>>();
 const fetchCache = new Map<string, any>();
 
@@ -94,7 +109,7 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         } catch (e) { }
 
         try {
-            const playerResponse = (window as any).ytInitialPlayerResponse;
+            const playerResponse = getLivePlayerResponse();
             const responseVideoId = playerResponse?.videoDetails?.videoId;
             if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.channelId) {
                 return playerResponse.videoDetails.channelId;
@@ -154,9 +169,9 @@ export async function getYouTubeChannelId(): Promise<string | null> {
         }
     }
 
-    /* Fallback 1: check dynamic ytInitialPlayerResponse state (updates on SPA routing) */
+    /* Fallback 1: check dynamic player response state (updates on SPA routing) */
     try {
-        const playerResponse = (window as any).ytInitialPlayerResponse;
+        const playerResponse = getLivePlayerResponse();
         const responseVideoId = playerResponse?.videoDetails?.videoId;
         if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.channelId) {
             return playerResponse.videoDetails.channelId;
@@ -190,7 +205,7 @@ export async function getChannelNameFallback(): Promise<string> {
         } catch (e) { }
 
         try {
-            const playerResponse = (window as any).ytInitialPlayerResponse;
+            const playerResponse = getLivePlayerResponse();
             const responseVideoId = playerResponse?.videoDetails?.videoId;
             if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.author) {
                 return playerResponse.videoDetails.author;
@@ -211,7 +226,7 @@ export async function getChannelNameFallback(): Promise<string> {
     if (artistEl?.textContent?.trim()) return artistEl.textContent.trim();
 
     try {
-        const playerResponse = (window as any).ytInitialPlayerResponse;
+        const playerResponse = getLivePlayerResponse();
         const responseVideoId = playerResponse?.videoDetails?.videoId;
         if ((!currentVideoId || !responseVideoId || currentVideoId === responseVideoId) && playerResponse?.videoDetails?.author) {
             return playerResponse.videoDetails.author;

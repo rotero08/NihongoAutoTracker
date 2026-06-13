@@ -305,6 +305,19 @@ export function showToast(title: string, msg: string, err = false): void {
   });
 }
 
+function showNativeNotification(title: string, message: string): void {
+  if (typeof browser !== 'undefined' && browser.notifications && browser.notifications.create) {
+    const cleanTitle = title.replace(/[✓✗⚠]/g, '').trim();
+    const cleanMsg = message.replace(/[✓✗⚠]/g, '').trim();
+    browser.notifications.create({
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('icon/96.png'),
+      title: cleanTitle,
+      message: cleanMsg,
+    }).catch(() => null);
+  }
+}
+
 export function notify(title: string, message: string): void {
   try {
     const normalized = normalizeToast(title, message);
@@ -313,43 +326,19 @@ export function notify(title: string, message: string): void {
     const isError = normalized.isError;
 
     const hasDocument = typeof document !== 'undefined';
+    
+    // Always show toast in the current document if one exists (popup, options page, or content script)
+    if (hasDocument) {
+      showToast(normTitle, normMessage, isError);
+    }
+
+    // Also relay to the active web tab if running in background or if we want to ensure visibility
     const isExtensionPage = typeof window !== 'undefined' &&
       (window.location.protocol.startsWith('chrome-extension') || window.location.protocol.startsWith('moz-extension'));
+    const isBackground = !hasDocument || !isExtensionPage;
 
-    if (isExtensionPage && typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
-      browser.tabs.query({ active: true, currentWindow: true })
-        .then((tabs) => {
-          const tab = tabs[0];
-          const url = tab?.url || "";
-          const isRestricted =
-            !url ||
-            url.startsWith('chrome://') ||
-            url.startsWith('about:') ||
-            url.startsWith('chrome-extension://') ||
-            url.startsWith('moz-extension://') ||
-            url.startsWith('https://chromewebstore.google.com/') ||
-            url.startsWith('https://addons.mozilla.org/');
-
-          if (isRestricted) {
-            if (hasDocument) {
-              showToast(normTitle, normMessage, isError);
-            }
-          } else {
-            relayToastToActiveTab(normTitle, normMessage, isError);
-          }
-        })
-        .catch(() => {
-          if (hasDocument) {
-            showToast(normTitle, normMessage, isError);
-          }
-        });
-    } else {
-      if (hasDocument) {
-        showToast(normTitle, normMessage, isError);
-      }
-      if (typeof browser !== 'undefined') {
-        relayToastToActiveTab(normTitle, normMessage, isError);
-      }
+    if (isBackground) {
+      relayToastToActiveTab(normTitle, normMessage, isError);
     }
   } catch (_err) {
     // Fail silently
@@ -367,7 +356,10 @@ function relayToastToActiveTab(title: string, message: string, isError: boolean)
   browser.tabs.query({ active: true, currentWindow: true })
     .then((tabs) => {
       const tab = tabs[0];
-      if (!tab?.id) return;
+      if (!tab?.id) {
+        showNativeNotification(title, message);
+        return;
+      }
       const url = tab.url || "";
 
       const isRestricted =
@@ -378,22 +370,33 @@ function relayToastToActiveTab(title: string, message: string, isError: boolean)
         url.startsWith('https://chromewebstore.google.com/') ||
         url.startsWith('https://addons.mozilla.org/');
 
-      if (isRestricted) return;
+      if (isRestricted) {
+        showNativeNotification(title, message);
+        return;
+      }
 
       // Safe permissive programmatic fallback dispatch sequence
-      if (browser.scripting && browser.scripting.executeScript && !url.startsWith('chrome-extension://') && !url.startsWith('moz-extension://')) {
+      if (browser.scripting && browser.scripting.executeScript) {
         browser.scripting.executeScript({
           target: { tabId: tab.id },
           func: showToast,
           args: [title, message, isError]
         }).catch(() => {
           if (tab.id) {
-            browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+            browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message, isError })
+              .catch(() => {
+                showNativeNotification(title, message);
+              });
           }
         });
       } else {
-        browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message }).catch(() => null);
+        browser.tabs.sendMessage(tab.id, { action: 'SHOW_TOAST', title, message, isError })
+          .catch(() => {
+            showNativeNotification(title, message);
+          });
       }
     })
-    .catch(() => null);
+    .catch(() => {
+      showNativeNotification(title, message);
+    });
 }

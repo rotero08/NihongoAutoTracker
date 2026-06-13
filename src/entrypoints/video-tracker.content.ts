@@ -19,6 +19,7 @@ import { injectModalStyles, showNTEditModal, cleanupActiveModal } from '@/lib/ui
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
+import { showToast } from '@/lib/utils/toast';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,
@@ -608,6 +609,14 @@ export default defineContentScript({
     cachedConfig = await configStorage.getValue() || {};
 
     applyCachedTheme(cachedConfig);
+
+    browser.runtime.onMessage.addListener((req: any) => {
+      if (req.action === 'SHOW_TOAST') {
+        const title = String(req.title || '');
+        const msg = req.message || '';
+        showToast(title, msg, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
+      }
+    });
 
     const unwatches: (() => void)[] = [];
 
