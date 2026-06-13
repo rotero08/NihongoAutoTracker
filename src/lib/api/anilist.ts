@@ -6,7 +6,7 @@
  * to link reading entries to AniList manga/novel records.
  */
 
-import { configStorage } from '../storage/config';
+import { searchMedia } from './nihongotracker';
 
 /** Base URL for the NT API's AniList search proxy */
 const ANILIST_SEARCH_URL = 'https://nihongotracker.app/api/media/anilist/search';
@@ -40,18 +40,7 @@ export interface AniListSearchResult {
  */
 export async function searchAniList(query: string, perPage = 5): Promise<AniListSearchResult[]> {
   try {
-    const config = await configStorage.getValue();
-    const apiKey = config?.apiKey ?? '';
-
-    const url = `${ANILIST_SEARCH_URL}?search=${encodeURIComponent(query)}&type=MANGA&page=1&perPage=${perPage}&format=NOVEL`;
-    const res = await fetch(url, {
-      headers: { 'X-API-Key': apiKey },
-    });
-
-    if (!res.ok) return [];
-
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data.data ?? []);
+    return await searchMedia({ search: query, type: 'novel', perPage }) as AniListSearchResult[];
   } catch {
     return [];
   }

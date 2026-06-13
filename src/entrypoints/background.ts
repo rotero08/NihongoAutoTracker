@@ -4,7 +4,7 @@
  */
 
 import { defineBackground } from '#imports';
-import { submitLog } from '@/lib/api/nihongotracker';
+import { submitLog, fetchYoutubeVideoInfo } from '@/lib/api/nihongotracker';
 import { importStremioFromTrakt } from '@/lib/api/trakt';
 import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE, LAST_FLUSH_DATE_KEY, STREMIO_LAST_POLL_AT_KEY } from '@/lib/constants';
 import { configStorage } from '@/lib/storage/config';
@@ -102,7 +102,7 @@ export default defineBackground(() => {
         ]).then(([video, reading, stremio]) => {
           try {
             sendResponse({ count: (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0) });
-          } catch {}
+          } catch { }
         }).catch(() => null);
         return true;
       }
@@ -139,7 +139,7 @@ export default defineBackground(() => {
             }
           }).catch(() => null);
       }
-    } catch (err) {}
+    } catch (err) { }
   });
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -148,9 +148,7 @@ export default defineBackground(() => {
       if (!url || !url.includes('youtube.com')) return;
 
       try {
-        const res = await fetch(`https://nihongotracker.app/api/media/youtube/video?url=${encodeURIComponent(url)}`);
-        if (!res.ok) throw new Error('Could not fetch video info');
-        const data = await res.json();
+        const data = await fetchYoutubeVideoInfo(url);
         if (!data?.video) throw new Error('No video data found');
 
         const v = data.video;
@@ -196,7 +194,7 @@ export default defineBackground(() => {
       try {
         const resp = await browser.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_TIME' });
         timeMinutes = resp?.minutes ?? 0;
-      } catch {}
+      } catch { }
     }
 
     await submitLog({
@@ -379,14 +377,14 @@ export default defineBackground(() => {
       }
     } catch (e) {
       const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
-      actionAPI.setIcon({ path: isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png' }).catch(() => {});
+      actionAPI.setIcon({ path: isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png' }).catch(() => { });
     }
   }
 
   async function updateIconForConfig(config: any) {
     if (config?.useStaticToolbarIcon === true) {
       const isFirefox = typeof browser !== 'undefined' && browser.runtime.getURL('').startsWith('moz-extension://');
-      actionAPI.setIcon({ path: isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png' }).catch(() => {});
+      actionAPI.setIcon({ path: isFirefox ? 'NihongoAutoTracker.svg' : 'icon/16.png' }).catch(() => { });
       return;
     }
 
@@ -415,9 +413,9 @@ export default defineBackground(() => {
   }
 
   configStorage.getValue().then((val) => {
-    updateIconForConfig(val || {}).catch(() => {});
+    updateIconForConfig(val || {}).catch(() => { });
     refreshBadge();
-  }).catch(() => {});
+  }).catch(() => { });
 
   configStorage.watch(async (newVal) => {
     if (newVal) {

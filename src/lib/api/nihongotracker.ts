@@ -18,6 +18,41 @@ import { notify } from '../utils/toast';
 const API_BASE = 'https://nihongotracker.app/api';
 
 /**
+ * Centralized fetch helper for NihongoTracker API calls.
+ *
+ * Ensures consistent authorization and URL routing.
+ */
+export async function fetchNHTApi(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const config = await configStorage.getValue();
+  const apiKey = config?.apiKey ?? '';
+
+  const headers = {
+    'Accept': 'application/json',
+    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+    ...options.headers,
+  } as Record<string, string>;
+
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
+
+/**
+ * Fetch YouTube video information from the NihongoTracker API.
+ */
+export async function fetchYoutubeVideoInfo(url: string): Promise<any> {
+  const res = await fetchNHTApi(`/media/youtube/video?url=${encodeURIComponent(url)}`);
+  if (!res.ok) throw new Error('Could not fetch video info');
+  return res.json();
+}
+
+/**
  * Submit an immersion log to NihongoTracker.
  *
  * Handles:
@@ -72,12 +107,11 @@ export async function submitLog(
   }
 
   try {
-    const response = await fetch(`${API_BASE}/logs`, {
+    const response = await fetchNHTApi('/logs', {
       method: 'POST',
       mode: 'cors',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
       },
       body: JSON.stringify(payload),
     });
@@ -86,7 +120,7 @@ export async function submitLog(
       let createdLog: any = null;
       try {
         createdLog = await response.clone().json();
-      } catch {}
+      } catch { }
 
       if (createdLog?._id && !createdLog.mediaId && hasAssignableMediaData(payload.mediaData)) {
         await assignMediaToLog(createdLog._id, payload.mediaData as any, apiKey);
@@ -151,16 +185,16 @@ export async function resolveVideoChannelMedia(input: {
 
   const search = encodeURIComponent(channelId || channelTitle || '');
   const endpoints = [
-    `${API_BASE}/media/youtube/search?search=${search}`,
-    `${API_BASE}/media/youtube/search?channelId=${search}`,
-    `${API_BASE}/media/search?search=${search}&type=YOUTUBE`,
-    `${API_BASE}/media/search?query=${search}&type=YOUTUBE`,
+    `/media/youtube/search?search=${search}`,
+    `/media/youtube/search?channelId=${search}`,
+    `/media/search?search=${search}&type=YOUTUBE`,
+    `/media/search?query=${search}&type=YOUTUBE`,
   ];
 
   /* Try each endpoint until one returns valid data */
-  for (const url of endpoints) {
+  for (const endpoint of endpoints) {
     try {
-      const res = await fetch(url, { headers: { 'X-API-Key': apiKey } });
+      const res = await fetchNHTApi(endpoint, apiKey ? { headers: { 'X-API-Key': apiKey } } : {});
       if (!res.ok) continue;
       const data = await res.json();
       const results: any[] = Array.isArray(data)
@@ -181,7 +215,7 @@ export async function resolveVideoChannelMedia(input: {
         if (channelId && !normalized.channelId) normalized.channelId = channelId;
         if (import.meta.env.DEV) {
           console.log(`[NAT DEV - API] Media successfully matched API request`, {
-            endpoint: url,
+            endpoint,
             normalized,
           });
         }
@@ -238,9 +272,9 @@ function normalizeMediaSearchResult(raw: any): {
 function hasAssignableMediaData(mediaData: any): boolean {
   return Boolean(
     mediaData?.contentId &&
-      (mediaData?.contentTitleNative ||
-        mediaData?.contentTitleRomaji ||
-        mediaData?.contentTitleEnglish),
+    (mediaData?.contentTitleNative ||
+      mediaData?.contentTitleRomaji ||
+      mediaData?.contentTitleEnglish),
   );
 }
 
@@ -264,7 +298,7 @@ async function assignMediaToLog(logId: string, mediaData: any, apiKey: string) {
       volumes: mediaData.volumes,
     });
 
-    await fetch(`${API_BASE}/logs/assign-media`, {
+    await fetchNHTApi('/logs/assign-media', {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -332,18 +366,36 @@ async function fetchChannelExtrasFromYouTube(channelId: string): Promise<{
 
 export async function searchMedia(input: {
   search: string;
-  type: 'anime' | 'movie' | 'tv_show' | 'manga' | 'reading' | 'vn' | 'game';
+  type: 'anime' | 'movie' | 'tv_show' | 'manga' | 'reading' | 'vn' | 'game' | 'novel';
   perPage?: number;
 }): Promise<any[]> {
-  const params = new URLSearchParams({
-    search: input.search,
-    type: input.type,
-    page: '1',
-    perPage: String(input.perPage ?? 5),
-  });
-  const response = await fetch(`${API_BASE}/media/search?${params}`, {
-    headers: { Accept: 'application/json' },
-  });
+  const typeLower = input.type.toLowerCase();
+  const isAnilistType = ['anime', 'manga', 'novel'].includes(typeLower);
+
+  let endpoint: string;
+  if (isAnilistType) {
+    const typeUpper = typeLower === 'novel' ? 'MANGA' : input.type.toUpperCase();
+    const params = new URLSearchParams({
+      search: input.search,
+      type: typeUpper,
+      page: '1',
+      perPage: String(input.perPage ?? 5),
+    });
+    if (typeLower === 'novel') {
+      params.append('format', 'NOVEL');
+    }
+    endpoint = `/media/anilist/search?${params}`;
+  } else {
+    const params = new URLSearchParams({
+      search: input.search,
+      type: input.type,
+      page: '1',
+      perPage: String(input.perPage ?? 5),
+    });
+    endpoint = `/media/search?${params}`;
+  }
+
+  const response = await fetchNHTApi(endpoint);
   if (!response.ok) return [];
   const data = await response.json();
   if (Array.isArray(data)) return data;
@@ -358,10 +410,9 @@ import { storage } from 'wxt/utils/storage';
 
 export async function verifyApiKey(key: string): Promise<{ success: boolean; username?: string; error?: string; stats?: any }> {
   try {
-    const response = await fetch(`${API_BASE}/auth/verify`, {
+    const response = await fetchNHTApi('/auth/verify', {
       method: 'GET',
       headers: {
-        'Accept': 'application/json',
         'X-API-Key': key,
       },
     });
@@ -382,10 +433,8 @@ export async function verifyApiKey(key: string): Promise<{ success: boolean; use
 }
 
 export async function fetchUserStats(username: string): Promise<any> {
-  const url = `${API_BASE}/users/${encodeURIComponent(username)}/stats`;
-  const response = await fetch(url, {
-    headers: { 'Accept': 'application/json' },
-  });
+  const url = `/users/${encodeURIComponent(username)}/stats`;
+  const response = await fetchNHTApi(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch stats: ${response.statusText}`);
   }
@@ -435,7 +484,7 @@ export async function fetchAndCacheUserStats(username: string, force = false): P
   } catch (err) {
     console.error('Failed to fetch and cache user stats:', err);
     // Ensure lock is released even on unexpected errors
-    try { await storage.removeItem(lockKey); } catch {}
+    try { await storage.removeItem(lockKey); } catch { }
     return await storage.getItem(statsKey);
   }
 }
