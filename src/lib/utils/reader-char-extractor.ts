@@ -3,13 +3,13 @@
  * Takes whisper ttsu sync and Jiten into account for its calculations
  */
 
+
 export interface AdvancedCharData {
     current: number;
     total: number;
     sectionIndex: number | null;
     isPaginated: boolean;
-    isLayoutDeferred?: boolean; // Restored as optional to resolve TypeScript compiler diagnostics
-    visible?: number;
+    isLayoutDeferred?: boolean;
 }
 
 // Module-level caches to optimize execution overhead
@@ -28,9 +28,8 @@ let cachedWritingMode = '';
 let lastContainer = null as Element | null;
 let lastContainerId = '';
 let isCacheValid = false;
-let cachedSectionIndex = null as number | null;
 
-// Stopped-state cache references
+// Stopped-state cache references (Goal 3)
 let lastCachedTotal = 0;
 let lastCachedSectionIndex: number | null = null;
 
@@ -43,30 +42,18 @@ let cachedVh = typeof window !== 'undefined' ? window.innerHeight : 768;
 // Reusable DOM Range to completely eliminate GC allocation spikes during search loops
 let reusableRange: Range | null = null;
 
-let resizeHandler: (() => void) | null = null;
-
-export function initResizeListener() {
-    if (typeof window !== 'undefined' && !resizeHandler) {
-        resizeHandler = () => {
-            cachedVw = window.innerWidth;
-            cachedVh = window.innerHeight;
-            isCacheValid = false; // Invalidate cache for layout recalculated positions
-        };
-        window.addEventListener('resize', resizeHandler, { passive: true });
-    }
-}
-
-export function cleanupResizeListener() {
-    if (typeof window !== 'undefined' && resizeHandler) {
-        window.removeEventListener('resize', resizeHandler);
-        resizeHandler = null;
-    }
+if (typeof window !== 'undefined') {
+    window.addEventListener('resize', () => {
+        cachedVw = window.innerWidth;
+        cachedVh = window.innerHeight;
+        isCacheValid = false; // Invalidate cache for layout recalculated positions
+    }, { passive: true });
 }
 
 /**
  * Robust regular expression that captures letters/numbers and placeholder symbols.
  */
-const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
+const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
 
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
@@ -142,6 +129,7 @@ function getSectionIndex(container: Element): number | null {
     }
 
     // Approach 3 (SPA Fallback): Generate a guaranteed unique key using parent URL and first paragraph text.
+    // This is crucial for single-container SPA environments like Yomiyasu where IDs are absent and class names are statically reused.
     if (typeof window !== 'undefined') {
         let parentUrl = '';
         try {
@@ -153,10 +141,7 @@ function getSectionIndex(container: Element): number | null {
         }
 
         const firstP = container.querySelector('p, h1, h2, h3, h4, h5, h6, li');
-        if (!firstP) {
-            return null; // Return null if there are absolutely no text paragraphs in the active container
-        }
-        const textSignature = (firstP.textContent || '').trim().slice(0, 120);
+        const textSignature = firstP ? (firstP.textContent || '').trim().slice(0, 120) : '';
 
         const firstChild = container.firstElementChild;
         const childSignature = firstChild ? firstChild.tagName + '||' + firstChild.className : '';
@@ -213,28 +198,21 @@ function watchContainerMutations(container: Element) {
             if (m.type === 'childList') {
                 const checkNode = (node: Node): boolean => {
                     if (node.nodeType !== Node.ELEMENT_NODE) return false;
+                    const el = node as HTMLElement;
 
-                    const stack: HTMLElement[] = [node as HTMLElement];
-                    while (stack.length > 0) {
-                        const el = stack.pop()!;
+                    // Ignore dictionary dynamic wrappings
+                    if (isJitenOrYomichan(el)) return false;
 
-                        if (isJitenOrYomichan(el)) continue;
-
-                        const tag = el.tagName;
-                        if (isBlockTag(tag)) {
-                            if (el.id === 'nt-ttu-chrono-wrapper' || el.closest('#nt-ttu-chrono-wrapper')) {
-                                continue;
-                            }
-                            return true;
+                    const tag = el.tagName;
+                    if (isBlockTag(tag)) {
+                        if (el.id === 'nt-ttu-chrono-wrapper' || el.closest('#nt-ttu-chrono-wrapper')) {
+                            return false;
                         }
+                        return true;
+                    }
 
-                        const children = el.children;
-                        for (let j = children.length - 1; j >= 0; j--) {
-                            const child = children[j];
-                            if (child.nodeType === Node.ELEMENT_NODE) {
-                                stack.push(child as HTMLElement);
-                            }
-                        }
+                    for (let j = 0; j < el.children.length; j++) {
+                        if (checkNode(el.children[j])) return true;
                     }
                     return false;
                 };
@@ -276,7 +254,6 @@ function watchContainerMutations(container: Element) {
 }
 
 export function clearExtractorCache() {
-    ttuCachedNodes.length = 0;
     ttuCachedNodes = [];
     ttuCachedAccumulated = [];
     isCacheValid = false;
@@ -284,7 +261,6 @@ export function clearExtractorCache() {
     lastContainerId = '';
     lastCachedTotal = 0;
     lastCachedSectionIndex = null;
-    cachedSectionIndex = null;
     if (containerObserver) {
         containerObserver.disconnect();
         containerObserver = null;
@@ -306,38 +282,12 @@ export function extractAdvancedCharCount(
             lastContainerId = currentContainerId;
             isCacheValid = false;
             // Solve Detached DOM Memory Leak: Clean cached elements to prevent holding old chapters in memory
-            ttuCachedNodes.length = 0;
             ttuCachedNodes = [];
             ttuCachedAccumulated = [];
             watchContainerMutations(readerContainer);
         }
 
-        // Dynamic Mode Change Guard: Check if paginated classes or styles changed in DOM
-        let pagStyle = false;
-        let currentEl: Element | null = activeContainer;
-        while (currentEl && currentEl !== document.body) {
-            const elStyle = getComputedStyle(currentEl);
-            const cw = elStyle.columnWidth || '';
-            const cc = elStyle.columnCount || '';
-            if ((cw !== 'auto' && cw !== 'none' && cw !== '') ||
-                (cc !== 'auto' && cc !== 'none' && cc !== '')) {
-                pagStyle = true;
-                break;
-            }
-            currentEl = currentEl.parentElement;
-        }
-
-        const hasPaginatedClass = !!(
-            document.querySelector('[class*="paginated"], [id*="paginated"], [data-view-mode="paginated"]') ||
-            document.querySelector('.book-reader-paginated') ||
-            activeContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-            pagStyle
-        );
-        if (hasPaginatedClass !== cachedIsPaginated) {
-            isCacheValid = false;
-        }
-
-        // 1. Resolve Style Configurations and Section Index (Cached)
+        // 1. Resolve Style Configurations (Cached)
         if (!isCacheValid) {
             const style = getComputedStyle(activeContainer);
             cachedWritingMode = style.writingMode || '';
@@ -346,17 +296,15 @@ export function extractAdvancedCharCount(
                 cachedWritingMode === 'vertical-lr' ||
                 readerContainer.classList.contains('book-content--writing-vertical-rl');
 
+            const colWidth = style.columnWidth || '';
+            const colCount = style.columnCount || '';
+
             cachedIsPaginated =
-                !!document.querySelector('[class*="paginated"], [id*="paginated"], [data-view-mode="paginated"]') ||
-                !!document.querySelector('.book-reader-paginated') ||
+                !!document.querySelector('.book-reader-paginated, [data-view-mode="paginated"]') ||
                 !!readerContainer.closest('.book-reader-paginated, [data-view-mode="paginated"]') ||
-                pagStyle;
-
-            cachedSectionIndex = getSectionIndex(activeContainer);
+                ((colWidth !== 'auto' && colWidth !== 'none' && colWidth !== '') ||
+                    (colCount !== 'auto' && colCount !== 'none' && colCount !== ''));
         }
-
-        const sectionIndex = cachedSectionIndex;
-        lastCachedSectionIndex = sectionIndex;
 
         // 2. Query Text-bearing Nodes
         let pTags = ttuCachedNodes;
@@ -367,15 +315,24 @@ export function extractAdvancedCharCount(
             }) as Element[];
         }
 
+        const sectionIndex = getSectionIndex(activeContainer);
+        lastCachedSectionIndex = sectionIndex;
+
         if (pTags.length === 0) {
-            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated };
+            lastCachedTotal = 0;
+
+            // Differentiate temporary loading unmounts from permanent cover/illustration pages
+            const hasImages = !!readerContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
+            const isDeferred = !hasImages;
+
+            return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: isDeferred };
         }
 
         // Layout Stability Guard: If layout is not loaded, defer transition processing
         const firstParagraph = pTags[0];
         const firstParaRect = firstParagraph ? firstParagraph.getBoundingClientRect() : null;
         if (firstParaRect && firstParaRect.width === 0 && firstParaRect.height === 0) {
-            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated };
+            return { current: 0, total: lastCachedTotal, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: true };
         }
 
         // 3. Cache Rebuild & Prefix Sum Calculations
@@ -396,13 +353,8 @@ export function extractAdvancedCharCount(
                             text += n.nodeValue || '';
                         }
                     }
-                    // Allocation-free character counter loop replacing standard match checks
-                    let matchCount = 0;
-                    JP_CHAR_PATTERN.lastIndex = 0;
-                    while (JP_CHAR_PATTERN.exec(text) !== null) {
-                        matchCount++;
-                    }
-                    count = matchCount;
+                    const matches = text.match(JP_CHAR_PATTERN);
+                    count = matches ? matches.length : 0;
                     ttuCharCountCache.set(el, count);
                 }
                 acc += count;
@@ -480,6 +432,7 @@ export function extractAdvancedCharCount(
                 }
             }
 
+
             if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
@@ -508,13 +461,10 @@ export function extractAdvancedCharCount(
                         }
 
                         if (sExp) {
-                            const content = s.textContent || '';
-                            let matchCount = 0;
-                            JP_CHAR_PATTERN.lastIndex = 0;
-                            while (JP_CHAR_PATTERN.exec(content) !== null) {
-                                matchCount++;
+                            const m = s.textContent?.match(JP_CHAR_PATTERN);
+                            if (m) {
+                                current += m.length;
                             }
-                            current += matchCount;
                         }
                     });
                 } else {
@@ -534,11 +484,7 @@ export function extractAdvancedCharCount(
                         }
 
                         const text = n.nodeValue || '';
-                        if (!text.trim()) {
-                            continue;
-                        }
-                        JP_CHAR_PATTERN.lastIndex = 0;
-                        if (!JP_CHAR_PATTERN.test(text)) {
+                        if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
                             continue;
                         }
 
@@ -591,40 +537,19 @@ export function extractAdvancedCharCount(
                         }
 
                         if (sExp) {
-                            let matchCount = 0;
-                            JP_CHAR_PATTERN.lastIndex = 0;
-                            while (JP_CHAR_PATTERN.exec(text) !== null) {
-                                matchCount++;
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) {
+                                current += matches.length;
                             }
-                            current += matchCount;
                         }
                     }
                 }
             }
         }
 
-        let visible = 0;
-        for (let i = lastIdx + 1; i < ttuCachedNodes.length; i++) {
-            const r = ttuCachedNodes[i].getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) continue;
-
-            let isVisible = false;
-            if (cachedIsVertical) {
-                isVisible = r.top < cachedVh && r.bottom > 0;
-            } else {
-                isVisible = r.left < cachedVw && r.right > 0;
-            }
-
-            if (isVisible) {
-                const count = ttuCharCountCache.get(ttuCachedNodes[i]) || 0;
-                visible += count;
-            } else {
-                break;
-            }
-        }
-
-        return { current, total, sectionIndex, isPaginated: cachedIsPaginated, visible };
+        return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
+        console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
         return null;
     }
 }

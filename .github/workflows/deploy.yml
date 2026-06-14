@@ -93,7 +93,7 @@ jobs:
           XPI_FILE=$(find web-ext-artifacts -name "*.xpi" | head -n 1)
           if [ -n "$XPI_FILE" ]; then
             echo "Signed XPI found: $XPI_FILE"
-            
+
             if [ "${{ github.ref_type }}" = "tag" ]; then
               TAG_NAME="${{ github.ref_name }}"
             else
@@ -102,12 +102,21 @@ jobs:
             fi
             echo "Target Release Tag: $TAG_NAME"
 
+            # --- ADDED: Rename XPI to match the fallback script's expected format ---
+            CLEAN_VERSION="${TAG_NAME#v}"
+            XPI_DIR=$(dirname "$XPI_FILE")
+            TARGET_NAME="NihongoAutoTracker-v${CLEAN_VERSION}.xpi"
+            mv "$XPI_FILE" "$XPI_DIR/$TARGET_NAME"
+            XPI_FILE="$XPI_DIR/$TARGET_NAME"
+            echo "Renamed XPI file to: $XPI_FILE"
+            # -------------------------------------------------------------------------
+
             # Force fetch tags to ensure annotated tag metadata is downloaded
             git fetch --tags --force
 
             # Retrieve tag annotation, stripping Git comments starting with '#'
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
-            
+
             echo "--- DEBUG START ---"
             echo "Captured TAG_MSG value:"
             echo "$TAG_MSG"

@@ -25,7 +25,7 @@ import {
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/core/overlay-controller';
-import { clearExtractorCache, extractAdvancedCharCount, initResizeListener, cleanupResizeListener } from '@/lib/utils/reader-char-extractor';
+import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
@@ -64,18 +64,10 @@ const THEME_SYNC_THROTTLE_MS = 250;
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
 
-// Stabilization tick checks to avoid Svelte re-rendering flashes falsely toggling states
-let _sidebarClosedTicks = 0;
-const SIDEBAR_CLOSE_REQUIRED_TICKS = 3; // Must remain closed for 3 consecutive intervals (600ms)
-
-let _readingViewInactiveTicks = 0;
-const READING_VIEW_INACTIVE_REQUIRED_TICKS = 5; // Must be inactive for 5 consecutive checks (1000ms) before metric wipe
-let _debouncedReadingViewActive = true;
-
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
-const YATSU_SIDEBAR_CHECK_TTL = 200; // Snappy settings drawer updates
+const YATSU_SIDEBAR_CHECK_TTL = 1000; // Scan the deep DOM at most once every 1000ms during idle reading
 
 function invalidateYatsuSidebarCache() {
   _lastYatsuSidebarCheckTime = 0;
@@ -85,48 +77,6 @@ function invalidateYatsuSidebarCache() {
 let cachedActiveTabTitle = "";
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
-
-function getLayoutOffset(): number {
-  const container = document.querySelector('.book-content-container') ||
-    document.querySelector('.book-content') ||
-    document.querySelector('[data-ref="container"]') ||
-    document.querySelector('.reader-container') ||
-    document.body;
-  const rect = container.getBoundingClientRect();
-
-  let internalScroll = 0;
-  if (container) {
-    internalScroll += (container.scrollLeft || 0) + (container.scrollTop || 0);
-    if (container.parentElement) {
-      internalScroll += (container.parentElement.scrollLeft || 0) + (container.parentElement.scrollTop || 0);
-    }
-  }
-
-  return Math.round(Math.abs(rect.left) + Math.abs(rect.top)) + internalScroll;
-}
-
-// Hoisted lexically to resolve TS2304 "Cannot find name 'isChapterLoading'"
-function isChapterLoading(): boolean {
-  const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
-  if (loader && loader.querySelector('svg')) return true;
-  const contentContainer = document.querySelector('.book-content-container') || document.querySelector('.reader-container');
-  if (!contentContainer) return true;
-  return contentContainer.children.length === 0;
-}
-
-function dispatchLinkerRefresh() {
-  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-  if (wrapper) {
-    wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-    // Fire on next task loop to ensure Svelte has fully batched and committed reactive changes
-    setTimeout(() => {
-      const wr = document.getElementById('nt-ttu-chrono-wrapper');
-      if (wr) {
-        wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-      }
-    }, 0);
-  }
-}
 
 const setChronoButtonDisabled = (disabled: boolean, message?: string) => {
   const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLButtonElement;
@@ -244,46 +194,16 @@ interface StateRefs {
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
   visitedSectionTotals: Map<number, number>;
-  offsetToCharMap: Map<number, number>;
-  globalSessionStartSection?: number;
-  globalSessionStartCharInternal?: number;
-  lastNonZeroCurrentInChapter: number;
 }
 
-let _globalSessionStartChar = -1;
 const stateRefs: StateRefs = {
-  globalSessionStartSection: -1,
-  globalSessionStartCharInternal: -1,
-  get globalSessionStartChar() {
-    return _globalSessionStartChar;
-  },
-  set globalSessionStartChar(val) {
-    _globalSessionStartChar = val;
-    if (val !== -1) {
-      if (this.globalSessionStartCharInternal === -1 || val !== 0) {
-        this.globalSessionStartCharInternal = val;
-        if (this.lastSectionIndex !== -1) {
-          this.globalSessionStartSection = this.lastSectionIndex;
-        } else {
-          const charData = extractAdvancedCharCount(undefined, false);
-          if (charData && charData.sectionIndex !== null) {
-            this.globalSessionStartSection = charData.sectionIndex;
-          }
-        }
-      }
-    } else {
-      this.globalSessionStartCharInternal = -1;
-      this.globalSessionStartSection = -1;
-    }
-  },
+  globalSessionStartChar: -1,
   globalManualCharOffset: 0,
   globalLastTick: Date.now(),
   lastSectionIndex: -1,
   lastSectionTotal: 0,
   visitedSections: new Map<number, number>(),
-  visitedSectionTotals: new Map<number, number>(),
-  offsetToCharMap: new Map<number, number>(),
-  lastNonZeroCurrentInChapter: 0
+  visitedSectionTotals: new Map<number, number>()
 };
 
 const ttuState = new Proxy({
@@ -303,25 +223,26 @@ const ttuState = new Proxy({
           liveSyncQueue(true);
         }
       }
-      dispatchLinkerRefresh();
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) {
+        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      }
       return true;
     }
     if (prop === 'timeMs') {
       const numVal = Number(value) || 0;
-      const oldVal = target.timeMs;
-      target.timeMs = numVal; // Commit target immediately to prevent nested reset calls from recurring
-
-      if (numVal === 0 && oldVal > 0) {
-        startNewSession();
-      } else if (numVal < oldVal || numVal === 0) {
+      if (numVal < target.timeMs || numVal === 0) {
         stateRefs.globalLastTick = Date.now();
       }
-      dispatchLinkerRefresh();
+      target.timeMs = numVal;
       return true;
     }
     if (prop === 'chars') {
       target.chars = Number(value) || 0;
-      dispatchLinkerRefresh();
+      const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+      if (wrapper) {
+        wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      }
       return true;
     }
     (target as any)[prop] = value;
@@ -330,95 +251,6 @@ const ttuState = new Proxy({
 });
 
 let isSyncing = false;
-
-// Local cache to count characters of container elements in Flat DOM
-const localContainerCharCountCache = new WeakMap<Element, number>();
-
-function getContainerTotalChars(container: Element): number {
-  let cached = localContainerCharCountCache.get(container);
-  if (cached !== undefined) return cached;
-
-  const paragraphs = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li')).filter(el => {
-    if (el.closest('#nt-ttu-chrono-wrapper, nav, .menu, header')) return false;
-    return (el.textContent || '').trim().length > 0;
-  });
-
-  const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
-
-  const shouldIgnoreNode = (node: Node | null): boolean => {
-    let current = node;
-    while (current && current.nodeType === Node.ELEMENT_NODE) {
-      const el = current as Element;
-      const tag = el.tagName;
-      if (tag === 'RT' || tag === 'RP' || tag === 'SVG' || tag === 'FIGCAPTION' || tag === 'NOSCRIPT') {
-        return true;
-      }
-      const cl = el.classList;
-      if (cl && (cl.contains('ttu-illustration-container') || cl.contains('ttu-img-container'))) {
-        return true;
-      }
-      if (tag === 'P' || tag === 'LI' || /^(H[1-6])$/i.test(tag)) {
-        break;
-      }
-      current = current.parentNode;
-    }
-    return false;
-  };
-
-  let total = 0;
-  for (let i = 0; i < paragraphs.length; i++) {
-    const el = paragraphs[i];
-    let text = '';
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = walker.nextNode())) {
-      if (!shouldIgnoreNode(n.parentElement)) {
-        text += n.nodeValue || '';
-      }
-    }
-    let matchCount = 0;
-    JP_CHAR_PATTERN.lastIndex = 0;
-    while (JP_CHAR_PATTERN.exec(text) !== null) {
-      matchCount++;
-    }
-    total += matchCount;
-  }
-
-  localContainerCharCountCache.set(container, total);
-  return total;
-}
-
-function startNewSession(isPaginated?: boolean) {
-  ttuState.id = crypto.randomUUID();
-  ttuState.timeMs = 0;
-  ttuState.chars = 0;
-  ttuState.running = false; // Always start a new session paused!
-
-  stateRefs.globalSessionStartChar = -1; // Lazy initialize on first active recalculation pass
-  stateRefs.globalManualCharOffset = 0;
-  stateRefs.lastSectionIndex = -1;
-  stateRefs.lastSectionTotal = 0;
-  stateRefs.visitedSections.clear();
-  stateRefs.visitedSectionTotals.clear();
-  stateRefs.offsetToCharMap.clear();
-  stateRefs.globalLastTick = Date.now();
-  stateRefs.lastNonZeroCurrentInChapter = 0;
-
-  hasSyncedThisSession = false;
-
-  const currentCount = extractAdvancedCharCount(undefined, false);
-  if (currentCount !== null && currentCount.total > 0) {
-    const isPag = isPaginated ?? currentCount.isPaginated;
-    stateRefs.lastSectionIndex = currentCount.sectionIndex !== null ? currentCount.sectionIndex : -1;
-    stateRefs.lastSectionTotal = currentCount.total;
-    stateRefs.globalSessionStartChar = currentCount.current; // Correctly initialize the baseline to our active offset position
-    stateRefs.lastNonZeroCurrentInChapter = currentCount.current;
-    if (isPag && currentCount.sectionIndex !== null) {
-      stateRefs.visitedSectionTotals.set(currentCount.sectionIndex, currentCount.total);
-    }
-  }
-  dispatchLinkerRefresh();
-}
 
 // Query the background frame title cache asynchronously to resolve Cross-Origin DOM blocks securely
 function updateCachedActiveTabTitle() {
@@ -435,7 +267,6 @@ function updateCachedActiveTabTitle() {
   }
 }
 
-// Determine adapt-centric reader labels
 function getTTUTitle() {
   let title = document.title;
   try {
@@ -643,9 +474,7 @@ async function saveSessionAndQueue() {
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
-  stateRefs.offsetToCharMap.clear();
   stateRefs.globalLastTick = Date.now();
-  stateRefs.lastNonZeroCurrentInChapter = 0;
   ttuState.running = false;
   hasSyncedThisSession = false;
 
@@ -683,34 +512,29 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
   return null;
 }
 
-/**<<<<<<<
+/**
  * Atomic processing of layout transitions to prevent data corruption during rapid navigation.
  */
 function checkAndProcessSectionTransition(charData: any): boolean {
-  if (isChapterLoading()) {
+  const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
+  const activeSection = sectionIndex !== null ? sectionIndex : -1;
+
+  // Skip transition checks during active loading or layout-deferred states
+  if (isLayoutDeferred) {
     return false;
   }
 
-  const { total, sectionIndex, isPaginated } = charData;
-  const activeSection = sectionIndex !== null ? sectionIndex : -1;
-
-  let containers = Array.from(document.querySelectorAll('.book-content-container'));
-  if (containers.length === 0) {
-    containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
-  }
-  const isFlatDOM = containers.length > 1;
-
-  // Safe-handle forward skip-scrolling in non-flat DOM (Yomiyasu) by starting a new session
-  if (!isFlatDOM && activeSection > stateRefs.lastSectionIndex + 1 && stateRefs.lastSectionIndex !== -1) {
-    startNewSession(isPaginated);
-    return true;
-  }
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-    // Mode changed! Start a new session, reset state, and completely pause
-    startNewSession(isPaginated);
-    ttuState.running = false;
-    _wasTimerRunningBeforeYatsuSidebar = false;
+    stateRefs.globalSessionStartChar = -1;
+    stateRefs.globalManualCharOffset = 0;
+    stateRefs.lastSectionIndex = -1;
+    stateRefs.lastSectionTotal = 0;
+    stateRefs.visitedSections.clear();
+    stateRefs.visitedSectionTotals.clear();
+    ttuState.chars = 0;
+    ttuState.timeMs = 0;
+    stateRefs.globalLastTick = Date.now();
     lastLoggedPaginatedMode = isPaginated;
     if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
     return true;
@@ -718,39 +542,11 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 
   lastLoggedPaginatedMode = isPaginated;
 
-  // Clear future section caches when scrolling backward to prevent stale remnants
-  if (activeSection < stateRefs.lastSectionIndex && activeSection !== -1) {
-    for (const key of Array.from(stateRefs.visitedSectionTotals.keys())) {
-      if (key > activeSection) {
-        stateRefs.visitedSectionTotals.delete(key);
-      }
-    }
-    for (const key of Array.from(stateRefs.visitedSections.keys())) {
-      if (key > activeSection) {
-        stateRefs.visitedSections.delete(key);
-      }
-    }
-    // Pristine Backtrack Resets: Reset session start baseline trackers cleanly
-    stateRefs.globalSessionStartCharInternal = -1;
-    stateRefs.globalSessionStartChar = isPaginated ? 0 : charData.current;
-    stateRefs.globalSessionStartSection = activeSection;
-  }
-
   // Commit baseline totals for accurate dynamic summing in Paginated Mode
   if (isPaginated && activeSection !== -1) {
     stateRefs.visitedSectionTotals.set(activeSection, total);
     if (stateRefs.lastSectionIndex !== -1) {
       stateRefs.visitedSectionTotals.set(stateRefs.lastSectionIndex, stateRefs.lastSectionTotal);
-    }
-
-    // Fill in skipped sections if we are in Flat DOM (multiple containers)
-    if (isFlatDOM) {
-      for (let i = 0; i < activeSection; i++) {
-        if (!stateRefs.visitedSectionTotals.has(i) && containers[i]) {
-          const computedSecTotal = getContainerTotalChars(containers[i]);
-          stateRefs.visitedSectionTotals.set(i, computedSecTotal);
-        }
-      }
     }
   }
 
@@ -761,16 +557,13 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   if (stateRefs.lastSectionIndex !== activeSection) {
     stabilizer.resetJitenParseFlag();
     if (activeSection === -1) {
-      if (!_debouncedReadingViewActive) {
+      if (!isReadingViewActive()) {
         stateRefs.lastSectionIndex = -1;
         stateRefs.globalManualCharOffset = 0;
         stateRefs.visitedSections.clear();
         stateRefs.visitedSectionTotals.clear();
-        stateRefs.offsetToCharMap.clear();
       }
     } else {
-      stateRefs.offsetToCharMap.clear(); // Clear mapping context on any chapter transitions
-      stateRefs.lastNonZeroCurrentInChapter = 0; // Reset chapter progress baseline on chapter changes
       if (isPaginated) {
         // Robust dynamic offset summing to prevent timing issues during fast turns and backtracks
         let computedOffset = 0;
@@ -827,11 +620,6 @@ function recalculateChars(force = false) {
     return;
   }
   if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
-
-  if (isChapterLoading()) {
-    return; // Hold previous progress stable during loading
-  }
-
   const now = Date.now();
   if (!force && (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS)) {
     if (scrollTimeout) clearTimeout(scrollTimeout);
@@ -844,7 +632,8 @@ function recalculateChars(force = false) {
 
   if (!isReadingViewActive()) {
     ttuState.running = false;
-    dispatchLinkerRefresh();
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
     return;
   }
 
@@ -853,61 +642,27 @@ function recalculateChars(force = false) {
     // Synchronize section boundary and manual offset before applying the local paragraph count
     checkAndProcessSectionTransition(charData);
 
-    const scrollOffset = getLayoutOffset();
-    const total = charData.total;
-    let current = charData.current;
-
-    const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
-
-    let containers = Array.from(document.querySelectorAll('.book-content-container'));
-    if (containers.length === 0) {
-      containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
-    }
-    const isFlatDOM = containers.length > 1;
-
-    const isResetTriggered = isFlatDOM
-      ? (scrollOffset <= 50 && (activeSection === 0 || activeSection === -1))
-      : (scrollOffset <= 50 && activeSection === 0);
-
-    if (isResetTriggered) {
-      current = 0;
-      stateRefs.globalSessionStartCharInternal = -1; // Fix baseline pinning
-      stateRefs.globalSessionStartChar = 0;
-      stateRefs.globalSessionStartSection = -1;
-      stateRefs.lastNonZeroCurrentInChapter = 0;
-    } else {
-      if (total === 0 || charData.isLayoutDeferred) {
-        current = stateRefs.lastNonZeroCurrentInChapter;
-      } else {
-        stateRefs.lastNonZeroCurrentInChapter = current;
-      }
-    }
-
+    const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
-      stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
-    } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
-      if (activeSection === stateRefs.globalSessionStartSection) {
-        if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
-          stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
-        }
-      } else {
-        if (stateRefs.globalSessionStartChar !== 0) {
-          stateRefs.globalSessionStartChar = 0;
-        }
-      }
+      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
     }
     if (Date.now() < _transitionGraceUntil) {
-      if (!charData.isPaginated) {
-        return;
-      }
+      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
+      if (!charData.isPaginated) return;
     }
 
-    let diff = current - stateRefs.globalSessionStartChar;
-    if (diff < 0) diff = 0;
-    const newChars = diff + stateRefs.globalManualCharOffset;
-    ttuState.chars = newChars;
+    // If we are on an illustration or loading page (total === 0) or layout is deferred, preserve and display 
+    // the sum of all fully read chapters including the last section's total chars.
+    if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
+      ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+    } else {
+      let diff = current - stateRefs.globalSessionStartChar;
+      if (diff < 0) diff = 0;
+      ttuState.chars = diff + stateRefs.globalManualCharOffset;
+    }
 
-    dispatchLinkerRefresh();
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
   }
 }
 
@@ -976,16 +731,9 @@ function isYatsuSidebarOpen(): boolean {
     return false;
   }
 
-  // Query strictly semantic sidebar, dialog, accessibility tags, and classes/ids
-  const els = document.querySelectorAll(
-    'aside, dialog, [role="dialog"], [role="menu"], ' +
-    '[class*="sidebar"], [class*="drawer"], [class*="appearance"], [class*="settings"], [class*="panel"], div[class*="menu"], ' +
-    '[id*="sidebar"], [id*="drawer"], [id*="appearance"], [id*="settings"], [id*="panel"]'
-  );
-  if (els.length === 0) {
-    _cachedYatsuSidebarOpen = false;
-    return false;
-  }
+  // Query strictly semantic sidebar, dialog, and accessibility tags.
+  // This executes instantly and returns 0 items during active reading (99.9% of the session)
+  const els = document.querySelectorAll('aside, dialog, [role="dialog"], [role="menu"]');
 
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
@@ -1020,13 +768,10 @@ function isYatsuSidebarOpen(): boolean {
       continue;
     }
 
-    // 5. Read computed z-index to isolate overlays and drawers (usually z-index >= 10)
-    // Absolute / fixed elements are exempt from low z-index filtering since they might rely on DOM ordering
+    // 5. Read computed z-index to isolate overlays and drawers (usually z-index >= 30)
     const zIndexStr = style.zIndex;
     const zIndex = parseInt(zIndexStr, 10);
-    const isPositioned = style.position === 'absolute' || style.position === 'fixed';
-
-    if (!isPositioned && (isNaN(zIndex) || zIndex < 10)) {
+    if (isNaN(zIndex) || zIndex < 30) {
       continue;
     }
 
@@ -1120,40 +865,17 @@ async function setupTTUChronometer() {
         if (ttuState.running) stateRefs.globalLastTick = Date.now();
         return;
       }
-
-      const isActiveNow = isReadingViewActive();
-      if (isActiveNow) {
-        _readingViewInactiveTicks = 0;
-        _debouncedReadingViewActive = true;
-      } else {
-        _sidebarClosedTicks = 0;
-        _readingViewInactiveTicks++;
-        if (_readingViewInactiveTicks >= READING_VIEW_INACTIVE_REQUIRED_TICKS) {
-          _debouncedReadingViewActive = false;
-        }
-      }
-
-      if (!_debouncedReadingViewActive) {
+      if (!isReadingViewActive()) {
         if (ttuState.running) {
           ttuState.running = false;
-          dispatchLinkerRefresh();
+          const wr = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
-        return;
-      }
-
-      if (isChapterLoading()) {
-        if (ttuState.running) stateRefs.globalLastTick = Date.now();
         return;
       }
 
       if (window.location.hostname === 'app.yatsu.moe') {
         const sidebarOpen = isYatsuSidebarOpen();
-        if (sidebarOpen) {
-          // Force layout cache clear so any toggle instantly updates computed styles
-          clearExtractorCache();
-          _sidebarClosedTicks = 0; // Reset closed tick counter
-        }
-
         if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen) {
           _isYatsuSidebarCurrentlyOpen = true;
           if (ttuState.running) {
@@ -1163,22 +885,12 @@ async function setupTTUChronometer() {
             _wasTimerRunningBeforeYatsuSidebar = false;
           }
         } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
-          _sidebarClosedTicks++;
-          if (_sidebarClosedTicks >= SIDEBAR_CLOSE_REQUIRED_TICKS) {
-            _isYatsuSidebarCurrentlyOpen = false;
-            _sidebarClosedTicks = 0;
-            if (_wasTimerRunningBeforeYatsuSidebar) {
-              ttuState.running = true;
-              stateRefs.globalLastTick = Date.now();
-            }
+          _isYatsuSidebarCurrentlyOpen = false;
+          if (_wasTimerRunningBeforeYatsuSidebar) {
+            ttuState.running = true;
+            stateRefs.globalLastTick = Date.now();
           }
         }
-      }
-
-      // Synchronously check for mode transitions on every tick (handles sidebar setting changes in real-time)
-      const activeCharData = extractAdvancedCharCount(undefined, ttuState.running);
-      if (activeCharData !== null) {
-        checkAndProcessSectionTransition(activeCharData);
       }
 
       if (ttuState.running && !stabilizer.getGracePeriodActive()) {
@@ -1192,56 +904,27 @@ async function setupTTUChronometer() {
         if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
           const charData = extractAdvancedCharCount(undefined, ttuState.running);
           if (charData !== null) {
-            let { current, total, isPaginated } = charData;
-
-            const scrollOffset = getLayoutOffset();
-
-            const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : -1;
-
-            let containers = Array.from(document.querySelectorAll('.book-content-container'));
-            if (containers.length === 0) {
-              containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
-            }
-            const isFlatDOM = containers.length > 1;
-
-            const isResetTriggered = isFlatDOM
-              ? (scrollOffset <= 50 && (activeSection === 0 || activeSection === -1))
-              : (scrollOffset <= 50 && activeSection === 0);
-
-            if (isResetTriggered) {
-              current = 0;
-              stateRefs.globalSessionStartCharInternal = -1; // Fix baseline pinning
-              stateRefs.globalSessionStartChar = 0;
-              stateRefs.globalSessionStartSection = -1;
-              stateRefs.lastNonZeroCurrentInChapter = 0;
-            } else {
-              if (total === 0 || charData.isLayoutDeferred) {
-                current = stateRefs.lastNonZeroCurrentInChapter;
-              } else {
-                stateRefs.lastNonZeroCurrentInChapter = current;
-              }
-            }
-
+            const { current, total, isLayoutDeferred, isPaginated } = charData;
             if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = scrollOffset > 50 ? 0 : current;
-            } else if (activeSection !== -1 && stateRefs.globalSessionStartSection !== -1) {
-              if (activeSection === stateRefs.globalSessionStartSection) {
-                if (stateRefs.globalSessionStartChar !== stateRefs.globalSessionStartCharInternal) {
-                  stateRefs.globalSessionStartChar = stateRefs.globalSessionStartCharInternal!;
-                }
-              } else {
-                if (stateRefs.globalSessionStartChar !== 0) {
-                  stateRefs.globalSessionStartChar = 0;
-                }
-              }
+              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
             }
             if (now >= _transitionGraceUntil) {
-              let diff = current - stateRefs.globalSessionStartChar;
-              if (diff < 0) diff = 0;
-              ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              if (isLayoutDeferred || !total || Number(total) === 0) {
+                ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+              } else {
+                let diff = current - stateRefs.globalSessionStartChar;
+                if (diff < 0) diff = 0;
+                ttuState.chars = diff + stateRefs.globalManualCharOffset;
+              }
             } else {
+              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
               if (isPaginated) {
-                ttuState.chars = (current - stateRefs.globalSessionStartChar) + stateRefs.globalManualCharOffset;
+                // Compute and update chars immediately even during grace period in paginated mode!
+                if (isLayoutDeferred || !total || Number(total) === 0) {
+                  ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+                } else {
+                  ttuState.chars = current + stateRefs.globalManualCharOffset;
+                }
               }
             }
           }
@@ -1251,7 +934,8 @@ async function setupTTUChronometer() {
         const lastSec = Math.floor((ttuState.timeMs - elapsed) / 1000);
         const currSec = Math.floor(ttuState.timeMs / 1000);
         if (currSec !== lastSec) {
-          dispatchLinkerRefresh();
+          const wr = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         }
         if (_cachedAutoSave !== false) liveSyncQueue();
       }
@@ -1268,15 +952,13 @@ function isTargetInIgnoredContainer(target: Node): boolean {
 }
 
 if (isRelevantFrame) {
-  let scrollRafId: number | null = null;
   const handleScrollUpdate = () => {
     if (!ttuState.running) return;
-    if (scrollRafId !== null) return;
-    scrollRafId = requestAnimationFrame(() => {
-      scrollRafId = null;
+    if (scrollTimeout) clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
       if (!isReadingViewActive() || stabilizer.getGracePeriodActive()) return;
-      recalculateChars(true);
-    });
+      recalculateChars();
+    }, 150);
   };
 
   window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
@@ -1284,13 +966,13 @@ if (isRelevantFrame) {
   window.addEventListener('click', () => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
-      setTimeout(() => { recalculateChars(true); }, 16);
+      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on click!
     }
   }, { passive: true });
   window.addEventListener('keyup', (e) => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
-      setTimeout(() => { recalculateChars(true); }, 16);
+      setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on page flip key!
     }
   }, { passive: true });
 
@@ -1331,18 +1013,23 @@ if (isRelevantFrame) {
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
-  stateRefs.globalSessionStartChar = current; // Correctly initialize the baseline to our active offset position
+  stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSections.set(activeSection, 0);
   stateRefs.visitedSectionTotals.clear();
-  stateRefs.offsetToCharMap.clear();
-  stateRefs.lastNonZeroCurrentInChapter = current;
   if (isPaginated) {
     stateRefs.visitedSectionTotals.set(activeSection, total);
   }
+}
+
+function isChapterLoading(): boolean {
+  const loader = document.querySelector('.fixed.inset-0.flex.items-center.justify-center');
+  if (loader && loader.querySelector('svg')) return true;
+  const contentContainer = document.querySelector('.book-content-container');
+  return !!(contentContainer && contentContainer.children.length === 0);
 }
 
 function isDictNode(node: Node): boolean {
@@ -1391,18 +1078,6 @@ function setupOptimizedMutationObserver() {
       if (!target) continue;
       if (isInlineTag(target.tagName)) continue;
       if (isTargetInIgnoredContainer(target)) continue;
-
-      let hasStyleOrClassChange = false;
-      if (m.type === 'attributes' && (m.attributeName === 'class' || m.attributeName === 'style' || m.attributeName === 'data-view-mode')) {
-        hasStyleOrClassChange = true;
-      }
-
-      if (hasStyleOrClassChange) {
-        clearExtractorCache();
-        invalidateYatsuSidebarCache();
-        scheduleMutations();
-        break;
-      }
 
       let isDictionaryMutation = true;
       const addedLen = m.addedNodes.length;
@@ -1481,32 +1156,7 @@ function setupOptimizedMutationObserver() {
 
     activeMutationObserver = new MutationObserver(observerCallback);
     currentObservedElement = targetEl;
-
-    // Observe child modifications across the subtree
-    activeMutationObserver.observe(targetEl, {
-      childList: true,
-      subtree: true
-    });
-
-    // Observe attribute changes ONLY on the high-level container to prevent infinite performance loops
-    activeMutationObserver.observe(targetEl, {
-      attributes: true,
-      subtree: false,
-      attributeFilter: ['class', 'style', 'data-view-mode']
-    });
-
-    // Track class transitions on root document wrappers directly without subtree costs
-    activeMutationObserver.observe(document.documentElement, {
-      attributes: true,
-      subtree: false,
-      attributeFilter: ['class', 'style', 'data-view-mode']
-    });
-    activeMutationObserver.observe(document.body, {
-      attributes: true,
-      subtree: false,
-      attributeFilter: ['class', 'style', 'data-view-mode']
-    });
-
+    activeMutationObserver.observe(targetEl, { childList: true, subtree: true });
     handleMutations();
   };
 
@@ -1587,7 +1237,20 @@ function handleMutations() {
     clearThemeDetectionCache();
     scheduleInstantThemeSync();
 
-    startNewSession();
+    ttuState.timeMs = 0;
+    ttuState.chars = 0;
+    ttuState.running = false;
+
+    const currentCount = extractAdvancedCharCount(undefined, true);
+    const isPag = currentCount !== null ? currentCount.isPaginated : false;
+    stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
+    stateRefs.globalManualCharOffset = 0;
+    stateRefs.lastSectionIndex = -1;
+    stateRefs.lastSectionTotal = 0;
+    stateRefs.visitedSections.clear();
+    stateRefs.visitedSectionTotals.clear();
+    stateRefs.globalLastTick = Date.now();
+    hasSyncedThisSession = false;
 
     _wasTimerRunningBeforeYatsuSidebar = false;
     _isYatsuSidebarCurrentlyOpen = false;
@@ -1597,10 +1260,10 @@ function handleMutations() {
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) {
-      dispatchLinkerRefresh();
+      wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
       wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
     }
-  } else if (!isActive && !_debouncedReadingViewActive) {
+  } else if (!isActive) {
     _wasReadingViewActive = false;
   }
 
@@ -1757,7 +1420,8 @@ export default defineContentScript({
             }
             if ((window as any).ntChronoInterval) clearInterval((window as any).ntChronoInterval);
           } else setupTTUChronometer();
-          dispatchLinkerRefresh();
+          const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+          if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
         } else {
           if (isWebsiteOverlaySkipped(newCfg) || newCfg.overlayPosition === 'hidden' || getOverlayDismissed()) {
             const overlay = overlayController.getOverlayElement();
@@ -1829,7 +1493,6 @@ export default defineContentScript({
             const isPag = initCount !== null ? initCount.isPaginated : false;
             stateRefs.globalSessionStartChar = isPag ? 0 : (initCount !== null ? initCount.current : -1);
             stateRefs.globalManualCharOffset = 0;
-            stateRefs.lastNonZeroCurrentInChapter = 0;
 
             const timeVal = document.querySelector('#nt-ttu-val-time');
             const charsVal = document.querySelector('#nt-ttu-val-chars');
@@ -1857,7 +1520,8 @@ export default defineContentScript({
           }
           if (updated) {
             ttuLinkStorage.setValue(links).then(() => {
-              dispatchLinkerRefresh();
+              const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+              if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
             });
           }
         }
