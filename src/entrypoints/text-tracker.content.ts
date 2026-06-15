@@ -63,6 +63,9 @@ let _lastThemeSyncTime = 0;
 const THEME_SYNC_THROTTLE_MS = 250;
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
+// When true, a pause was triggered automatically (settings / navigation / sidebar),
+// so the pause-time queue flush is suppressed — only user pauses commit.
+let _autoPauseInProgress = false;
 
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
@@ -287,7 +290,7 @@ const ttuState = new Proxy({
       target.running = isRunning;
       if (wasRunning && !isRunning) {
         stabilizer.handleTimerPaused();
-        if (getReaderConfig(currentConfig).autoSave !== false) {
+        if (!_autoPauseInProgress && getReaderConfig(currentConfig).autoSave !== false) {
           liveSyncQueue(true);
         }
       }
@@ -638,6 +641,18 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     initSessionRefs(charData.current, activeSection, total, isPaginated);
   }
 
+  // IMAGE PAGE GUARD: image pages report total=0 with an unreliable section index
+  // (Yomiyasu reuses a stale key for content-less pages, e.g. always "2"). Do NOT
+  // treat them as transitions — keep lastSectionIndex pinned to the last real
+  // section so the freeze can complete it. Only after the session has a real
+  // anchor (lastSectionIndex !== -1).
+  if (isPaginated && !measured && stateRefs.lastSectionIndex !== -1 && activeSection !== stateRefs.lastSectionIndex) {
+    ntDbgThrottled('img-hold', 1000, 'IMAGE page: holding last real section (ignoring bogus index)', {
+      bogusIndex: activeSection, heldRealSection: stateRefs.lastSectionIndex
+    });
+    return false;
+  }
+
   if (stateRefs.lastSectionIndex !== activeSection) {
     stabilizer.resetJitenParseFlag();
     if (activeSection === -1) {
@@ -707,6 +722,17 @@ function paginatedReadChars(activeSection: number, current: number): number {
   return v;
 }
 
+// Sum of visited section totals from the session start through `section`
+// INCLUSIVE — i.e. the whole-book position at the END of `section` (fully read).
+// Used for the image-page freeze: turning past a section completes it.
+function prefixSumThrough(section: number): number {
+  let sum = 0;
+  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
+    if (idx >= stateRefs.sessionStartSection && idx <= section) sum += tot;
+  }
+  return sum;
+}
+
 function recalculateChars(force = false) {
   // Guard clause to block execution on inactive frames (such as Yomiyasu's parent document)
   if (!document.getElementById('nt-ttu-chrono-wrapper')) {
@@ -740,7 +766,9 @@ function recalculateChars(force = false) {
     setTimeout(() => {
       if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
         ntDbg('recalc: PAUSING timer (reading-view absent 350ms)');
+        _autoPauseInProgress = true;
         ttuState.running = false;
+        _autoPauseInProgress = false;
         const w = document.getElementById('nt-ttu-chrono-wrapper');
         if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
       }
@@ -794,10 +822,22 @@ function recalculateChars(force = false) {
       // no reading progress, and its section index is unreliable on Yomiyasu
       // (content-less pages reuse a stale key), so holding the last value is the
       // correct behavior and avoids the drop-to-0 blip.
-      if (charData.isLayoutDeferred || !charData.total || Number(charData.total) === 0) {
+      if (charData.isLayoutDeferred) {
+        // Genuine chapter loading — layout not measured. Hold the last value.
         ttuState.chars = stateRefs.lastGoodChars;
-        ntDbgThrottled('emit-freeze', 1000, 'PAGINATED FREEZE (image / loading, total=0)', {
+        ntDbgThrottled('emit-freeze', 1000, 'PAGINATED FREEZE (layout deferred / loading)', {
           sectionIndex: charData.sectionIndex, frozenAt: stateRefs.lastGoodChars, ...nativeDiff(stateRefs.lastGoodChars)
+        });
+      } else if (!charData.total || Number(charData.total) === 0) {
+        // Image page. lastSectionIndex was held on the last REAL section (image
+        // transitions are skipped), and turning onto the image means that section
+        // is fully read — so complete it. Fixes the Yomiyasu "drops the page
+        // before the image" bug.
+        const val = Math.max(0, prefixSumThrough(stateRefs.lastSectionIndex) - stateRefs.sessionStartCurrent);
+        stateRefs.lastGoodChars = val;
+        ttuState.chars = val;
+        ntDbgThrottled('emit-image', 1000, 'PAGINATED IMAGE (last real section completed)', {
+          heldRealSection: stateRefs.lastSectionIndex, emittedChars: val, ...nativeDiff(val)
         });
       } else {
         const val = paginatedReadChars(activeSection, current);
@@ -1030,7 +1070,9 @@ async function setupTTUChronometer() {
           setTimeout(() => {
             if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
               ntDbg('interval: PAUSING timer (reading-view absent 350ms)');
+              _autoPauseInProgress = true;
               ttuState.running = false;
+              _autoPauseInProgress = false;
               const wr = document.getElementById('nt-ttu-chrono-wrapper');
               if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
             }
@@ -1046,7 +1088,9 @@ async function setupTTUChronometer() {
           if (ttuState.running) {
             _wasTimerRunningBeforeYatsuSidebar = true;
             ntDbg('YATSU sidebar detected OPEN → pausing timer (Bug 4 watch: was this a real sidebar?)');
+            _autoPauseInProgress = true;
             ttuState.running = false;
+            _autoPauseInProgress = false;
           } else {
             _wasTimerRunningBeforeYatsuSidebar = false;
           }
@@ -1467,6 +1511,17 @@ function handleMutations() {
   if (document.getElementById('nt-ttu-chrono-wrapper')) {
     const charData = extractAdvancedCharCount(undefined, ttuState.running);
     if (charData !== null) {
+      // Best-effort gap-fill on every DOM swap: chapters that mount only briefly
+      // during a fast page-turn may never be the "active" section at a recalc
+      // tick, but they pass through here. Records any newly-mounted section total.
+      if (charData.isPaginated && ttuState.running) {
+        const allTotals = extractAllSectionTotals();
+        for (const [idx, tot] of allTotals) {
+          if (tot > (stateRefs.visitedSectionTotals.get(idx) || 0)) {
+            stateRefs.visitedSectionTotals.set(idx, tot);
+          }
+        }
+      }
       const didTransition = checkAndProcessSectionTransition(charData);
       if (didTransition) {
         recalculateChars(true); // Force immediate synchronously drawn update bypassing throttle
