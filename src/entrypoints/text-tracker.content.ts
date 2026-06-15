@@ -67,6 +67,12 @@ let _isYatsuSidebarCurrentlyOpen = false;
 // so the pause-time queue flush is suppressed — only user pauses commit.
 let _autoPauseInProgress = false;
 
+// Set when the timer goes paused -> running. On the next paginated recalc the
+// session is re-anchored to the current position while preserving the displayed
+// count, so any scrolling done while paused does not retroactively jump the
+// count on resume.
+let _needsRebase = false;
+
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
@@ -218,6 +224,10 @@ interface StateRefs {
   lastDir: number;
   prevSec: number;
   prevCur: number;
+  // Checkpoint added on a skip-stop: the frozen count at the moment of the skip.
+  // Keeps the count continuous on resume instead of recomputing an absolute
+  // position that would include the skipped jump.
+  baseChars: number;
 }
 
 const stateRefs: StateRefs = {
@@ -235,7 +245,8 @@ const stateRefs: StateRefs = {
   seenSections: new Set<number>(),
   lastDir: 1,
   prevSec: -1,
-  prevCur: 0
+  prevCur: 0,
+  baseChars: 0
 };
 
 const ttuState = new Proxy({
@@ -249,6 +260,11 @@ const ttuState = new Proxy({
       const wasRunning = target.running;
       const isRunning = !!value;
       target.running = isRunning;
+      if (!wasRunning && isRunning) {
+        // Resuming (or first start): re-anchor on the next recalc so the count
+        // continues from its current value at the current position.
+        _needsRebase = true;
+      }
       if (wasRunning && !isRunning) {
         stabilizer.handleTimerPaused();
         if (!_autoPauseInProgress && getReaderConfig(currentConfig).autoSave !== false) {
@@ -409,7 +425,9 @@ function getActiveThemeConfig(cfg: any) {
 }
 
 async function liveSyncQueue(force = false) {
-  if (isSyncing || (ttuState.timeMs === 0 && ttuState.chars === 0)) return;
+  // Only ever commit a session to the queue once it has reached 1 minute. Shorter
+  // sessions are not logged at all.
+  if (isSyncing || ttuState.timeMs < 60000) return;
   const now = Date.now();
   if (!force && (now - _lastStorageWriteTime < STORAGE_WRITE_THROTTLE_MS)) return;
   _lastStorageWriteTime = now;
@@ -511,6 +529,7 @@ async function saveSessionAndQueue() {
   stateRefs.visitedSectionTotals.clear();
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
+  stateRefs.baseChars = 0;
   stateRefs.prevSec = -1;
   stateRefs.prevCur = 0;
   stateRefs.globalLastTick = Date.now();
@@ -582,6 +601,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.visitedSectionTotals.clear();
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
+    stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
     ttuState.chars = 0;
@@ -627,6 +647,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         stateRefs.visitedSectionTotals.clear();
         stateRefs.seenSections.clear();
         stateRefs.lastDir = 1;
+        stateRefs.baseChars = 0;
         stateRefs.prevSec = -1;
         stateRefs.prevCur = 0;
       }
@@ -648,8 +669,16 @@ function checkAndProcessSectionTransition(charData: any): boolean {
             if (!stateRefs.seenSections.has(k)) { skippedUnread = true; break; }
           }
           if (skippedUnread) {
+            // Checkpoint the count where it froze and re-anchor to the new
+            // position, so resuming continues from here instead of jumping to an
+            // absolute position that would include the skipped (uncounted) gap.
+            stateRefs.baseChars = stateRefs.lastGoodChars;
+            stateRefs.sessionStartSection = activeSection;
+            stateRefs.sessionStartCurrent = charData.current;
             stateRefs.lastSectionIndex = activeSection;
             stateRefs.lastSectionTotal = total;
+            stateRefs.prevSec = activeSection;
+            stateRefs.prevCur = charData.current;
             triggerSkipStop();
             return true;
           }
@@ -713,36 +742,34 @@ function triggerSkipStop() {
   }
 }
 
+// ── Position model (absolute, book-origin) ──
+// absBelow(s)   = chars in all visited sections with index < s
+// absThrough(s) = chars in all visited sections with index <= s
+// Both sum over the WHOLE map (not bounded by session start), so sections
+// recorded later cancel out of the (now - start) difference. Read count =
+// baseChars + max(0, positionNow - positionAtSessionStart).
+function absBelow(section: number): number {
+  let sum = 0;
+  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
+    if (idx < section) sum += tot;
+  }
+  return sum;
+}
+function absThrough(section: number): number {
+  return absBelow(section) + (stateRefs.visitedSectionTotals.get(section) || 0);
+}
+function sessionBasePos(): number {
+  return absBelow(stateRefs.sessionStartSection) + stateRefs.sessionStartCurrent;
+}
+
+// Whole-book chars read this session. Absolute difference, so going BACKWARD
+// below the start section clamps to 0 (re-reading earlier than where you began
+// adds nothing) instead of mixing per-section `current` values.
 function paginatedReadChars(activeSection: number, current: number): number {
-  let sum = 0;
-  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
-    if (idx >= stateRefs.sessionStartSection && idx < activeSection) sum += tot;
-  }
-  let v = sum + (current - stateRefs.sessionStartCurrent);
+  const now = absBelow(activeSection) + current;
+  let v = now - sessionBasePos();
   if (v < 0) v = 0;
-  return v;
-}
-
-// Position at the START of `section` (everything before it, fully read). Used
-// for the image freeze when travelling backward — the image sits before the
-// section, so its prior section is NOT yet completed.
-function prefixSumBelow(section: number): number {
-  let sum = 0;
-  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
-    if (idx >= stateRefs.sessionStartSection && idx < section) sum += tot;
-  }
-  return sum;
-}
-
-// Sum of visited section totals from the session start through `section`
-// INCLUSIVE — i.e. the whole-book position at the END of `section` (fully read).
-// Used for the image-page freeze: turning past a section completes it.
-function prefixSumThrough(section: number): number {
-  let sum = 0;
-  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
-    if (idx >= stateRefs.sessionStartSection && idx <= section) sum += tot;
-  }
-  return sum;
+  return stateRefs.baseChars + v;
 }
 
 function recalculateChars(force = false) {
@@ -785,6 +812,39 @@ function recalculateChars(force = false) {
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
+    // Resume re-anchor: when the timer just went paused -> running, re-anchor the
+    // paginated session to the CURRENT position while keeping the displayed count.
+    // This makes the count continue from where it was instead of jumping to an
+    // absolute position that grew while paused (scrolling while paused must not
+    // be counted). Done before any transition processing so state stays clean.
+    if (_needsRebase && !charData.isPaginated) _needsRebase = false;
+    if (_needsRebase && charData.isPaginated) {
+      const active = charData.sectionIndex !== null ? charData.sectionIndex : stateRefs.lastSectionIndex;
+      if (!charData.isLayoutDeferred && Number(charData.total) > 0) {
+        stateRefs.baseChars = stateRefs.lastGoodChars;
+        stateRefs.sessionStartSection = active;
+        stateRefs.sessionStartCurrent = charData.current;
+        stateRefs.lastSectionIndex = active;
+        stateRefs.lastSectionTotal = Number(charData.total);
+        stateRefs.visitedSectionTotals.set(active, Number(charData.total));
+        stateRefs.seenSections.add(active);
+        stateRefs.prevSec = active;
+        stateRefs.prevCur = charData.current;
+        _needsRebase = false;
+        ttuState.chars = stateRefs.lastGoodChars;
+        const w = document.getElementById('nt-ttu-chrono-wrapper');
+        if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        return; // next tick computes from the new anchor; no jump
+      } else {
+        // Resumed on an image / loading page: hold the frozen value, keep the
+        // flag, and rebase once a real page is active.
+        ttuState.chars = stateRefs.lastGoodChars;
+        const w = document.getElementById('nt-ttu-chrono-wrapper');
+        if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        return;
+      }
+    }
+
     // Synchronize section boundary and manual offset before applying the local paragraph count
     const didTransition = checkAndProcessSectionTransition(charData);
 
@@ -831,12 +891,11 @@ function recalculateChars(force = false) {
         // Image page. lastSectionIndex is pinned to the last REAL section.
         // Direction decides the position: moving FORWARD onto the image means the
         // prior section is finished (complete it); moving BACKWARD means the image
-        // sits before that section, so freeze at the position just before it. This
-        // fixes the backward image jump and the "stuck at 24 instead of 0" bug.
-        const base = stateRefs.lastDir >= 0
-          ? prefixSumThrough(stateRefs.lastSectionIndex)
-          : prefixSumBelow(stateRefs.lastSectionIndex);
-        const val = Math.max(0, base - stateRefs.sessionStartCurrent);
+        // sits before that section, so freeze at the position just before it.
+        const pos = stateRefs.lastDir >= 0
+          ? absThrough(stateRefs.lastSectionIndex)
+          : absBelow(stateRefs.lastSectionIndex);
+        const val = stateRefs.baseChars + Math.max(0, pos - sessionBasePos());
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
       } else {
@@ -1215,6 +1274,7 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.lastSectionTotal = total;
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
+  stateRefs.baseChars = 0;
   stateRefs.prevSec = activeSection;
   stateRefs.prevCur = current;
   if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
@@ -1458,6 +1518,7 @@ function handleMutations() {
     stateRefs.visitedSectionTotals.clear();
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
+    stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
     stateRefs.globalLastTick = Date.now();
@@ -1524,7 +1585,7 @@ function handleMutations() {
           }
         }
       }
-      const didTransition = checkAndProcessSectionTransition(charData);
+      const didTransition = ttuState.running ? checkAndProcessSectionTransition(charData) : false;
       if (didTransition) {
         recalculateChars(true); // Force immediate synchronously drawn update bypassing throttle
       }
