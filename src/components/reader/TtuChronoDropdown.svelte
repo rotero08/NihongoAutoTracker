@@ -589,16 +589,44 @@
         isEditingChars = false;
         const val = parseInt(charsInputVal.replace(/\D/g, ""), 10);
         if (!isNaN(val) && val >= 0) {
-            const currentCount = extractTTUCharCount()
-                ? extractTTUCharCount().current
-                : 0;
-            let diff =
-                currentCount -
-                (stateRefs.globalSessionStartChar !== -1
-                    ? stateRefs.globalSessionStartChar
-                    : 0);
-            if (diff < 0) diff = 0;
-            stateRefs.globalManualCharOffset = val - diff;
+            const cc = extractTTUCharCount();
+            const currentCount = cc ? cc.current : 0;
+            if (cc && cc.isPaginated) {
+                // Paginated mode is position-based: recalc returns
+                // baseChars + (pos - sessionBasePos), ignoring globalManualCharOffset.
+                // So a plain offset edit gets overwritten on the next tick (and lost
+                // on resume). Re-anchor the session to HERE with baseChars = val:
+                // the formula then returns val now and grows normally from here.
+                const active =
+                    cc.sectionIndex !== null && cc.sectionIndex !== undefined
+                        ? cc.sectionIndex
+                        : stateRefs.lastSectionIndex;
+                stateRefs.baseChars = val;
+                stateRefs.sessionStartSection = active;
+                stateRefs.sessionStartCurrent = currentCount;
+                stateRefs.lastSectionIndex = active;
+                if (cc.total && Number(cc.total) > 0) {
+                    stateRefs.lastSectionTotal = Number(cc.total);
+                    stateRefs.visitedSectionTotals.set(
+                        active,
+                        Number(cc.total),
+                    );
+                    stateRefs.seenSections.add(active);
+                }
+                stateRefs.prevSec = active;
+                stateRefs.prevCur = currentCount;
+            } else {
+                let diff =
+                    currentCount -
+                    (stateRefs.globalSessionStartChar !== -1
+                        ? stateRefs.globalSessionStartChar
+                        : 0);
+                if (diff < 0) diff = 0;
+                stateRefs.globalManualCharOffset = val - diff;
+            }
+            // Set in both modes so resume (which rebases off lastGoodChars)
+            // keeps the edited value instead of reverting.
+            stateRefs.lastGoodChars = val;
             ttuState.chars = val;
             chars = val;
         }

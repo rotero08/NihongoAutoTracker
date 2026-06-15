@@ -898,7 +898,11 @@ function recalculateChars(force = false) {
         const pos = stateRefs.lastDir >= 0
           ? absThrough(stateRefs.lastSectionIndex)
           : absBelow(stateRefs.lastSectionIndex);
-        const val = stateRefs.baseChars + Math.max(0, pos - sessionBasePos());
+        // Clamp the RESULT at 0, not the travel delta — same rule as
+        // paginatedReadChars. With a checkpoint baseChars (skip-stop / resume),
+        // clamping travel froze the image page at baseChars, spiking the count
+        // until the next real page self-corrected.
+        const val = Math.max(0, stateRefs.baseChars + (pos - sessionBasePos()));
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
       } else {
