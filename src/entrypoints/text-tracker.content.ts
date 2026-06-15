@@ -767,9 +767,12 @@ function sessionBasePos(): number {
 // adds nothing) instead of mixing per-section `current` values.
 function paginatedReadChars(activeSection: number, current: number): number {
   const now = absBelow(activeSection) + current;
-  let v = now - sessionBasePos();
-  if (v < 0) v = 0;
-  return stateRefs.baseChars + v;
+  const v = now - sessionBasePos();
+  // Clamp the RESULT at 0, not the travel delta. When baseChars is a checkpoint
+  // (skip-stop / resume re-anchor), backward travel must subtract below it so the
+  // count keeps decreasing instead of freezing at baseChars. When baseChars is 0
+  // (fresh session) this is identical to the old `max(0, v)` behavior.
+  return Math.max(0, stateRefs.baseChars + v);
 }
 
 function recalculateChars(force = false) {

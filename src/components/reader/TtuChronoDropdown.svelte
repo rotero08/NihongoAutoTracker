@@ -62,6 +62,14 @@
     let showSkipPause = $state(false);
     let skipPauseTimer: any = null;
 
+    function dismissSkipPauseNotice() {
+        showSkipPause = false;
+        if (skipPauseTimer) {
+            clearTimeout(skipPauseTimer);
+            skipPauseTimer = null;
+        }
+    }
+
     function startSkipPauseNotice() {
         showSkipPause = true;
         if (skipPauseTimer) clearTimeout(skipPauseTimer);
@@ -284,6 +292,8 @@
 
     // Toggle logic for timer tracking
     function toggleTimer() {
+        // Clicking the timer dismisses the "going too fast" notice immediately.
+        dismissSkipPauseNotice();
         const wasRunning = ttuState.running;
         ttuState.running = !ttuState.running;
         running = ttuState.running;
