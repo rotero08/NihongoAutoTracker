@@ -267,6 +267,57 @@ export function clearExtractorCache() {
     }
 }
 
+/**
+ * Returns a map of { sectionIndex -> total chars } for EVERY section container
+ * currently present in the DOM (not just the active one). Used to fill in totals
+ * for sections the reader window slides past during fast scrolling, so the
+ * whole-book position stays accurate even when chapters are not individually
+ * settled on. Per-paragraph counts are cached (WeakMap), so re-scanning an
+ * already-seen container is cheap.
+ */
+export function extractAllSectionTotals(): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    try {
+        let containers = Array.from(document.querySelectorAll('.book-content-container'));
+        if (containers.length === 0) {
+            containers = Array.from(document.querySelectorAll('[id^="ttu-id"], [id^="ttu-p-"]'));
+        }
+        if (containers.length === 0) return out;
+
+        for (const container of containers) {
+            const idx = getSectionIndex(container as Element);
+            if (idx === null) continue;
+
+            const pTags = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li'))
+                .filter(el => (el.textContent || '').trim().length > 0);
+            if (pTags.length === 0) continue; // empty / image / not-yet-rendered
+
+            let total = 0;
+            for (const el of pTags) {
+                let count = ttuCharCountCache.get(el as Element);
+                if (count === undefined) {
+                    let text = '';
+                    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                    let n: Node | null;
+                    while ((n = walker.nextNode())) {
+                        if (!shouldIgnoreNode(n.parentElement)) {
+                            text += n.nodeValue || '';
+                        }
+                    }
+                    const m = text.match(JP_CHAR_PATTERN);
+                    count = m ? m.length : 0;
+                    ttuCharCountCache.set(el as Element, count);
+                }
+                total += count;
+            }
+            if (total > 0) out.push([idx, total]);
+        }
+    } catch (e) {
+        // Non-fatal: gap-fill is best-effort.
+    }
+    return out;
+}
+
 export function extractAdvancedCharCount(
     containerSelector = '.book-content, [data-ref="container"], .reader-container, article',
     isTimerRunning = true

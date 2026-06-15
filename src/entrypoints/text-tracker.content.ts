@@ -25,7 +25,7 @@ import {
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/core/overlay-controller';
-import { clearExtractorCache, extractAdvancedCharCount } from '@/lib/utils/reader-char-extractor';
+import { clearExtractorCache, extractAdvancedCharCount, extractAllSectionTotals } from '@/lib/utils/reader-char-extractor';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
@@ -54,7 +54,7 @@ let _instantThemeSyncScheduled = false;
 let _lastSectionCheckTime = 0;
 let _transitionGraceUntil = 0;
 let _lastRecalculateTime = 0;
-const RECALCULATE_THROTTLE_MS = 250;
+const RECALCULATE_THROTTLE_MS = 100;
 let hasSyncedThisSession = false;
 let _cachedAutoSave = true;
 let _lastStorageWriteTime = 0;
@@ -75,6 +75,59 @@ function invalidateYatsuSidebarCache() {
 
 // Shared Iframe cache variable resolving Cross-Origin DOM blocks securely
 let cachedActiveTabTitle = "";
+
+// ──────────────────────────────────────────────────────────────────────────
+// DEBUG INSTRUMENTATION
+// Toggle live in DevTools console:  window.__NT_DEBUG__ = false   (to silence)
+//                                   window.__NT_DEBUG__ = true    (to re-enable)
+// Manual snapshot at the moment a bug shows:  press Ctrl+Shift+Y
+// ──────────────────────────────────────────────────────────────────────────
+let NT_DEBUG = true;
+function dbgOn(): boolean {
+  const w = window as any;
+  return w.__NT_DEBUG__ !== undefined ? !!w.__NT_DEBUG__ : NT_DEBUG;
+}
+const _frameTag = (typeof window !== 'undefined' && window.self !== window.top) ? 'iframe' : 'top';
+function ntDbg(tag: string, data?: any) {
+  if (!dbgOn()) return;
+  const prefix = `%c[NT-DBG ${_frameTag}] ${tag}`;
+  if (data !== undefined) console.log(prefix, 'color:#f5a623;font-weight:bold', data);
+  else console.log(prefix, 'color:#f5a623;font-weight:bold');
+}
+const _dbgLast: Record<string, number> = {};
+function ntDbgThrottled(key: string, ms: number, tag: string, data?: any) {
+  if (!dbgOn()) return;
+  const now = Date.now();
+  if (now - (_dbgLast[key] || 0) < ms) return;
+  _dbgLast[key] = now;
+  ntDbg(tag, data);
+}
+let _dbgLastEmit = -1;
+let _dbgLastCharData: any = null;
+
+// DEBUG ORACLE ONLY — parses ttu/yatsu's native "current / total %" progress
+// readout. Never used by the counter logic; purely to diff our number against
+// ground truth in the logs. Returns null on Yomiyasu / when the readout is absent.
+function getNativeCharCount(): { current: number; total: number; raw: string } | null {
+  const el = document.querySelector('div[title="Click to copy Progress"]');
+  if (!el) return null;
+  // Visible count is the last <span>; an earlier invisible span is a width spacer.
+  const spans = el.querySelectorAll('span');
+  let raw = spans.length ? (spans[spans.length - 1].textContent || '').trim() : '';
+  if (!raw) raw = (el.textContent || '').trim();
+  const matches = [...raw.matchAll(/([\d,]+)\s*\/\s*([\d,]+)/g)];
+  if (!matches.length) return null;
+  const m = matches[matches.length - 1];
+  const current = parseInt(m[1].replace(/,/g, ''), 10);
+  const total = parseInt(m[2].replace(/,/g, ''), 10);
+  if (isNaN(current) || isNaN(total)) return null;
+  return { current, total, raw };
+}
+function nativeDiff(ourChars: number): any {
+  const n = getNativeCharCount();
+  if (!n) return { native: 'n/a (no readout / Yomiyasu)' };
+  return { nativeCur: n.current, nativeTotal: n.total, ours: ourChars, OURS_minus_NATIVE: ourChars - n.current };
+}
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
@@ -194,6 +247,17 @@ interface StateRefs {
   lastSectionTotal: number;
   visitedSections: Map<number, number>;
   visitedSectionTotals: Map<number, number>;
+  // ── Paginated-mode redesign fields ──
+  // Baseline `current` subtracted inside the active section. Real session start
+  // point (fixes reset-on-reload: paginated no longer counts from chapter start).
+  sectionStartChar: number;
+  // Last stable measured char value. Used to FREEZE on image/deferred pages
+  // (total === 0) instead of collapsing to zero or polluting offsets.
+  lastGoodChars: number;
+  // Session anchor for the position-based model. Position is recomputed live from
+  // section totals each tick (not accumulated), so backtrack shrinks it correctly.
+  sessionStartSection: number;
+  sessionStartCurrent: number;
 }
 
 const stateRefs: StateRefs = {
@@ -203,7 +267,11 @@ const stateRefs: StateRefs = {
   lastSectionIndex: -1,
   lastSectionTotal: 0,
   visitedSections: new Map<number, number>(),
-  visitedSectionTotals: new Map<number, number>()
+  visitedSectionTotals: new Map<number, number>(),
+  sectionStartChar: 0,
+  lastGoodChars: 0,
+  sessionStartSection: -1,
+  sessionStartCurrent: 0
 };
 
 const ttuState = new Proxy({
@@ -467,8 +535,11 @@ async function saveSessionAndQueue() {
   ttuState.chars = 0;
 
   const currentCount = extractAdvancedCharCount(undefined, ttuState.running);
-  const isPag = currentCount !== null ? currentCount.isPaginated : false;
-  stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
+  stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
+  stateRefs.sectionStartChar = currentCount !== null ? currentCount.current : 0;
+  stateRefs.sessionStartSection = currentCount !== null ? (currentCount.sectionIndex ?? -1) : -1;
+  stateRefs.sessionStartCurrent = currentCount !== null ? currentCount.current : 0;
+  stateRefs.lastGoodChars = 0;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = -1;
   stateRefs.lastSectionTotal = 0;
@@ -519,14 +590,25 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
+  ntDbgThrottled('trans-in', 700, 'transition input', {
+    activeSection, lastSectionIndex: stateRefs.lastSectionIndex,
+    total, isPaginated, isLayoutDeferred, current: charData.current
+  });
+
   // Skip transition checks during active loading or layout-deferred states
   if (isLayoutDeferred) {
+    ntDbgThrottled('trans-deferred', 1500, 'transition SKIPPED: layout deferred (loading)');
     return false;
   }
 
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
+    ntDbg('MODE SWITCH (full reset)', { from: lastLoggedPaginatedMode ? 'paginated' : 'continuous', to: isPaginated ? 'paginated' : 'continuous' });
     stateRefs.globalSessionStartChar = -1;
+    stateRefs.sectionStartChar = 0;
+    stateRefs.lastGoodChars = 0;
+    stateRefs.sessionStartSection = -1;
+    stateRefs.sessionStartCurrent = 0;
     stateRefs.globalManualCharOffset = 0;
     stateRefs.lastSectionIndex = -1;
     stateRefs.lastSectionTotal = 0;
@@ -542,12 +624,14 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 
   lastLoggedPaginatedMode = isPaginated;
 
-  // Commit baseline totals for accurate dynamic summing in Paginated Mode
-  if (isPaginated && activeSection !== -1) {
-    stateRefs.visitedSectionTotals.set(activeSection, total);
-    if (stateRefs.lastSectionIndex !== -1) {
-      stateRefs.visitedSectionTotals.set(stateRefs.lastSectionIndex, stateRefs.lastSectionTotal);
-    }
+  // Record ONLY confirmed, fully-measured totals. Transient zeros from image
+  // pages / loading / deferred layout must never enter the map — that pollution
+  // was the source of the skyrocket (Bug 3), the pre-image freeze (Bug 1), and
+  // the fast-scroll lock (Bug 2). Monotonic: a section total only grows.
+  const measured = total > 0 && !isLayoutDeferred;
+  if (isPaginated && activeSection !== -1 && measured) {
+    const prev = stateRefs.visitedSectionTotals.get(activeSection) || 0;
+    if (total > prev) stateRefs.visitedSectionTotals.set(activeSection, total);
   }
 
   if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
@@ -565,14 +649,11 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       }
     } else {
       if (isPaginated) {
-        // Robust dynamic offset summing to prevent timing issues during fast turns and backtracks
-        let computedOffset = 0;
-        for (const [secIdx, secTotal] of stateRefs.visitedSectionTotals.entries()) {
-          if (secIdx < activeSection) {
-            computedOffset += secTotal;
-          }
-        }
-        stateRefs.globalManualCharOffset = computedOffset;
+        // POSITION-BASED MODEL: nothing to accumulate here. The whole-book read
+        // count is recomputed live in recalc via paginatedReadChars(), summing
+        // section totals between the session start and the active section. This
+        // makes backtrack shrink the count correctly and kills the stale-offset
+        // explosion (T7/T9). Section totals were already recorded at the top.
       } else {
         // RETAIN THE ORIGINAL CONTINUOUS MODE OFFSET MECHANISM UNCHANGED
         if (activeSection > stateRefs.lastSectionIndex) {
@@ -592,7 +673,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
           }
         }
       }
-      if (isPaginated) stateRefs.globalSessionStartChar = 0;
 
       stateRefs.lastSectionIndex = activeSection;
       stateRefs.lastSectionTotal = total;
@@ -604,22 +684,43 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     }
     return true;
   } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
-    if (total > stateRefs.lastSectionTotal) {
+    if (measured && total > stateRefs.lastSectionTotal) {
       stateRefs.lastSectionTotal = total;
-      if (isPaginated) {
-        stateRefs.visitedSectionTotals.set(activeSection, total);
-      }
+      stateRefs.visitedSectionTotals.set(activeSection, total);
     }
   }
   return false;
 }
 
+// POSITION-BASED paginated read count. Whole-book chars read this session =
+// sum of section totals from the session-start section up to (not including) the
+// active section, plus progress within the active section, minus the start
+// offset. Recomputed every tick so backtrack shrinks it and re-advance is exact.
+// Only sections actually visited contribute; skipped sections self-heal on visit.
+function paginatedReadChars(activeSection: number, current: number): number {
+  let sum = 0;
+  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
+    if (idx >= stateRefs.sessionStartSection && idx < activeSection) sum += tot;
+  }
+  let v = sum + (current - stateRefs.sessionStartCurrent);
+  if (v < 0) v = 0;
+  return v;
+}
+
 function recalculateChars(force = false) {
   // Guard clause to block execution on inactive frames (such as Yomiyasu's parent document)
   if (!document.getElementById('nt-ttu-chrono-wrapper')) {
+    ntDbgThrottled('recalc-nowrap', 3000, 'recalc SKIP: no chrono wrapper in this frame (inactive frame?)');
     return;
   }
-  if (!ttuState.running || stabilizer.getGracePeriodActive()) return;
+  if (!ttuState.running) {
+    ntDbgThrottled('recalc-notrunning', 3000, 'recalc SKIP: timer not running');
+    return;
+  }
+  if (stabilizer.getGracePeriodActive()) {
+    ntDbgThrottled('recalc-grace', 800, 'recalc SKIP: GRACE PERIOD active (Jiten parse / transition) — counter frozen while this persists');
+    return;
+  }
   const now = Date.now();
   if (!force && (now - _lastRecalculateTime < RECALCULATE_THROTTLE_MS)) {
     if (scrollTimeout) clearTimeout(scrollTimeout);
@@ -631,34 +732,93 @@ function recalculateChars(force = false) {
   }
 
   if (!isReadingViewActive()) {
-    ttuState.running = false;
-    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
-    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+    ntDbg('recalc: reading-view INACTIVE → debounced pause check (Bug 4 watch point)');
+    // Page turns briefly unmount the reader container. A single negative read is
+    // NOT a real stop — confirm the absence is sustained before pausing, and
+    // never pause while a transition grace window is open (Bug 4).
+    if (Date.now() < _transitionGraceUntil) return;
+    setTimeout(() => {
+      if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
+        ntDbg('recalc: PAUSING timer (reading-view absent 350ms)');
+        ttuState.running = false;
+        const w = document.getElementById('nt-ttu-chrono-wrapper');
+        if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+      }
+    }, 350);
     return;
   }
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
+  _dbgLastCharData = charData;
   if (charData !== null) {
+    ntDbgThrottled('recalc-extract', 700, 'recalc extractor output', {
+      current: charData.current, total: charData.total, sectionIndex: charData.sectionIndex,
+      isPaginated: charData.isPaginated, isLayoutDeferred: charData.isLayoutDeferred
+    });
     // Synchronize section boundary and manual offset before applying the local paragraph count
-    checkAndProcessSectionTransition(charData);
+    const didTransition = checkAndProcessSectionTransition(charData);
 
     const current = charData.current;
     if (stateRefs.globalSessionStartChar === -1) {
-      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
+      stateRefs.globalSessionStartChar = current;
+      stateRefs.sectionStartChar = current;
     }
     if (Date.now() < _transitionGraceUntil) {
-      stateRefs.globalSessionStartChar = charData.isPaginated ? 0 : current;
-      if (!charData.isPaginated) return;
+      if (!charData.isPaginated) {
+        stateRefs.globalSessionStartChar = current; // continuous: re-anchor, skip emit
+        return;
+      }
+      // paginated: fall through — baseline already set by the transition handler
     }
 
-    // If we are on an illustration or loading page (total === 0) or layout is deferred, preserve and display 
-    // the sum of all fully read chapters including the last section's total chars.
-    if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
-      ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+    if (charData.isPaginated) {
+      // Gap-fill ONLY when the section changed (window slid). Records totals for
+      // every section currently mounted, so chapters the window passed during
+      // fast scroll still contribute. Per-paragraph counts are WeakMap-cached, so
+      // this is bounded; gating on transition keeps it off the idle hot path.
+      if (didTransition) {
+        const allTotals = extractAllSectionTotals();
+        for (const [idx, tot] of allTotals) {
+          if (tot > (stateRefs.visitedSectionTotals.get(idx) || 0)) {
+            stateRefs.visitedSectionTotals.set(idx, tot);
+          }
+        }
+      }
+
+      const activeSection = charData.sectionIndex !== null ? charData.sectionIndex : stateRefs.lastSectionIndex;
+      if (stateRefs.sessionStartSection === -1) {
+        stateRefs.sessionStartSection = activeSection;
+        stateRefs.sessionStartCurrent = current;
+      }
+      // Freeze on image pages (total=0) and during chapter loading. An image has
+      // no reading progress, and its section index is unreliable on Yomiyasu
+      // (content-less pages reuse a stale key), so holding the last value is the
+      // correct behavior and avoids the drop-to-0 blip.
+      if (charData.isLayoutDeferred || !charData.total || Number(charData.total) === 0) {
+        ttuState.chars = stateRefs.lastGoodChars;
+        ntDbgThrottled('emit-freeze', 1000, 'PAGINATED FREEZE (image / loading, total=0)', {
+          sectionIndex: charData.sectionIndex, frozenAt: stateRefs.lastGoodChars, ...nativeDiff(stateRefs.lastGoodChars)
+        });
+      } else {
+        const val = paginatedReadChars(activeSection, current);
+        stateRefs.lastGoodChars = val;
+        ttuState.chars = val;
+        ntDbgThrottled('emit', 400, 'PAGINATED emit', {
+          sectionIndex: charData.sectionIndex, current, startSection: stateRefs.sessionStartSection,
+          startCurrent: stateRefs.sessionStartCurrent, emittedChars: val,
+          jump: _dbgLastEmit >= 0 ? val - _dbgLastEmit : 0, ...nativeDiff(val)
+        });
+        _dbgLastEmit = val;
+      }
     } else {
-      let diff = current - stateRefs.globalSessionStartChar;
-      if (diff < 0) diff = 0;
-      ttuState.chars = diff + stateRefs.globalManualCharOffset;
+      // ── CONTINUOUS MODE — UNCHANGED ──
+      if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
+        ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+      } else {
+        let diff = current - stateRefs.globalSessionStartChar;
+        if (diff < 0) diff = 0;
+        ttuState.chars = diff + stateRefs.globalManualCharOffset;
+      }
     }
 
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
@@ -866,20 +1026,26 @@ async function setupTTUChronometer() {
         return;
       }
       if (!isReadingViewActive()) {
-        if (ttuState.running) {
-          ttuState.running = false;
-          const wr = document.getElementById('nt-ttu-chrono-wrapper');
-          if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+        if (ttuState.running && Date.now() >= _transitionGraceUntil) {
+          setTimeout(() => {
+            if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
+              ntDbg('interval: PAUSING timer (reading-view absent 350ms)');
+              ttuState.running = false;
+              const wr = document.getElementById('nt-ttu-chrono-wrapper');
+              if (wr) wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+            }
+          }, 350);
         }
         return;
       }
 
       if (window.location.hostname === 'app.yatsu.moe') {
         const sidebarOpen = isYatsuSidebarOpen();
-        if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen) {
+        if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen && Date.now() >= _transitionGraceUntil) {
           _isYatsuSidebarCurrentlyOpen = true;
           if (ttuState.running) {
             _wasTimerRunningBeforeYatsuSidebar = true;
+            ntDbg('YATSU sidebar detected OPEN → pausing timer (Bug 4 watch: was this a real sidebar?)');
             ttuState.running = false;
           } else {
             _wasTimerRunningBeforeYatsuSidebar = false;
@@ -887,6 +1053,7 @@ async function setupTTUChronometer() {
         } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
           _isYatsuSidebarCurrentlyOpen = false;
           if (_wasTimerRunningBeforeYatsuSidebar) {
+            ntDbg('YATSU sidebar CLOSED → resuming timer');
             ttuState.running = true;
             stateRefs.globalLastTick = Date.now();
           }
@@ -902,32 +1069,11 @@ async function setupTTUChronometer() {
         const isDropdownOpen = !!(dropdown && dropdown.classList.contains('open'));
 
         if (!stabilizer.getSilentGraceActive() && isDropdownOpen) {
-          const charData = extractAdvancedCharCount(undefined, ttuState.running);
-          if (charData !== null) {
-            const { current, total, isLayoutDeferred, isPaginated } = charData;
-            if (stateRefs.globalSessionStartChar === -1) {
-              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
-            }
-            if (now >= _transitionGraceUntil) {
-              if (isLayoutDeferred || !total || Number(total) === 0) {
-                ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
-              } else {
-                let diff = current - stateRefs.globalSessionStartChar;
-                if (diff < 0) diff = 0;
-                ttuState.chars = diff + stateRefs.globalManualCharOffset;
-              }
-            } else {
-              stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
-              if (isPaginated) {
-                // Compute and update chars immediately even during grace period in paginated mode!
-                if (isLayoutDeferred || !total || Number(total) === 0) {
-                  ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
-                } else {
-                  ttuState.chars = current + stateRefs.globalManualCharOffset;
-                }
-              }
-            }
-          }
+          // Single source of truth. The old inline copy computed chars with a
+          // different formula than recalculateChars (paginated used `current +
+          // offset` with no section baseline), which desynced on transitions and
+          // fed the fast-scroll / skyrocket bugs. Route everything through recalc.
+          recalculateChars();
         }
         stateRefs.globalLastTick = now;
 
@@ -1013,15 +1159,25 @@ if (isRelevantFrame) {
 }
 
 function initSessionRefs(current: number, activeSection: number, total: number, isPaginated: boolean) {
-  stateRefs.globalSessionStartChar = isPaginated ? 0 : current;
+  // Paginated now anchors to the entry `current` (not chapter start). On reload
+  // the reader restores scroll position; counting the in-section diff from that
+  // point keeps the session at 0 instead of jumping to `current` (Bug 5a).
+  stateRefs.globalSessionStartChar = current;
+  stateRefs.sectionStartChar = current;
+  stateRefs.sessionStartSection = activeSection;
+  stateRefs.sessionStartCurrent = current;
+  stateRefs.lastGoodChars = 0;
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
   stateRefs.visitedSections.clear();
-  stateRefs.visitedSections.set(activeSection, 0);
   stateRefs.visitedSectionTotals.clear();
   if (isPaginated) {
-    stateRefs.visitedSectionTotals.set(activeSection, total);
+    // Do NOT pre-mark the start section in visitedSections — it must stay
+    // un-committed so leaving it commits its read exactly once.
+    if (total > 0) stateRefs.visitedSectionTotals.set(activeSection, total);
+  } else {
+    stateRefs.visitedSections.set(activeSection, 0);
   }
 }
 
@@ -1240,10 +1396,19 @@ function handleMutations() {
     ttuState.timeMs = 0;
     ttuState.chars = 0;
     ttuState.running = false;
+    _dbgLastEmit = -1;
 
     const currentCount = extractAdvancedCharCount(undefined, true);
-    const isPag = currentCount !== null ? currentCount.isPaginated : false;
-    stateRefs.globalSessionStartChar = isPag ? 0 : (currentCount !== null ? currentCount.current : -1);
+    ntDbg('NEW SESSION (reading-view activated / reload) — chars+timer reset to 0', {
+      entryCurrent: currentCount !== null ? currentCount.current : null,
+      isPaginated: currentCount !== null ? currentCount.isPaginated : null,
+      sectionIndex: currentCount !== null ? currentCount.sectionIndex : null
+    });
+    stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
+    stateRefs.sectionStartChar = currentCount !== null ? currentCount.current : 0;
+    stateRefs.sessionStartSection = currentCount !== null ? (currentCount.sectionIndex ?? -1) : -1;
+    stateRefs.sessionStartCurrent = currentCount !== null ? currentCount.current : 0;
+    stateRefs.lastGoodChars = 0;
     stateRefs.globalManualCharOffset = 0;
     stateRefs.lastSectionIndex = -1;
     stateRefs.lastSectionTotal = 0;
@@ -1364,6 +1529,69 @@ function startTimeTracker() {
     pause: (p: boolean) => timer.pause(p),
     isPaused: () => timer.getIsPaused()
   };
+}
+
+// ── DEBUG snapshot. Content scripts run in an isolated world, so the page
+// console can't call window functions. Trigger this with the keyboard shortcut
+// instead:  Ctrl + Shift + Y  (works in whichever frame has focus, incl. the
+// Yomiyasu reader iframe — no frame selector needed).
+function ntDumpSnapshot() {
+  let grace = false, silent = false;
+  try { grace = stabilizer.getGracePeriodActive(); } catch (e) { }
+  try { silent = stabilizer.getSilentGraceActive(); } catch (e) { }
+  const adapter = getActiveReaderAdapter();
+  const snap = {
+    frame: _frameTag,
+    host: window.location.hostname,
+    path: window.location.pathname,
+    reader: adapter ? adapter.name : '(none)',
+    readingViewActive: isReadingViewActive(),
+    paginatedMode: lastLoggedPaginatedMode,
+    gracePeriodActive: grace,
+    silentGraceActive: silent,
+    transitionGraceRemainingMs: _transitionGraceUntil - Date.now(),
+    ttuState: { running: ttuState.running, chars: ttuState.chars, timeMs: ttuState.timeMs },
+    stateRefs: {
+      globalSessionStartChar: stateRefs.globalSessionStartChar,
+      sectionStartChar: stateRefs.sectionStartChar,
+      globalManualCharOffset: stateRefs.globalManualCharOffset,
+      lastGoodChars: stateRefs.lastGoodChars,
+      sessionStartSection: stateRefs.sessionStartSection,
+      sessionStartCurrent: stateRefs.sessionStartCurrent,
+      lastSectionIndex: stateRefs.lastSectionIndex,
+      lastSectionTotal: stateRefs.lastSectionTotal,
+      visitedSections: Array.from(stateRefs.visitedSections.entries()),
+      visitedSectionTotals: Array.from(stateRefs.visitedSectionTotals.entries())
+    },
+    lastExtractorOutput: _dbgLastCharData,
+    nativeReadout: getNativeCharCount(),
+    nativeVsOurs: (() => { const n = getNativeCharCount(); return n ? { ours: ttuState.chars, nativeCur: n.current, OURS_minus_NATIVE: ttuState.chars - n.current } : 'n/a'; })()
+  };
+  console.log('%c[NT-DBG DUMP] (Ctrl+Shift+Y)', 'color:#4af;font-weight:bold', snap);
+  return snap;
+}
+if (typeof window !== 'undefined') {
+  // Best-effort console exposure (works only if the console is switched to the
+  // extension content-script context). Keyboard shortcut is the reliable path.
+  try { (window as any).__ntDump = ntDumpSnapshot; } catch (e) { }
+
+  const ntKeyHandler = (e: KeyboardEvent) => {
+    if (!e.ctrlKey || !e.shiftKey) return;
+    // Layout-independent: e.code is physical key, e.key is produced char.
+    const isY = e.code === 'KeyY' || e.key === 'Y' || e.key === 'y';
+    if (!isY) return;
+    if ((e as any).__ntHandled) return;
+    (e as any).__ntHandled = true;
+    // Always-visible confirmation that the shortcut was caught (passes NT-DBG filter).
+    ntDbg('shortcut caught → dumping snapshot');
+    try { e.preventDefault(); } catch (_) { }
+    try { e.stopPropagation(); } catch (_) { }
+    ntDumpSnapshot();
+  };
+  // Register on both window and document in the capture phase so the reader's own
+  // key handlers can't swallow it first.
+  window.addEventListener('keydown', ntKeyHandler, { capture: true });
+  document.addEventListener('keydown', ntKeyHandler, { capture: true });
 }
 
 export default defineContentScript({
@@ -1490,8 +1718,11 @@ export default defineContentScript({
             ttuState.chars = 0;
             stateRefs.globalLastTick = Date.now();
             const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-            const isPag = initCount !== null ? initCount.isPaginated : false;
-            stateRefs.globalSessionStartChar = isPag ? 0 : (initCount !== null ? initCount.current : -1);
+            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
+            stateRefs.sectionStartChar = initCount !== null ? initCount.current : 0;
+            stateRefs.sessionStartSection = initCount !== null ? (initCount.sectionIndex ?? -1) : -1;
+            stateRefs.sessionStartCurrent = initCount !== null ? initCount.current : 0;
+            stateRefs.lastGoodChars = 0;
             stateRefs.globalManualCharOffset = 0;
 
             const timeVal = document.querySelector('#nt-ttu-val-time');
