@@ -600,7 +600,7 @@ export function extractAdvancedCharCount(
 
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
-        console.error(`[NT Extractor] Fatal crash in character extraction:`, e);
+        // Extraction failed; signal "no data" so the caller holds last value.
         return null;
     }
 }

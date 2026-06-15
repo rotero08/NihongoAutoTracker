@@ -79,58 +79,6 @@ function invalidateYatsuSidebarCache() {
 // Shared Iframe cache variable resolving Cross-Origin DOM blocks securely
 let cachedActiveTabTitle = "";
 
-// ──────────────────────────────────────────────────────────────────────────
-// DEBUG INSTRUMENTATION
-// Toggle live in DevTools console:  window.__NT_DEBUG__ = false   (to silence)
-//                                   window.__NT_DEBUG__ = true    (to re-enable)
-// Manual snapshot at the moment a bug shows:  press Ctrl+Shift+Y
-// ──────────────────────────────────────────────────────────────────────────
-let NT_DEBUG = true;
-function dbgOn(): boolean {
-  const w = window as any;
-  return w.__NT_DEBUG__ !== undefined ? !!w.__NT_DEBUG__ : NT_DEBUG;
-}
-const _frameTag = (typeof window !== 'undefined' && window.self !== window.top) ? 'iframe' : 'top';
-function ntDbg(tag: string, data?: any) {
-  if (!dbgOn()) return;
-  const prefix = `%c[NT-DBG ${_frameTag}] ${tag}`;
-  if (data !== undefined) console.log(prefix, 'color:#f5a623;font-weight:bold', data);
-  else console.log(prefix, 'color:#f5a623;font-weight:bold');
-}
-const _dbgLast: Record<string, number> = {};
-function ntDbgThrottled(key: string, ms: number, tag: string, data?: any) {
-  if (!dbgOn()) return;
-  const now = Date.now();
-  if (now - (_dbgLast[key] || 0) < ms) return;
-  _dbgLast[key] = now;
-  ntDbg(tag, data);
-}
-let _dbgLastEmit = -1;
-let _dbgLastCharData: any = null;
-
-// DEBUG ORACLE ONLY — parses ttu/yatsu's native "current / total %" progress
-// readout. Never used by the counter logic; purely to diff our number against
-// ground truth in the logs. Returns null on Yomiyasu / when the readout is absent.
-function getNativeCharCount(): { current: number; total: number; raw: string } | null {
-  const el = document.querySelector('div[title="Click to copy Progress"]');
-  if (!el) return null;
-  // Visible count is the last <span>; an earlier invisible span is a width spacer.
-  const spans = el.querySelectorAll('span');
-  let raw = spans.length ? (spans[spans.length - 1].textContent || '').trim() : '';
-  if (!raw) raw = (el.textContent || '').trim();
-  const matches = [...raw.matchAll(/([\d,]+)\s*\/\s*([\d,]+)/g)];
-  if (!matches.length) return null;
-  const m = matches[matches.length - 1];
-  const current = parseInt(m[1].replace(/,/g, ''), 10);
-  const total = parseInt(m[2].replace(/,/g, ''), 10);
-  if (isNaN(current) || isNaN(total)) return null;
-  return { current, total, raw };
-}
-function nativeDiff(ourChars: number): any {
-  const n = getNativeCharCount();
-  if (!n) return { native: 'n/a (no readout / Yomiyasu)' };
-  return { nativeCur: n.current, nativeTotal: n.total, ours: ourChars, OURS_minus_NATIVE: ourChars - n.current };
-}
 
 const overlayController = new OverlayController((cfg) => isJapanesePage(cfg));
 
@@ -261,6 +209,15 @@ interface StateRefs {
   // section totals each tick (not accumulated), so backtrack shrinks it correctly.
   sessionStartSection: number;
   sessionStartCurrent: number;
+  // Every section index actually processed this session (real OR image). Used to
+  // tell a genuine never-rendered skip from a normal step past known image pages.
+  seenSections: Set<number>;
+  // Travel direction (1 = forward, -1 = backward) inferred from section/current
+  // movement. Decides whether an image page completes the prior section or sits
+  // before it.
+  lastDir: number;
+  prevSec: number;
+  prevCur: number;
 }
 
 const stateRefs: StateRefs = {
@@ -274,7 +231,11 @@ const stateRefs: StateRefs = {
   sectionStartChar: 0,
   lastGoodChars: 0,
   sessionStartSection: -1,
-  sessionStartCurrent: 0
+  sessionStartCurrent: 0,
+  seenSections: new Set<number>(),
+  lastDir: 1,
+  prevSec: -1,
+  prevCur: 0
 };
 
 const ttuState = new Proxy({
@@ -332,8 +293,8 @@ function updateCachedActiveTabTitle() {
           cachedActiveTabTitle = response.title;
         }
       })
-      .catch((err) => {
-        console.error(`[NT Tracker] [Title Sync] Failed to request parent title:`, err);
+      .catch(() => {
+        // Title request failed (cross-origin / no parent); fall back silently.
       });
   }
 }
@@ -548,6 +509,10 @@ async function saveSessionAndQueue() {
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.seenSections.clear();
+  stateRefs.lastDir = 1;
+  stateRefs.prevSec = -1;
+  stateRefs.prevCur = 0;
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
   hasSyncedThisSession = false;
@@ -593,20 +558,18 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   const { total, sectionIndex, isPaginated, isLayoutDeferred } = charData;
   const activeSection = sectionIndex !== null ? sectionIndex : -1;
 
-  ntDbgThrottled('trans-in', 700, 'transition input', {
-    activeSection, lastSectionIndex: stateRefs.lastSectionIndex,
-    total, isPaginated, isLayoutDeferred, current: charData.current
-  });
+  // Mark this section as seen (real OR image). A section the user passed through
+  // is "accounted for"; only a section that was never processed at all counts as
+  // a genuine never-rendered skip.
+  if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
 
   // Skip transition checks during active loading or layout-deferred states
   if (isLayoutDeferred) {
-    ntDbgThrottled('trans-deferred', 1500, 'transition SKIPPED: layout deferred (loading)');
     return false;
   }
 
 
   if (lastLoggedPaginatedMode !== null && lastLoggedPaginatedMode !== isPaginated) {
-    ntDbg('MODE SWITCH (full reset)', { from: lastLoggedPaginatedMode ? 'paginated' : 'continuous', to: isPaginated ? 'paginated' : 'continuous' });
     stateRefs.globalSessionStartChar = -1;
     stateRefs.sectionStartChar = 0;
     stateRefs.lastGoodChars = 0;
@@ -617,6 +580,10 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
     stateRefs.visitedSectionTotals.clear();
+    stateRefs.seenSections.clear();
+    stateRefs.lastDir = 1;
+    stateRefs.prevSec = -1;
+    stateRefs.prevCur = 0;
     ttuState.chars = 0;
     ttuState.timeMs = 0;
     stateRefs.globalLastTick = Date.now();
@@ -647,9 +614,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   // section so the freeze can complete it. Only after the session has a real
   // anchor (lastSectionIndex !== -1).
   if (isPaginated && !measured && stateRefs.lastSectionIndex !== -1 && activeSection !== stateRefs.lastSectionIndex) {
-    ntDbgThrottled('img-hold', 1000, 'IMAGE page: holding last real section (ignoring bogus index)', {
-      bogusIndex: activeSection, heldRealSection: stateRefs.lastSectionIndex
-    });
     return false;
   }
 
@@ -661,14 +625,35 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         stateRefs.globalManualCharOffset = 0;
         stateRefs.visitedSections.clear();
         stateRefs.visitedSectionTotals.clear();
+        stateRefs.seenSections.clear();
+        stateRefs.lastDir = 1;
+        stateRefs.prevSec = -1;
+        stateRefs.prevCur = 0;
       }
     } else {
       if (isPaginated) {
         // POSITION-BASED MODEL: nothing to accumulate here. The whole-book read
-        // count is recomputed live in recalc via paginatedReadChars(), summing
-        // section totals between the session start and the active section. This
-        // makes backtrack shrink the count correctly and kills the stale-offset
-        // explosion (T7/T9). Section totals were already recorded at the top.
+        // count is recomputed live in recalc via paginatedReadChars().
+        //
+        // UNREAD FAST-SKIP DETECTION: if we jumped forward past one or more
+        // sections that were never measured (not in visitedSectionTotals, even
+        // after gap-fill), the user scrolled so fast a page was never rendered —
+        // so we can't count it. Stop tracking rather than silently undercount.
+        if (ttuState.running && stateRefs.lastSectionTotal > 0 &&
+          activeSection > stateRefs.lastSectionIndex + 1) {
+          let skippedUnread = false;
+          for (let k = stateRefs.lastSectionIndex + 1; k < activeSection; k++) {
+            // A gap section that was never even processed (not seen as text OR
+            // image) means it was skipped so fast it never rendered → unread.
+            if (!stateRefs.seenSections.has(k)) { skippedUnread = true; break; }
+          }
+          if (skippedUnread) {
+            stateRefs.lastSectionIndex = activeSection;
+            stateRefs.lastSectionTotal = total;
+            triggerSkipStop();
+            return true;
+          }
+        }
       } else {
         // RETAIN THE ORIGINAL CONTINUOUS MODE OFFSET MECHANISM UNCHANGED
         if (activeSection > stateRefs.lastSectionIndex) {
@@ -712,6 +697,22 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 // active section, plus progress within the active section, minus the start
 // offset. Recomputed every tick so backtrack shrinks it and re-advance is exact.
 // Only sections actually visited contribute; skipped sections self-heal on visit.
+// Stops tracking when the user scrolled past a section that never rendered (so we
+// could not count it). Pauses the timer without committing a partial sync and
+// fires a one-shot notice for the dropdown. No persistent flag, so it never
+// re-appears on reopen or reset.
+function triggerSkipStop() {
+  if (!ttuState.running) return;
+  _autoPauseInProgress = true;
+  ttuState.running = false;
+  _autoPauseInProgress = false;
+  const w = document.getElementById('nt-ttu-chrono-wrapper');
+  if (w) {
+    w.dispatchEvent(new CustomEvent('nt-skip-pause'));
+    w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+  }
+}
+
 function paginatedReadChars(activeSection: number, current: number): number {
   let sum = 0;
   for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
@@ -720,6 +721,17 @@ function paginatedReadChars(activeSection: number, current: number): number {
   let v = sum + (current - stateRefs.sessionStartCurrent);
   if (v < 0) v = 0;
   return v;
+}
+
+// Position at the START of `section` (everything before it, fully read). Used
+// for the image freeze when travelling backward — the image sits before the
+// section, so its prior section is NOT yet completed.
+function prefixSumBelow(section: number): number {
+  let sum = 0;
+  for (const [idx, tot] of stateRefs.visitedSectionTotals.entries()) {
+    if (idx >= stateRefs.sessionStartSection && idx < section) sum += tot;
+  }
+  return sum;
 }
 
 // Sum of visited section totals from the session start through `section`
@@ -736,15 +748,12 @@ function prefixSumThrough(section: number): number {
 function recalculateChars(force = false) {
   // Guard clause to block execution on inactive frames (such as Yomiyasu's parent document)
   if (!document.getElementById('nt-ttu-chrono-wrapper')) {
-    ntDbgThrottled('recalc-nowrap', 3000, 'recalc SKIP: no chrono wrapper in this frame (inactive frame?)');
     return;
   }
   if (!ttuState.running) {
-    ntDbgThrottled('recalc-notrunning', 3000, 'recalc SKIP: timer not running');
     return;
   }
   if (stabilizer.getGracePeriodActive()) {
-    ntDbgThrottled('recalc-grace', 800, 'recalc SKIP: GRACE PERIOD active (Jiten parse / transition) — counter frozen while this persists');
     return;
   }
   const now = Date.now();
@@ -758,14 +767,12 @@ function recalculateChars(force = false) {
   }
 
   if (!isReadingViewActive()) {
-    ntDbg('recalc: reading-view INACTIVE → debounced pause check (Bug 4 watch point)');
     // Page turns briefly unmount the reader container. A single negative read is
     // NOT a real stop — confirm the absence is sustained before pausing, and
     // never pause while a transition grace window is open (Bug 4).
     if (Date.now() < _transitionGraceUntil) return;
     setTimeout(() => {
       if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
-        ntDbg('recalc: PAUSING timer (reading-view absent 350ms)');
         _autoPauseInProgress = true;
         ttuState.running = false;
         _autoPauseInProgress = false;
@@ -777,12 +784,7 @@ function recalculateChars(force = false) {
   }
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
-  _dbgLastCharData = charData;
   if (charData !== null) {
-    ntDbgThrottled('recalc-extract', 700, 'recalc extractor output', {
-      current: charData.current, total: charData.total, sectionIndex: charData.sectionIndex,
-      isPaginated: charData.isPaginated, isLayoutDeferred: charData.isLayoutDeferred
-    });
     // Synchronize section boundary and manual offset before applying the local paragraph count
     const didTransition = checkAndProcessSectionTransition(charData);
 
@@ -825,30 +827,30 @@ function recalculateChars(force = false) {
       if (charData.isLayoutDeferred) {
         // Genuine chapter loading — layout not measured. Hold the last value.
         ttuState.chars = stateRefs.lastGoodChars;
-        ntDbgThrottled('emit-freeze', 1000, 'PAGINATED FREEZE (layout deferred / loading)', {
-          sectionIndex: charData.sectionIndex, frozenAt: stateRefs.lastGoodChars, ...nativeDiff(stateRefs.lastGoodChars)
-        });
       } else if (!charData.total || Number(charData.total) === 0) {
-        // Image page. lastSectionIndex was held on the last REAL section (image
-        // transitions are skipped), and turning onto the image means that section
-        // is fully read — so complete it. Fixes the Yomiyasu "drops the page
-        // before the image" bug.
-        const val = Math.max(0, prefixSumThrough(stateRefs.lastSectionIndex) - stateRefs.sessionStartCurrent);
+        // Image page. lastSectionIndex is pinned to the last REAL section.
+        // Direction decides the position: moving FORWARD onto the image means the
+        // prior section is finished (complete it); moving BACKWARD means the image
+        // sits before that section, so freeze at the position just before it. This
+        // fixes the backward image jump and the "stuck at 24 instead of 0" bug.
+        const base = stateRefs.lastDir >= 0
+          ? prefixSumThrough(stateRefs.lastSectionIndex)
+          : prefixSumBelow(stateRefs.lastSectionIndex);
+        const val = Math.max(0, base - stateRefs.sessionStartCurrent);
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
-        ntDbgThrottled('emit-image', 1000, 'PAGINATED IMAGE (last real section completed)', {
-          heldRealSection: stateRefs.lastSectionIndex, emittedChars: val, ...nativeDiff(val)
-        });
       } else {
+        // Real text page: infer travel direction from section/position movement.
+        if (activeSection > stateRefs.prevSec) stateRefs.lastDir = 1;
+        else if (activeSection < stateRefs.prevSec) stateRefs.lastDir = -1;
+        else if (current > stateRefs.prevCur) stateRefs.lastDir = 1;
+        else if (current < stateRefs.prevCur) stateRefs.lastDir = -1;
+        stateRefs.prevSec = activeSection;
+        stateRefs.prevCur = current;
+
         const val = paginatedReadChars(activeSection, current);
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
-        ntDbgThrottled('emit', 400, 'PAGINATED emit', {
-          sectionIndex: charData.sectionIndex, current, startSection: stateRefs.sessionStartSection,
-          startCurrent: stateRefs.sessionStartCurrent, emittedChars: val,
-          jump: _dbgLastEmit >= 0 ? val - _dbgLastEmit : 0, ...nativeDiff(val)
-        });
-        _dbgLastEmit = val;
       }
     } else {
       // ── CONTINUOUS MODE — UNCHANGED ──
@@ -1069,7 +1071,6 @@ async function setupTTUChronometer() {
         if (ttuState.running && Date.now() >= _transitionGraceUntil) {
           setTimeout(() => {
             if (ttuState.running && !isReadingViewActive() && Date.now() >= _transitionGraceUntil) {
-              ntDbg('interval: PAUSING timer (reading-view absent 350ms)');
               _autoPauseInProgress = true;
               ttuState.running = false;
               _autoPauseInProgress = false;
@@ -1087,7 +1088,6 @@ async function setupTTUChronometer() {
           _isYatsuSidebarCurrentlyOpen = true;
           if (ttuState.running) {
             _wasTimerRunningBeforeYatsuSidebar = true;
-            ntDbg('YATSU sidebar detected OPEN → pausing timer (Bug 4 watch: was this a real sidebar?)');
             _autoPauseInProgress = true;
             ttuState.running = false;
             _autoPauseInProgress = false;
@@ -1097,7 +1097,6 @@ async function setupTTUChronometer() {
         } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
           _isYatsuSidebarCurrentlyOpen = false;
           if (_wasTimerRunningBeforeYatsuSidebar) {
-            ntDbg('YATSU sidebar CLOSED → resuming timer');
             ttuState.running = true;
             stateRefs.globalLastTick = Date.now();
           }
@@ -1214,6 +1213,11 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.globalManualCharOffset = 0;
   stateRefs.lastSectionIndex = activeSection;
   stateRefs.lastSectionTotal = total;
+  stateRefs.seenSections.clear();
+  stateRefs.lastDir = 1;
+  stateRefs.prevSec = activeSection;
+  stateRefs.prevCur = current;
+  if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
   if (isPaginated) {
@@ -1440,14 +1444,8 @@ function handleMutations() {
     ttuState.timeMs = 0;
     ttuState.chars = 0;
     ttuState.running = false;
-    _dbgLastEmit = -1;
 
     const currentCount = extractAdvancedCharCount(undefined, true);
-    ntDbg('NEW SESSION (reading-view activated / reload) — chars+timer reset to 0', {
-      entryCurrent: currentCount !== null ? currentCount.current : null,
-      isPaginated: currentCount !== null ? currentCount.isPaginated : null,
-      sectionIndex: currentCount !== null ? currentCount.sectionIndex : null
-    });
     stateRefs.globalSessionStartChar = currentCount !== null ? currentCount.current : -1;
     stateRefs.sectionStartChar = currentCount !== null ? currentCount.current : 0;
     stateRefs.sessionStartSection = currentCount !== null ? (currentCount.sectionIndex ?? -1) : -1;
@@ -1458,6 +1456,10 @@ function handleMutations() {
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
     stateRefs.visitedSectionTotals.clear();
+    stateRefs.seenSections.clear();
+    stateRefs.lastDir = 1;
+    stateRefs.prevSec = -1;
+    stateRefs.prevCur = 0;
     stateRefs.globalLastTick = Date.now();
     hasSyncedThisSession = false;
 
@@ -1586,68 +1588,6 @@ function startTimeTracker() {
   };
 }
 
-// ── DEBUG snapshot. Content scripts run in an isolated world, so the page
-// console can't call window functions. Trigger this with the keyboard shortcut
-// instead:  Ctrl + Shift + Y  (works in whichever frame has focus, incl. the
-// Yomiyasu reader iframe — no frame selector needed).
-function ntDumpSnapshot() {
-  let grace = false, silent = false;
-  try { grace = stabilizer.getGracePeriodActive(); } catch (e) { }
-  try { silent = stabilizer.getSilentGraceActive(); } catch (e) { }
-  const adapter = getActiveReaderAdapter();
-  const snap = {
-    frame: _frameTag,
-    host: window.location.hostname,
-    path: window.location.pathname,
-    reader: adapter ? adapter.name : '(none)',
-    readingViewActive: isReadingViewActive(),
-    paginatedMode: lastLoggedPaginatedMode,
-    gracePeriodActive: grace,
-    silentGraceActive: silent,
-    transitionGraceRemainingMs: _transitionGraceUntil - Date.now(),
-    ttuState: { running: ttuState.running, chars: ttuState.chars, timeMs: ttuState.timeMs },
-    stateRefs: {
-      globalSessionStartChar: stateRefs.globalSessionStartChar,
-      sectionStartChar: stateRefs.sectionStartChar,
-      globalManualCharOffset: stateRefs.globalManualCharOffset,
-      lastGoodChars: stateRefs.lastGoodChars,
-      sessionStartSection: stateRefs.sessionStartSection,
-      sessionStartCurrent: stateRefs.sessionStartCurrent,
-      lastSectionIndex: stateRefs.lastSectionIndex,
-      lastSectionTotal: stateRefs.lastSectionTotal,
-      visitedSections: Array.from(stateRefs.visitedSections.entries()),
-      visitedSectionTotals: Array.from(stateRefs.visitedSectionTotals.entries())
-    },
-    lastExtractorOutput: _dbgLastCharData,
-    nativeReadout: getNativeCharCount(),
-    nativeVsOurs: (() => { const n = getNativeCharCount(); return n ? { ours: ttuState.chars, nativeCur: n.current, OURS_minus_NATIVE: ttuState.chars - n.current } : 'n/a'; })()
-  };
-  console.log('%c[NT-DBG DUMP] (Ctrl+Shift+Y)', 'color:#4af;font-weight:bold', snap);
-  return snap;
-}
-if (typeof window !== 'undefined') {
-  // Best-effort console exposure (works only if the console is switched to the
-  // extension content-script context). Keyboard shortcut is the reliable path.
-  try { (window as any).__ntDump = ntDumpSnapshot; } catch (e) { }
-
-  const ntKeyHandler = (e: KeyboardEvent) => {
-    if (!e.ctrlKey || !e.shiftKey) return;
-    // Layout-independent: e.code is physical key, e.key is produced char.
-    const isY = e.code === 'KeyY' || e.key === 'Y' || e.key === 'y';
-    if (!isY) return;
-    if ((e as any).__ntHandled) return;
-    (e as any).__ntHandled = true;
-    // Always-visible confirmation that the shortcut was caught (passes NT-DBG filter).
-    ntDbg('shortcut caught → dumping snapshot');
-    try { e.preventDefault(); } catch (_) { }
-    try { e.stopPropagation(); } catch (_) { }
-    ntDumpSnapshot();
-  };
-  // Register on both window and document in the capture phase so the reader's own
-  // key handlers can't swallow it first.
-  window.addEventListener('keydown', ntKeyHandler, { capture: true });
-  document.addEventListener('keydown', ntKeyHandler, { capture: true });
-}
 
 export default defineContentScript({
   matches: ['<all_urls>'],

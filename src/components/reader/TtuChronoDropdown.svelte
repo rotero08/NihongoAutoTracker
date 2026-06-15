@@ -4,18 +4,21 @@
     import { onMount } from "svelte";
     import { searchAniList } from "@/lib/api/anilist";
     import { submitLog } from "@/lib/api/nihongotracker";
-    import { readingQueueStorage, updateReadingQueueAtomic } from "@/lib/storage/queues";
+    import {
+        readingQueueStorage,
+        updateReadingQueueAtomic,
+    } from "@/lib/storage/queues";
     import { ttuHistoryStorage, ttuLinkStorage } from "@/lib/storage/ttu";
     import { fmt } from "@/lib/utils/time";
     import { showToast } from "@/lib/utils/toast";
     import { addDebugLog } from "@/lib/storage/debug";
 
     const browser: any =
-      typeof (globalThis as any).browser !== "undefined"
-        ? (globalThis as any).browser
-        : typeof (globalThis as any).chrome !== "undefined"
-          ? (globalThis as any).chrome
-          : undefined;
+        typeof (globalThis as any).browser !== "undefined"
+            ? (globalThis as any).browser
+            : typeof (globalThis as any).chrome !== "undefined"
+              ? (globalThis as any).chrome
+              : undefined;
 
     // Svelte 5 Runes Properties
     let {
@@ -56,6 +59,19 @@
 
     // Status Overlays
     let showSilentGraceStatus = $state(false);
+    let showSkipPause = $state(false);
+    let skipPauseTimer: any = null;
+
+    function startSkipPauseNotice() {
+        showSkipPause = true;
+        if (skipPauseTimer) clearTimeout(skipPauseTimer);
+        // Auto-hide after a few seconds. One-shot: it only appears when a skip
+        // event fires, never persists across reopen or reset.
+        skipPauseTimer = setTimeout(() => {
+            showSkipPause = false;
+            skipPauseTimer = null;
+        }, 7000);
+    }
     let linkDebounce: any;
     let clickTimeout: any = null;
 
@@ -114,6 +130,7 @@
         const handleJitenStatus = (e: any) => {
             showSilentGraceStatus = !!e.detail?.parsing;
         };
+        const handleSkipPause = () => startSkipPauseNotice();
 
         const stopPropagation = (e: Event) => e.stopPropagation();
 
@@ -131,6 +148,7 @@
                 handleHistoryRefresh,
             );
             wrapper.addEventListener("nt-jiten-status", handleJitenStatus);
+            wrapper.addEventListener("nt-skip-pause", handleSkipPause);
         }
 
         updateHistoryData();
@@ -159,9 +177,17 @@
                     "nt-history-refresh",
                     handleHistoryRefresh,
                 );
-                wrapper.removeEventListener("nt-jiten-status", handleJitenStatus);
+                wrapper.removeEventListener(
+                    "nt-jiten-status",
+                    handleJitenStatus,
+                );
+                wrapper.removeEventListener("nt-skip-pause", handleSkipPause);
             }
             document.removeEventListener("click", handleOuterClick);
+            if (skipPauseTimer) {
+                clearTimeout(skipPauseTimer);
+                skipPauseTimer = null;
+            }
         };
     });
 
@@ -444,7 +470,8 @@
 
         await updateReadingQueueAtomic(async (queue) => {
             const existing = queue.find(
-                (q) => q.originalTitle === title || q.contentTitleNative === title,
+                (q) =>
+                    q.originalTitle === title || q.contentTitleNative === title,
             );
 
             if (existing) {
@@ -480,7 +507,8 @@
         // 2. Fetch and align with exactly the same parsed query matching used by the watcher
         await updateReadingQueueAtomic(async (queue) => {
             const existing = queue.find(
-                (q) => q.originalTitle === title || q.contentTitleNative === title,
+                (q) =>
+                    q.originalTitle === title || q.contentTitleNative === title,
             );
             if (existing) {
                 existing.mediaId = "web-reading";
@@ -628,7 +656,8 @@
 
         await updateReadingQueueAtomic(async (queue) => {
             const existing = queue.find(
-                (q) => q.originalTitle === title || q.contentTitleNative === title,
+                (q) =>
+                    q.originalTitle === title || q.contentTitleNative === title,
             );
             if (existing) {
                 existing.volume = next;
@@ -890,6 +919,29 @@
             </div>
         {/if}
 
+        {#if showSkipPause}
+            <div id="nt-ttu-skip-pause" class="nt-ttu-sync-status">
+                <svg
+                    viewBox="0 0 24 24"
+                    width="14"
+                    height="14"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <span
+                    >Tracking stopped because you scrolled past a page before it
+                    could be counted. Press play when you want to continue.</span
+                >
+            </div>
+        {/if}
+
         <div class="nt-ttu-linker" id="nt-ttu-linker-sec">
             {#if linkedMedia}
                 <div class="nt-ttu-link-compact" id="nt-ttu-link-compact">
@@ -946,26 +998,28 @@
                         onmouseenter={() => (isUnlinkHovered = true)}
                         onmouseleave={() => (isUnlinkHovered = false)}
                         title="Unlink Media"
-                        style={isUnlinkHovered ? "color: var(--color-error, #f0706a) !important;" : "color: var(--color-success, #3ddc84) !important;"}
+                        style={isUnlinkHovered
+                            ? "color: var(--color-error, #f0706a) !important;"
+                            : "color: var(--color-success, #3ddc84) !important;"}
                     >
                         {#if isUnlinkHovered}
                             <svg
                                 style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
                                 viewBox="0 0 24 24"
                             >
-                                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
-                                <line x1="8" y1="12" x2="16" y2="12"/>
-                                <line x1="2" y1="2" x2="22" y2="22"/>
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+                                <line x1="8" y1="12" x2="16" y2="12" />
+                                <line x1="2" y1="2" x2="22" y2="22" />
                             </svg>
                         {:else}
                             <svg
                                 style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;"
                                 viewBox="0 0 24 24"
                             >
-                                <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-                                <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
-                                <line x1="8" y1="12" x2="16" y2="12"/>
+                                <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+                                <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+                                <line x1="8" y1="12" x2="16" y2="12" />
                             </svg>
                         {/if}
                     </button>
@@ -1126,7 +1180,8 @@
                                 day: "numeric",
                             })}</span
                         >
-                        <span>{Math.max(1, Math.round(s.timeMs / 60000))}m</span>
+                        <span>{Math.max(1, Math.round(s.timeMs / 60000))}m</span
+                        >
                         <span
                             ><span class="nt-ttu-chars-value">{s.chars}</span>
                             chars</span
@@ -1526,7 +1581,9 @@
         display: flex;
         align-items: center;
         opacity: 0.6;
-        transition: opacity 0.15s, color 0.15s;
+        transition:
+            opacity 0.15s,
+            color 0.15s;
     }
 
     :global(.nt-ttu-unlink-btn:hover) {
