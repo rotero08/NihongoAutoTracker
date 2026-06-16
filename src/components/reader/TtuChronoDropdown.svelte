@@ -319,9 +319,8 @@
         e.stopPropagation();
         ttuState.timeMs = 0;
         ttuState.chars = 0;
-        const currentCount = extractTTUCharCount()
-            ? extractTTUCharCount().current
-            : null;
+        const cc = extractTTUCharCount();
+        const currentCount = cc ? cc.current : null;
         stateRefs.globalSessionStartChar =
             currentCount !== null ? currentCount : -1;
         stateRefs.globalManualCharOffset = 0;
@@ -329,6 +328,21 @@
         stateRefs.lastSectionIndex = -1;
         stateRefs.lastSectionTotal = 0;
         stateRefs.visitedSections.clear();
+
+        // Clear the paginated position model too. Without this, a resume after
+        // reset rebases off the stale baseChars / lastGoodChars and the old count
+        // reappears. lastSectionIndex = -1 above makes the next recalc re-init.
+        stateRefs.baseChars = 0;
+        stateRefs.lastGoodChars = 0;
+        stateRefs.sessionStartSection =
+            cc && cc.sectionIndex != null ? cc.sectionIndex : -1;
+        stateRefs.sessionStartCurrent =
+            currentCount !== null ? currentCount : 0;
+        stateRefs.visitedSectionTotals.clear();
+        stateRefs.seenSections.clear();
+        stateRefs.prevSec = -1;
+        stateRefs.prevCur = 0;
+        stateRefs.lastDir = 1;
 
         // Sync back to local reactive state
         timeMs = 0;

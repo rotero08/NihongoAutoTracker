@@ -73,6 +73,12 @@ let _autoPauseInProgress = false;
 // count on resume.
 let _needsRebase = false;
 
+// Monotonic reading-progress value from the last recalc, used to derive a
+// RELIABLE travel direction on image pages (where charData has no usable
+// section/position). Progress increases toward the end of the book regardless
+// of writing mode, so its delta is trustworthy where arrow keys are not.
+let _lastProgressVal: number | null = null;
+
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
 let _lastYatsuSidebarCheckTime = 0;
@@ -529,6 +535,7 @@ async function saveSessionAndQueue() {
   stateRefs.visitedSectionTotals.clear();
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
+  _lastProgressVal = null;
   stateRefs.baseChars = 0;
   stateRefs.prevSec = -1;
   stateRefs.prevCur = 0;
@@ -601,6 +608,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.visitedSectionTotals.clear();
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
+    _lastProgressVal = null;
     stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
@@ -647,6 +655,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         stateRefs.visitedSectionTotals.clear();
         stateRefs.seenSections.clear();
         stateRefs.lastDir = 1;
+        _lastProgressVal = null;
         stateRefs.baseChars = 0;
         stateRefs.prevSec = -1;
         stateRefs.prevCur = 0;
@@ -762,6 +771,31 @@ function sessionBasePos(): number {
   return absBelow(stateRefs.sessionStartSection) + stateRefs.sessionStartCurrent;
 }
 
+// Reads the reader's progress indicator as a single monotonic number. Format
+// varies ("45.6%", "1234 / 5678", "12,345 chars") so we take the FIRST numeric
+// token, which is always monotonic with book position. Returns null if absent.
+function readReaderProgress(): number | null {
+  const el = document.querySelector('div[title="Click to copy Progress"]');
+  if (!el || !el.textContent) return null;
+  const m = el.textContent.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+// Refreshes stateRefs.lastDir from the progress delta. Unlike the per-section
+// inference (which only runs on real text pages), this updates on EVERY recalc
+// including image flips, so the image branch reads a direction that reflects the
+// flip ONTO the image — not stale intra-section reading direction. When progress
+// is unchanged (idle ticks on the same page) lastDir is left as-is, preserving
+// the arrival direction.
+function refreshDirFromProgress(): void {
+  const prog = readReaderProgress();
+  if (prog === null) return;
+  if (_lastProgressVal !== null && prog !== _lastProgressVal) {
+    stateRefs.lastDir = prog > _lastProgressVal ? 1 : -1;
+  }
+  _lastProgressVal = prog;
+}
+
 // Whole-book chars read this session. Absolute difference, so going BACKWARD
 // below the start section clamps to 0 (re-reading earlier than where you began
 // adds nothing) instead of mixing per-section `current` values.
@@ -822,29 +856,37 @@ function recalculateChars(force = false) {
     // be counted). Done before any transition processing so state stays clean.
     if (_needsRebase && !charData.isPaginated) _needsRebase = false;
     if (_needsRebase && charData.isPaginated) {
-      const active = charData.sectionIndex !== null ? charData.sectionIndex : stateRefs.lastSectionIndex;
-      if (!charData.isLayoutDeferred && Number(charData.total) > 0) {
-        stateRefs.baseChars = stateRefs.lastGoodChars;
-        stateRefs.sessionStartSection = active;
-        stateRefs.sessionStartCurrent = charData.current;
-        stateRefs.lastSectionIndex = active;
-        stateRefs.lastSectionTotal = Number(charData.total);
-        stateRefs.visitedSectionTotals.set(active, Number(charData.total));
-        stateRefs.seenSections.add(active);
-        stateRefs.prevSec = active;
-        stateRefs.prevCur = charData.current;
+      // Reset pending: resetSession cleared the refs (lastSectionIndex = -1).
+      // Do NOT restore the old lastGoodChars here — drop the flag and fall
+      // through so checkAndProcessSectionTransition runs initSessionRefs and the
+      // session starts cleanly from zero.
+      if (stateRefs.lastSectionIndex === -1) {
         _needsRebase = false;
-        ttuState.chars = stateRefs.lastGoodChars;
-        const w = document.getElementById('nt-ttu-chrono-wrapper');
-        if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-        return; // next tick computes from the new anchor; no jump
       } else {
-        // Resumed on an image / loading page: hold the frozen value, keep the
-        // flag, and rebase once a real page is active.
-        ttuState.chars = stateRefs.lastGoodChars;
-        const w = document.getElementById('nt-ttu-chrono-wrapper');
-        if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
-        return;
+        const active = charData.sectionIndex !== null ? charData.sectionIndex : stateRefs.lastSectionIndex;
+        if (!charData.isLayoutDeferred && Number(charData.total) > 0) {
+          stateRefs.baseChars = stateRefs.lastGoodChars;
+          stateRefs.sessionStartSection = active;
+          stateRefs.sessionStartCurrent = charData.current;
+          stateRefs.lastSectionIndex = active;
+          stateRefs.lastSectionTotal = Number(charData.total);
+          stateRefs.visitedSectionTotals.set(active, Number(charData.total));
+          stateRefs.seenSections.add(active);
+          stateRefs.prevSec = active;
+          stateRefs.prevCur = charData.current;
+          _needsRebase = false;
+          ttuState.chars = stateRefs.lastGoodChars;
+          const w = document.getElementById('nt-ttu-chrono-wrapper');
+          if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          return; // next tick computes from the new anchor; no jump
+        } else {
+          // Resumed on an image / loading page: hold the frozen value, keep the
+          // flag, and rebase once a real page is active.
+          ttuState.chars = stateRefs.lastGoodChars;
+          const w = document.getElementById('nt-ttu-chrono-wrapper');
+          if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+          return;
+        }
       }
     }
 
@@ -883,6 +925,11 @@ function recalculateChars(force = false) {
         stateRefs.sessionStartSection = activeSection;
         stateRefs.sessionStartCurrent = current;
       }
+      // Keep lastDir honest from the reader's monotonic progress where it's
+      // exposed (ttsu/yomiyasu). It now only breaks ties in the image branch and
+      // feeds continuous-mode direction; the image count itself no longer depends
+      // on it being correct.
+      refreshDirFromProgress();
       // Freeze on image pages (total=0) and during chapter loading. An image has
       // no reading progress, and its section index is unreliable on Yomiyasu
       // (content-less pages reuse a stale key), so holding the last value is the
@@ -891,18 +938,27 @@ function recalculateChars(force = false) {
         // Genuine chapter loading — layout not measured. Hold the last value.
         ttuState.chars = stateRefs.lastGoodChars;
       } else if (!charData.total || Number(charData.total) === 0) {
-        // Image page. lastSectionIndex is pinned to the last REAL section.
-        // Direction decides the position: moving FORWARD onto the image means the
-        // prior section is finished (complete it); moving BACKWARD means the image
-        // sits before that section, so freeze at the position just before it.
-        const pos = stateRefs.lastDir >= 0
-          ? absThrough(stateRefs.lastSectionIndex)
-          : absBelow(stateRefs.lastSectionIndex);
-        // Clamp the RESULT at 0, not the travel delta — same rule as
-        // paginatedReadChars. With a checkpoint baseChars (skip-stop / resume),
-        // clamping travel froze the image page at baseChars, spiking the count
-        // until the next real page self-corrected.
-        const val = Math.max(0, stateRefs.baseChars + (pos - sessionBasePos()));
+        // Image page. lastSectionIndex is pinned to the last REAL section; the
+        // image's true count is "chars before the image", which equals the
+        // section boundary ON THE SIDE we came from: absThrough(idx) when the
+        // image is AFTER lastSectionIndex (arrived forward), absBelow(idx) when
+        // it is BEFORE it (arrived backward).
+        //
+        // Direction can't be read reliably on every reader (Yatsu doesn't expose
+        // usable progress on image pages, so lastDir goes stale and absThrough
+        // over-counts by a whole section — the "way higher" jump). But the last
+        // real page is always ADJACENT to the image, so lastGoodChars sits right
+        // next to the correct boundary. Pick whichever boundary is CLOSEST to
+        // lastGoodChars; the wrong one differs by a full section total. This is
+        // reader-agnostic. lastDir only breaks ties.
+        const throughVal = Math.max(0, stateRefs.baseChars + (absThrough(stateRefs.lastSectionIndex) - sessionBasePos()));
+        const belowVal = Math.max(0, stateRefs.baseChars + (absBelow(stateRefs.lastSectionIndex) - sessionBasePos()));
+        const dThrough = Math.abs(throughVal - stateRefs.lastGoodChars);
+        const dBelow = Math.abs(belowVal - stateRefs.lastGoodChars);
+        let val: number;
+        if (dThrough < dBelow) val = throughVal;
+        else if (dBelow < dThrough) val = belowVal;
+        else val = stateRefs.lastDir >= 0 ? throughVal : belowVal;
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
       } else {
@@ -1281,6 +1337,7 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.lastSectionTotal = total;
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
+  _lastProgressVal = null;
   stateRefs.baseChars = 0;
   stateRefs.prevSec = activeSection;
   stateRefs.prevCur = current;
@@ -1525,6 +1582,7 @@ function handleMutations() {
     stateRefs.visitedSectionTotals.clear();
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
+    _lastProgressVal = null;
     stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
