@@ -78,6 +78,10 @@ let _needsRebase = false;
 // section/position). Progress increases toward the end of the book regardless
 // of writing mode, so its delta is trustworthy where arrow keys are not.
 let _lastProgressVal: number | null = null;
+// Progress value captured at session start. If progress later returns to/below
+// this, the reader has scrolled back to (or before) where the session began, so
+// the read count must be free to fall to 0 instead of sticking on an image.
+let _sessionStartProgress: number | null = null;
 
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
@@ -234,6 +238,12 @@ interface StateRefs {
   // Keeps the count continuous on resume instead of recomputing an absolute
   // position that would include the skipped jump.
   baseChars: number;
+  // [FIX:yatsu] Section indices observed as a SETTLED image page (total 0, layout
+  // not deferred, image present). A text total must never be recorded under such
+  // an index: some readers (Yatsu) briefly mislabel an adjacent text section with
+  // the image's index during a page flip, and recording that phantom permanently
+  // inflated the whole-book position (the over-count).
+  imageSections: Set<number>;
 }
 
 const stateRefs: StateRefs = {
@@ -252,7 +262,8 @@ const stateRefs: StateRefs = {
   lastDir: 1,
   prevSec: -1,
   prevCur: 0,
-  baseChars: 0
+  baseChars: 0,
+  imageSections: new Set<number>() // [FIX:yatsu]
 };
 
 const ttuState = new Proxy({
@@ -305,6 +316,185 @@ const ttuState = new Proxy({
 });
 
 let isSyncing = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [NT-DBG] Debugging instrumentation. PURELY OBSERVATIONAL — changes NO behavior.
+// Inert (every entry early-returns) unless window.__NT_TT_DEBUG__ is truthy, so
+// it has zero effect on production. The native "always-correct" counters are read
+// ONLY as a read-only reference here and are NEVER fed back into the tracker, so
+// the solution stays entirely separate from them, as required.
+//
+// Turn on at runtime, in the reader tab's devtools console:
+//   __NT_TT_DEBUG__ = true            // enable logging
+//   __NT_TT_DEBUG_VERBOSE__ = true    // also log idle / no-op recalc ticks
+//   __ntTT.dump()                     // console.table of the last events
+//   __ntTT.export()                   // copy a CSV of the ring buffer to clipboard
+//   __ntTT.audit()                    // furigana / jiten char-count audit (bug 3)
+//   __ntTT.clear()                    // empty the ring buffer
+//   __ntTT.refs                       // live { ttuState, stateRefs } for poking
+// Optional: tell the oracle where your hidden "always-correct" SESSION-chars
+// element is, so each row shows native vs tracker side-by-side. Absolute book
+// progress is read automatically from the reader's own progress footer.
+//   __NT_TT_DEBUG_NATIVE_SEL__ = 'YOUR_CSS_SELECTOR'
+// ─────────────────────────────────────────────────────────────────────────────
+const NT_DBG = (() => {
+  const RING_MAX = 600;
+  const ring: any[] = [];
+  let absStart: number | null = null;   // native absolute progress captured when tracker chars == 0
+  let lastTtForZero = -1;
+
+  const on = () => typeof window !== 'undefined' && !!(window as any).__NT_ON__;
+  const verbose = () => !!(typeof window !== 'undefined' && (window as any).__NT_VERBOSE__);
+
+  // First numeric token of the reader's own progress footer = absolute book position.
+  const readAbs = (): number | null => {
+    try {
+      const el = document.querySelector('div[title="Click to copy Progress"]');
+      if (!el || !el.textContent) return null;
+      const m = el.textContent.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+      return m ? parseFloat(m[0]) : null;
+    } catch { return null; }
+  };
+
+  // The user's hidden, "always-correct" native SESSION-chars element (optional).
+  const readNative = (): number | null => {
+    try {
+      const sel = (window as any).__NT_TT_DEBUG_NATIVE_SEL__;
+      if (!sel) return null;
+      const el = document.querySelector(sel);
+      if (!el || !el.textContent) return null;
+      const m = el.textContent.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+      return m ? parseFloat(m[0]) : null;
+    } catch { return null; }
+  };
+
+  const log = (label: string, extra?: Record<string, any>) => {
+    if (!on()) return;
+    const abs = readAbs();
+    const tt = ttuState.chars;
+    // Re-anchor the absolute oracle whenever the tracker session is at zero.
+    if (tt === 0 && abs !== null && lastTtForZero !== 0) { absStart = abs; }
+    if (tt === 0) lastTtForZero = 0; else lastTtForZero = tt;
+    if (absStart === null && abs !== null) absStart = abs;
+    const absDelta = (abs !== null && absStart !== null) ? (abs - absStart) : null;
+    const rec = {
+      t: Math.round(performance.now()),
+      label,
+      run: ttuState.running ? 1 : 0,
+      tt,                                   // tracker session chars (what we display)
+      good: stateRefs.lastGoodChars,
+      base: stateRefs.baseChars,
+      sec: stateRefs.lastSectionIndex,
+      ssec: stateRefs.sessionStartSection,
+      scur: stateRefs.sessionStartCurrent,
+      dir: stateRefs.lastDir,
+      prevSec: stateRefs.prevSec,
+      prevCur: stateRefs.prevCur,
+      abs,                                  // native absolute book position
+      absΔ: absDelta,                       // native chars read since session start (oracle)
+      diff: (absDelta !== null) ? (tt - absDelta) : null,   // tracker - oracle  (≈0 == correct)
+      nat: readNative(),                    // native hidden session counter, if selector set
+      nTot: stateRefs.visitedSectionTotals.size,
+      ...(extra || {})
+    };
+    ring.push(rec);
+    if (ring.length > RING_MAX) ring.shift();
+    // Highlight meaningful divergence so glitches jump out in the console stream.
+    const big = rec.diff !== null && Math.abs(rec.diff as number) >= 50;
+    const css = big ? 'color:#fff;background:#b00;padding:1px 4px;border-radius:3px'
+      : 'color:#888';
+    // eslint-disable-next-line no-console
+    console.log(`%c[NT-DBG] ${label}`, css, rec);
+  };
+
+  const dump = () => { /* eslint-disable-next-line no-console */ console.table(ring.slice(-Math.min(ring.length, 120))); return ring.length; };
+  const clear = () => { ring.length = 0; absStart = null; lastTtForZero = -1; };
+  const exportCsv = () => {
+    if (!ring.length) return 'empty';
+    const cols = Object.keys(ring[ring.length - 1]);
+    const head = cols.join(',');
+    const rows = ring.map(r => cols.map(c => (r[c] === undefined || r[c] === null) ? '' : String(r[c])).join(','));
+    const csv = [head, ...rows].join('\n');
+    try { (navigator as any).clipboard?.writeText(csv); } catch { }
+    return csv;
+  };
+
+  // Furigana / jiten audit (bug 3). Compares the reader DOM's own raw text length
+  // (with and without <rt>/<rp> furigana readings) against what the extractor
+  // returns, and prints sample jiten/ruby structures so the wrapping shape the
+  // extractor must handle is visible. Read-only.
+  const audit = () => {
+    const container = document.querySelector(
+      '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, .writing-container, #writing-container'
+    ) as HTMLElement | null;
+    const countCp = (s: string) => Array.from(s.replace(/\s+/g, '')).length;
+    let rawLen = 0, noFuriganaLen = 0, rtCount = 0, rubyCount = 0, jitenCount = 0;
+    let sampleRuby = '', sampleJiten = '';
+    if (container) {
+      rawLen = countCp(container.textContent || '');
+      const clone = container.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('rt, rp').forEach(n => n.remove());
+      noFuriganaLen = countCp(clone.textContent || '');
+      rubyCount = container.querySelectorAll('ruby').length;
+      rtCount = container.querySelectorAll('rt').length;
+      const jitenEls = container.querySelectorAll('[class*="jiten" i], [ajb="true"]');
+      jitenCount = jitenEls.length;
+      const r = container.querySelector('ruby'); if (r) sampleRuby = r.outerHTML.slice(0, 300);
+      const j = jitenEls[0] as HTMLElement | undefined; if (j) sampleJiten = j.outerHTML.slice(0, 300);
+    }
+    const ex = extractAdvancedCharCount(undefined, ttuState.running);
+    const out = {
+      containerFound: !!container,
+      domRawLen: rawLen,
+      domNoFuriganaLen: noFuriganaLen,     // ← what ttu-style counting "should" see
+      furiganaCharsInRaw: rawLen - noFuriganaLen,
+      rubyCount, rtCount, jitenCount,
+      extractor_current: ex?.current ?? null,
+      extractor_total: ex?.total ?? null,
+      extractor_section: ex?.sectionIndex ?? null,
+      extractor_paginated: ex?.isPaginated ?? null,
+      sampleRubyHTML: sampleRuby,
+      sampleJitenHTML: sampleJiten
+    };
+    /* eslint-disable-next-line no-console */
+    console.log('%c[NT-DBG audit]', 'color:#fff;background:#06c;padding:1px 4px;border-radius:3px', out);
+    return out;
+  };
+
+  return { on, verbose, log, dump, clear, export: exportCsv, audit, get refs() { return { ttuState, stateRefs }; } };
+})();
+if (typeof window !== 'undefined') (window as any).__ntTT = NT_DBG;
+
+// [NT-DBG] Hotkey control. Content scripts run in an ISOLATED world, so the
+// DevTools console (page world) cannot read/set our window globals or call
+// __ntTT directly. Keyboard shortcuts work because the listener lives in this
+// same isolated world and fires on real key presses. console.log/table output
+// still shows up in the page console, so the user just presses keys and reads.
+//   Ctrl+Shift+D  toggle debug logging on/off
+//   Ctrl+Shift+V  toggle verbose (per-tick raw extractor output)
+//   Ctrl+Shift+S  dump tracker + extractor tables
+//   Ctrl+Shift+A  furigana / jiten audit (Bug 3)
+//   Ctrl+Shift+K  dump extractor section keys (Bug 1)
+//   Ctrl+Shift+C  copy tracker CSV to clipboard
+//   Ctrl+Shift+X  clear buffers
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  document.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!e.ctrlKey || !e.shiftKey) return;
+    const k = (e.key || '').toLowerCase();
+    if (!['d', 'v', 's', 'a', 'k', 'c', 'x'].includes(k)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const w = window as any;
+    const exApi = w.__NT_EX_API__;
+    if (k === 'd') { w.__NT_ON__ = !w.__NT_ON__; console.log('%c[NT-DBG] logging ' + (w.__NT_ON__ ? 'ON' : 'OFF'), 'color:#fff;background:' + (w.__NT_ON__ ? '#0a0' : '#777') + ';padding:2px 6px;border-radius:3px'); }
+    else if (k === 'v') { w.__NT_VERBOSE__ = !w.__NT_VERBOSE__; console.log('[NT-DBG] verbose ' + (w.__NT_VERBOSE__ ? 'ON' : 'OFF')); }
+    else if (k === 's') { console.log('%c[NT-DBG] tracker dump:', 'color:#06c'); NT_DBG.dump(); if (exApi) { console.log('%c[NT-EX] extractor dump:', 'color:#960'); exApi.dump(); } }
+    else if (k === 'a') { NT_DBG.audit(); }
+    else if (k === 'k') { if (exApi) exApi.keys(); else console.log('[NT-DBG] extractor API not present'); }
+    else if (k === 'c') { NT_DBG.export(); console.log('[NT-DBG] tracker CSV copied (or see clipboard-blocked note)'); }
+    else if (k === 'x') { NT_DBG.clear(); if (exApi) exApi.clear(); console.log('[NT-DBG] buffers cleared'); }
+  }, true);
+}
 
 // Query the background frame title cache asynchronously to resolve Cross-Origin DOM blocks securely
 function updateCachedActiveTabTitle() {
@@ -533,9 +723,11 @@ async function saveSessionAndQueue() {
   stateRefs.lastSectionTotal = 0;
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.imageSections.clear(); // [FIX:yatsu]
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
   _lastProgressVal = null;
+  _sessionStartProgress = null;
   stateRefs.baseChars = 0;
   stateRefs.prevSec = -1;
   stateRefs.prevCur = 0;
@@ -589,6 +781,15 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   // a genuine never-rendered skip.
   if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
 
+  // [FIX:yatsu] Remember indices that are SETTLED image pages (no text, layout not
+  // deferred). Guard `!visitedSectionTotals.has` so a reader that genuinely reuses
+  // a text section's index for images (Yomiyasu) is not wrongly blocked from
+  // recording that section's real text.
+  if (isPaginated && activeSection !== -1 && total === 0 && !isLayoutDeferred &&
+    !stateRefs.visitedSectionTotals.has(activeSection)) {
+    stateRefs.imageSections.add(activeSection);
+  }
+
   // Skip transition checks during active loading or layout-deferred states
   if (isLayoutDeferred) {
     return false;
@@ -606,9 +807,11 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
     stateRefs.visitedSectionTotals.clear();
+    stateRefs.imageSections.clear(); // [FIX:yatsu]
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
     _lastProgressVal = null;
+    _sessionStartProgress = null;
     stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
@@ -617,6 +820,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.globalLastTick = Date.now();
     lastLoggedPaginatedMode = isPaginated;
     if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
+    NT_DBG.on() && NT_DBG.log('TX:mode-switch-reset', { isPaginated, activeSection, total }); // [NT-DBG]
     return true;
   }
 
@@ -628,8 +832,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   // the fast-scroll lock (Bug 2). Monotonic: a section total only grows.
   const measured = total > 0 && !isLayoutDeferred;
   if (isPaginated && activeSection !== -1 && measured) {
-    const prev = stateRefs.visitedSectionTotals.get(activeSection) || 0;
-    if (total > prev) stateRefs.visitedSectionTotals.set(activeSection, total);
+    recordSectionTotal(activeSection, total); // [FIX:yatsu] was: visitedSectionTotals.set (unguarded)
   }
 
   if (stateRefs.lastSectionIndex === -1 && activeSection !== -1) {
@@ -642,6 +845,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   // section so the freeze can complete it. Only after the session has a real
   // anchor (lastSectionIndex !== -1).
   if (isPaginated && !measured && stateRefs.lastSectionIndex !== -1 && activeSection !== stateRefs.lastSectionIndex) {
+    NT_DBG.on() && NT_DBG.log('TX:image-guard-skip', { activeSection, pinnedTo: stateRefs.lastSectionIndex, total, measured }); // [NT-DBG]
     return false;
   }
 
@@ -653,9 +857,11 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         stateRefs.globalManualCharOffset = 0;
         stateRefs.visitedSections.clear();
         stateRefs.visitedSectionTotals.clear();
+        stateRefs.imageSections.clear(); // [FIX:yatsu]
         stateRefs.seenSections.clear();
         stateRefs.lastDir = 1;
         _lastProgressVal = null;
+        _sessionStartProgress = null;
         stateRefs.baseChars = 0;
         stateRefs.prevSec = -1;
         stateRefs.prevCur = 0;
@@ -688,6 +894,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
             stateRefs.lastSectionTotal = total;
             stateRefs.prevSec = activeSection;
             stateRefs.prevCur = charData.current;
+            NT_DBG.on() && NT_DBG.log('TX:skip-stop', { from: stateRefs.lastSectionIndex, to: activeSection, frozenAt: stateRefs.lastGoodChars }); // [NT-DBG]
             triggerSkipStop();
             return true;
           }
@@ -716,6 +923,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       stateRefs.lastSectionTotal = total;
 
       _transitionGraceUntil = Date.now() + 400;
+      NT_DBG.on() && NT_DBG.log('TX:section-change', { isPaginated, toSection: activeSection, total, prevSection: stateRefs.prevSec }); // [NT-DBG]
 
       if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
       else stabilizer.runGracePeriodIfJiten();
@@ -724,7 +932,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   } else if (stateRefs.lastSectionIndex === activeSection && activeSection !== -1) {
     if (measured && total > stateRefs.lastSectionTotal) {
       stateRefs.lastSectionTotal = total;
-      stateRefs.visitedSectionTotals.set(activeSection, total);
+      recordSectionTotal(activeSection, total); // [FIX:yatsu] was: visitedSectionTotals.set (unguarded)
     }
   }
   return false;
@@ -769,6 +977,24 @@ function absThrough(section: number): number {
 }
 function sessionBasePos(): number {
   return absBelow(stateRefs.sessionStartSection) + stateRefs.sessionStartCurrent;
+}
+
+// [FIX:yatsu] Single chokepoint for recording a section total. Two guards:
+//  1) Never write under an index seen as a settled image page (image-index reuse).
+//  2) FIRST-WINS per index: once a section's total is recorded, it is never
+//     overwritten. In paginated ttu/Yatsu/Yomiyasu the extractor reports a
+//     section's FULL char total on first settled sight, so a section's size never
+//     legitimately changes. Yatsu briefly mislabels a section's content with an
+//     ADJACENT section's index during a fast flip (e.g. section 37's 983 chars
+//     reported under index 36, whose real total is 111); the old monotonic-max
+//     rule let that larger phantom overwrite the correct value and inflate every
+//     later absBelow (the 16,317-vs-1,239 over-count). First-wins keeps the
+//     correct first reading and ignores the transient.
+function recordSectionTotal(idx: number, total: number): void {
+  if (idx < 0 || total <= 0) return;
+  if (stateRefs.imageSections.has(idx)) return;
+  if (stateRefs.visitedSectionTotals.has(idx)) return; // first-wins
+  stateRefs.visitedSectionTotals.set(idx, total);
 }
 
 // Reads the reader's progress indicator as a single monotonic number. Format
@@ -849,6 +1075,10 @@ function recalculateChars(force = false) {
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
+    // [NT-DBG] Raw extractor output every tick (verbose only): the ground truth the
+    // whole pipeline is built on. If `current`/`total` are wrong here, the bug is in
+    // the extractor (furigana/jiten), not in the logic below.
+    NT_DBG.on() && NT_DBG.verbose() && NT_DBG.log('tick:charData', { cur: charData.current, tot: charData.total, sec: charData.sectionIndex, pag: charData.isPaginated, defer: charData.isLayoutDeferred, force }); // [NT-DBG]
     // Resume re-anchor: when the timer just went paused -> running, re-anchor the
     // paginated session to the CURRENT position while keeping the displayed count.
     // This makes the count continue from where it was instead of jumping to an
@@ -870,12 +1100,13 @@ function recalculateChars(force = false) {
           stateRefs.sessionStartCurrent = charData.current;
           stateRefs.lastSectionIndex = active;
           stateRefs.lastSectionTotal = Number(charData.total);
-          stateRefs.visitedSectionTotals.set(active, Number(charData.total));
+          recordSectionTotal(active, Number(charData.total)); // [FIX:yatsu] was: visitedSectionTotals.set (unguarded)
           stateRefs.seenSections.add(active);
           stateRefs.prevSec = active;
           stateRefs.prevCur = charData.current;
           _needsRebase = false;
           ttuState.chars = stateRefs.lastGoodChars;
+          NT_DBG.on() && NT_DBG.log('rebase:commit', { active, total: Number(charData.total), cur: charData.current }); // [NT-DBG]
           const w = document.getElementById('nt-ttu-chrono-wrapper');
           if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
           return; // next tick computes from the new anchor; no jump
@@ -883,6 +1114,7 @@ function recalculateChars(force = false) {
           // Resumed on an image / loading page: hold the frozen value, keep the
           // flag, and rebase once a real page is active.
           ttuState.chars = stateRefs.lastGoodChars;
+          NT_DBG.on() && NT_DBG.log('rebase:hold-image', { total: Number(charData.total), defer: charData.isLayoutDeferred }); // [NT-DBG]
           const w = document.getElementById('nt-ttu-chrono-wrapper');
           if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
           return;
@@ -914,9 +1146,7 @@ function recalculateChars(force = false) {
       if (didTransition) {
         const allTotals = extractAllSectionTotals();
         for (const [idx, tot] of allTotals) {
-          if (tot > (stateRefs.visitedSectionTotals.get(idx) || 0)) {
-            stateRefs.visitedSectionTotals.set(idx, tot);
-          }
+          recordSectionTotal(idx, tot); // [FIX:yatsu] was: unguarded set
         }
       }
 
@@ -937,30 +1167,77 @@ function recalculateChars(force = false) {
       if (charData.isLayoutDeferred) {
         // Genuine chapter loading — layout not measured. Hold the last value.
         ttuState.chars = stateRefs.lastGoodChars;
+        NT_DBG.on() && NT_DBG.log('P:layout-deferred-hold', { activeSection }); // [NT-DBG]
       } else if (!charData.total || Number(charData.total) === 0) {
-        // Image page. lastSectionIndex is pinned to the last REAL section; the
-        // image's true count is "chars before the image", which equals the
-        // section boundary ON THE SIDE we came from: absThrough(idx) when the
-        // image is AFTER lastSectionIndex (arrived forward), absBelow(idx) when
-        // it is BEFORE it (arrived backward).
-        //
-        // Direction can't be read reliably on every reader (Yatsu doesn't expose
-        // usable progress on image pages, so lastDir goes stale and absThrough
-        // over-counts by a whole section — the "way higher" jump). But the last
-        // real page is always ADJACENT to the image, so lastGoodChars sits right
-        // next to the correct boundary. Pick whichever boundary is CLOSEST to
-        // lastGoodChars; the wrong one differs by a full section total. This is
-        // reader-agnostic. lastDir only breaks ties.
-        const throughVal = Math.max(0, stateRefs.baseChars + (absThrough(stateRefs.lastSectionIndex) - sessionBasePos()));
-        const belowVal = Math.max(0, stateRefs.baseChars + (absBelow(stateRefs.lastSectionIndex) - sessionBasePos()));
-        const dThrough = Math.abs(throughVal - stateRefs.lastGoodChars);
-        const dBelow = Math.abs(belowVal - stateRefs.lastGoodChars);
-        let val: number;
-        if (dThrough < dBelow) val = throughVal;
-        else if (dBelow < dThrough) val = belowVal;
-        else val = stateRefs.lastDir >= 0 ? throughVal : belowVal;
-        stateRefs.lastGoodChars = val;
-        ttuState.chars = val;
+        // BACK-TO-START GUARD. Fast backward flips land on unmeasured pages, so
+        // lastSectionIndex stays pinned high and the closest-bracket below would
+        // keep returning the old high value — the count sticks instead of reaching
+        // 0 at the beginning. When there's reliable evidence we're at/before the
+        // session start, trust the position model: free the count to fall to 0 and
+        // release the pin so later ticks compute normally.
+        //   • sectionIndex 0 is the GENUINE first section (never the stale reused
+        //     image key, which is a higher constant), so it's unambiguous.
+        //   • progress <= session-start progress means we've scrolled back to/before
+        //     where the session began (reader-agnostic where progress exists).
+        const sIdx = charData.sectionIndex;
+        const progNow = readReaderProgress();
+        const atStart =
+          (sIdx !== null && sIdx <= 0) ||
+          (progNow !== null && _sessionStartProgress !== null && progNow <= _sessionStartProgress);
+        if (atStart) {
+          const startSec = (sIdx !== null && sIdx >= 0) ? sIdx : 0;
+          const cur = Math.max(0, charData.current || 0);
+          const val = Math.max(0, stateRefs.baseChars + ((absBelow(startSec) + cur) - sessionBasePos()));
+          stateRefs.lastSectionIndex = startSec; // release the high pin
+          stateRefs.prevSec = startSec;
+          stateRefs.prevCur = cur;
+          stateRefs.lastGoodChars = val;
+          ttuState.chars = val;
+          NT_DBG.on() && NT_DBG.log('P:image-atStart', { sIdx, startSec, cur, val, progNow, sessStartProg: _sessionStartProgress }); // [NT-DBG]
+        } else {
+          // Image page. Chars read while on an image == all real text in sections
+          // BEFORE it. When the image's OWN section index is trustworthy (a fresh
+          // index, not a known text section being reused), that is exactly
+          // absBelow(imageSectionIndex) and is direction-independent — this is the
+          // correct value on ttu/Yatsu, whose image pages get their own sequential
+          // index.
+          //
+          // [FIX:image] The previous "closest boundary to lastGoodChars" heuristic
+          // was structurally biased: in paginated mode `current` stays 0 until you
+          // leave a section, so lastGoodChars == the section-START value (belowVal).
+          // "Closest" therefore ALWAYS picked belowVal on a forward flip onto an
+          // image, dropping the just-finished section's chars (the -136 / -983
+          // under-count) until the next real section healed it.
+          //
+          // Fallback (readers like Yomiyasu that reuse a stale text-section index
+          // for images): bracket the pinned last real section and choose by travel
+          // direction — forward credits the finished section (throughVal), backward
+          // excludes it (belowVal). Direction here is set by real-text section
+          // movement on the page just before the image, so it is reliable at
+          // arrival even without a readable progress indicator.
+          const imgSec = charData.sectionIndex;
+          const throughVal = Math.max(0, stateRefs.baseChars + (absThrough(stateRefs.lastSectionIndex) - sessionBasePos()));
+          const belowVal = Math.max(0, stateRefs.baseChars + (absBelow(stateRefs.lastSectionIndex) - sessionBasePos()));
+          let val: number;
+          let imgPath: string;
+          // [FIX:yomiyasu] Trust the image's own index ONLY when it is a fresh
+          // index AT OR AFTER the last real section. Yomiyasu reuses a stale low
+          // key for images (e.g. index 2 while reading section 6); absBelow(2) is 0,
+          // which dropped the count to 0 on every image. Requiring imgSec >=
+          // lastSectionIndex rejects that stale key and falls back to the
+          // direction-based boundary, which is correct on Yomiyasu.
+          if (imgSec !== null && imgSec >= 0 && imgSec >= stateRefs.lastSectionIndex &&
+            !stateRefs.visitedSectionTotals.has(imgSec)) {
+            val = Math.max(0, stateRefs.baseChars + (absBelow(imgSec) - sessionBasePos()));
+            imgPath = 'absBelow(imgSec)';
+          } else {
+            val = stateRefs.lastDir >= 0 ? throughVal : belowVal;
+            imgPath = 'dir-fallback';
+          }
+          stateRefs.lastGoodChars = val;
+          ttuState.chars = val;
+          NT_DBG.on() && NT_DBG.log('P:image-bracket', { pinned: stateRefs.lastSectionIndex, imgSec, imgPath, throughVal, belowVal, chosen: val, dir: stateRefs.lastDir }); // [NT-DBG]
+        }
       } else {
         // Real text page: infer travel direction from section/position movement.
         if (activeSection > stateRefs.prevSec) stateRefs.lastDir = 1;
@@ -973,15 +1250,18 @@ function recalculateChars(force = false) {
         const val = paginatedReadChars(activeSection, current);
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
+        NT_DBG.on() && NT_DBG.log('P:real-text', { activeSection, current, val, aBelow: absBelow(activeSection), basePos: sessionBasePos() }); // [NT-DBG]
       }
     } else {
       // ── CONTINUOUS MODE — UNCHANGED ──
       if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
         ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
+        NT_DBG.on() && NT_DBG.log('C:hold', { off: stateRefs.globalManualCharOffset, lastTot: stateRefs.lastSectionTotal }); // [NT-DBG]
       } else {
         let diff = current - stateRefs.globalSessionStartChar;
         if (diff < 0) diff = 0;
         ttuState.chars = diff + stateRefs.globalManualCharOffset;
+        NT_DBG.on() && NT_DBG.log('C:text', { current, start: stateRefs.globalSessionStartChar, diff, off: stateRefs.globalManualCharOffset }); // [NT-DBG]
       }
     }
 
@@ -1338,16 +1618,18 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.seenSections.clear();
   stateRefs.lastDir = 1;
   _lastProgressVal = null;
+  _sessionStartProgress = readReaderProgress();
   stateRefs.baseChars = 0;
   stateRefs.prevSec = activeSection;
   stateRefs.prevCur = current;
   if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
   stateRefs.visitedSections.clear();
   stateRefs.visitedSectionTotals.clear();
+  stateRefs.imageSections.clear(); // [FIX:yatsu]
   if (isPaginated) {
     // Do NOT pre-mark the start section in visitedSections — it must stay
     // un-committed so leaving it commits its read exactly once.
-    if (total > 0) stateRefs.visitedSectionTotals.set(activeSection, total);
+    if (total > 0) recordSectionTotal(activeSection, total); // [FIX:yatsu] was: visitedSectionTotals.set (unguarded)
   } else {
     stateRefs.visitedSections.set(activeSection, 0);
   }
@@ -1580,9 +1862,11 @@ function handleMutations() {
     stateRefs.lastSectionTotal = 0;
     stateRefs.visitedSections.clear();
     stateRefs.visitedSectionTotals.clear();
+    stateRefs.imageSections.clear(); // [FIX:yatsu]
     stateRefs.seenSections.clear();
     stateRefs.lastDir = 1;
     _lastProgressVal = null;
+    _sessionStartProgress = null;
     stateRefs.baseChars = 0;
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
@@ -1645,9 +1929,7 @@ function handleMutations() {
       if (charData.isPaginated && ttuState.running) {
         const allTotals = extractAllSectionTotals();
         for (const [idx, tot] of allTotals) {
-          if (tot > (stateRefs.visitedSectionTotals.get(idx) || 0)) {
-            stateRefs.visitedSectionTotals.set(idx, tot);
-          }
+          recordSectionTotal(idx, tot); // [FIX:yatsu] was: unguarded set
         }
       }
       const didTransition = ttuState.running ? checkAndProcessSectionTransition(charData) : false;

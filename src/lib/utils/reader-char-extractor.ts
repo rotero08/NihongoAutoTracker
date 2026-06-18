@@ -55,6 +55,50 @@ if (typeof window !== 'undefined') {
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [NT-EX-DBG] Extractor debug instrumentation. PURELY OBSERVATIONAL — changes NO
+// counting behavior. Inert unless window.__NT_TT_DEBUG__ is truthy (same flag as
+// the content-script tracker). Console helpers, in the reader tab:
+//   __NT_TT_DEBUG__ = true     // enable
+//   __ntEx.dump()              // table of recent extractor results / decisions
+//   __ntEx.keys()              // dump seenSectionKeys in assignment order (Bug 1)
+//   __ntEx.clear()
+// IMPORTANT: every probe here uses NT_EX_DBG.FRESH (a NON-global clone of the
+// pattern) so it can never mutate JP_CHAR_PATTERN.lastIndex and therefore can
+// never change the real counts it is measuring.
+// ─────────────────────────────────────────────────────────────────────────────
+const NT_EX_DBG = (() => {
+    const ring: any[] = [];
+    const on = () => typeof window !== 'undefined' && !!(window as any).__NT_ON__;
+    // Stateless clone (no `g`/`u`-lastIndex side effects) for safe probing.
+    const FRESH = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/u;
+    const log = (label: string, obj?: Record<string, any>) => {
+        if (!on()) return;
+        const rec = { t: Math.round(performance.now()), label, ...(obj || {}) };
+        ring.push(rec);
+        if (ring.length > 800) ring.shift();
+        // eslint-disable-next-line no-console
+        console.log('%c[NT-EX] ' + label, 'color:#960', rec);
+    };
+    const dump = () => { /* eslint-disable-next-line no-console */ console.table(ring.slice(-Math.min(ring.length, 150))); return ring.length; };
+    const clear = () => { ring.length = 0; };
+    const keys = () => {
+        // Dump seenSectionKeys in assignment order. If a chapter encountered LATER
+        // in book order got a LOWER index than an earlier one, the SPA fallback has
+        // assigned section indices out of book order — that breaks absBelow/absThrough
+        // in the tracker and is a prime suspect for the front→back→front bug.
+        const entries = Array.from(seenSectionKeys.entries()).sort((a, b) => a[1] - b[1]);
+        // eslint-disable-next-line no-console
+        console.table(entries.map(([key, idx]) => ({ idx, key: key.slice(0, 140) })));
+        return entries.length;
+    };
+    return { on, log, dump, clear, keys, FRESH, ring };
+})();
+if (typeof window !== 'undefined') (window as any).__ntEx = NT_EX_DBG;
+// [NT-EX-DBG] Expose dump/keys/clear on the shared isolated-world window so the
+// content script's hotkey handler (same world) can drive them without the console.
+if (typeof window !== 'undefined') (window as any).__NT_EX_API__ = { dump: NT_EX_DBG.dump, keys: NT_EX_DBG.keys, clear: NT_EX_DBG.clear };
+
 /**
  * High-performance, allocation-free ancestor check to replace expensive querySelector / .closest elements.
  */
@@ -96,6 +140,7 @@ function getSectionIndex(container: Element): number | null {
     if (containers.length > 1) {
         const idx = containers.indexOf(container);
         if (idx !== -1) {
+            NT_EX_DBG.on() && NT_EX_DBG.log('secIdx:multi-indexOf', { idx, nContainers: containers.length, id }); // [NT-EX-DBG]
             return idx;
         }
     }
@@ -151,8 +196,14 @@ function getSectionIndex(container: Element): number | null {
         if (!seenSectionKeys.has(chapterKey)) {
             const nextVal = seenSectionKeys.size;
             seenSectionKeys.set(chapterKey, nextVal);
+            // [NT-EX-DBG] A brand-new section key was assigned the next sequential
+            // index BY FIRST-SEEN ORDER. If the reader reached this chapter by
+            // scrolling BACKWARD, this index will be HIGHER than chapters that come
+            // after it in the book — out-of-book-order indexing → tracker math breaks.
+            NT_EX_DBG.on() && NT_EX_DBG.log('secIdx:SPA-new-key', { assignedIdx: nextVal, totalKeys: seenSectionKeys.size, sig: chapterKey.slice(0, 100) }); // [NT-EX-DBG]
         }
         const idx = seenSectionKeys.get(chapterKey) ?? 0;
+        NT_EX_DBG.on() && NT_EX_DBG.log('secIdx:SPA-resolve', { idx, totalKeys: seenSectionKeys.size }); // [NT-EX-DBG]
         return idx;
     }
 
@@ -376,6 +427,11 @@ export function extractAdvancedCharCount(
             const hasImages = !!readerContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]');
             const isDeferred = !hasImages;
 
+            // [NT-EX-DBG] Image vs loading classification. The [class*="img"] selector is
+            // very broad — if it matches a non-image loading page, isLayoutDeferred goes
+            // false and the tracker runs its image-branch math on a loading page (Bug 2).
+            NT_EX_DBG.on() && NT_EX_DBG.log('EX:empty-page', { sectionIndex, hasImages, isDeferred, paginated: cachedIsPaginated, imgMatch: (() => { const e = readerContainer.querySelector('img, image, svg, canvas, picture, [class*="illust"], [class*="image"], [class*="img"]'); return e ? (e.tagName + '.' + (typeof e.className === 'string' ? e.className.slice(0, 60) : '')) : null; })() }); // [NT-EX-DBG]
+
             return { current: 0, total: 0, sectionIndex, isPaginated: cachedIsPaginated, isLayoutDeferred: isDeferred };
         }
 
@@ -535,6 +591,22 @@ export function extractAdvancedCharCount(
                         }
 
                         const text = n.nodeValue || '';
+                        // [NT-EX-DBG] BUG-3 PROBE. JP_CHAR_PATTERN carries the global `g`
+                        // flag, so the `.test()` below is STATEFUL: it resumes from the
+                        // regex's leftover lastIndex instead of position 0. When lastIndex
+                        // is non-zero on entry, a node whose only Japanese char sits BEFORE
+                        // that offset is wrongly judged "no JP chars" and skipped — chars
+                        // silently vanish. Fragmentation from furigana/jiten (many short
+                        // text nodes) makes this fire often. We read lastIndex (no mutation)
+                        // and compare a FRESH stateless test; a mismatch is the smoking gun.
+                        if (NT_EX_DBG.on()) {
+                            const li = JP_CHAR_PATTERN.lastIndex;
+                            const freshHas = NT_EX_DBG.FRESH.test(text);
+                            const statefulHas = (() => { const r = new RegExp(JP_CHAR_PATTERN.source, JP_CHAR_PATTERN.flags); r.lastIndex = li; return r.test(text); })();
+                            if (li !== 0 || freshHas !== statefulHas) {
+                                NT_EX_DBG.log('BUG3:test-divergence', { lastIndexOnEntry: li, freshHas, statefulHas, willWronglySkip: freshHas && !statefulHas, text: text.slice(0, 24) });
+                            }
+                        }
                         if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
                             continue;
                         }
@@ -598,6 +670,7 @@ export function extractAdvancedCharCount(
             }
         }
 
+        NT_EX_DBG.on() && NT_EX_DBG.log('EX:result', { current, total, sectionIndex, paginated: cachedIsPaginated, vertical: cachedIsVertical, wMode: cachedWritingMode, nPara: ttuCachedNodes.length, lastIdx }); // [NT-EX-DBG]
         return { current, total, sectionIndex, isPaginated: cachedIsPaginated };
     } catch (e) {
         // Extraction failed; signal "no data" so the caller holds last value.
