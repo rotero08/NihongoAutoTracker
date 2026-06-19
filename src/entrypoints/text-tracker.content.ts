@@ -63,6 +63,12 @@ let _lastThemeSyncTime = 0;
 const THEME_SYNC_THROTTLE_MS = 250;
 let _wasTimerRunningBeforeYatsuSidebar = false;
 let _isYatsuSidebarCurrentlyOpen = false;
+// Snapshot of isPaginated captured when the Yatsu sidebar opens. Used to
+// detect a paginated↔continuous mode switch that happens WHILE the sidebar is
+// open. During that window the timer is paused, so recalculateChars never
+// runs and the normal mode-change detector in checkAndProcessSectionTransition
+// is dead. Null means no sidebar is currently open or mode is unknown.
+let _yatsuModeWhenSidebarOpened: boolean | null = null;
 // When true, a pause was triggered automatically (settings / navigation / sidebar),
 // so the pause-time queue flush is suppressed — only user pauses commit.
 let _autoPauseInProgress = false;
@@ -573,9 +579,25 @@ function findTTUInsertPoint(): { el: Element; pos: InsertPosition } | null {
     return _insertPointCache;
   }
 
+  // [FIX:yomiyasu-overlay] Detect the active adapter before the progressDiv
+  // path so we can choose a different insert position for Yomiyasu.
+  // On Yomiyasu the progress bar (div[title="Click to copy Progress"]) lives
+  // inside a fixed bottom bar (div.writing-horizontal-tb.fixed.bottom-0.left-0).
+  // Mounting INSIDE that container hides our wrapper whenever the user toggles
+  // the bar. Instead we insert it immediately AFTER the container (afterend),
+  // making it a DOM sibling — siblings are not hidden by a display:none on the
+  // adjacent element. The nt-yomiyasu-floating CSS (position:fixed) keeps the
+  // icon pinned at the same visual bottom-left spot.
+  const _adapterForInsert = getActiveReaderAdapter();
+  const isYomiyasuInsert = _adapterForInsert?.hostname === 'manga.manabe.es';
   const progressDiv = document.querySelector('div[title="Click to copy Progress"]');
   if (progressDiv && progressDiv.parentElement) {
     const container = progressDiv.parentElement;
+    if (isYomiyasuInsert) {
+      // Sibling mount: insert after the entire fixed bar, not inside it.
+      _insertPointCache = { el: container, pos: 'afterend' };
+      return _insertPointCache;
+    }
     const leftGroup = Array.from(container.children).find(el => el.classList.contains('flex') && el.classList.contains('h-full') && el.id !== 'nt-ttu-chrono-wrapper');
     if (leftGroup) { _insertPointCache = { el: leftGroup, pos: 'beforeend' }; return _insertPointCache; }
     _insertPointCache = { el: container, pos: 'afterbegin' };
@@ -1228,6 +1250,11 @@ async function setupTTUChronometer() {
     const wrapper = document.createElement('div');
     wrapper.id = 'nt-ttu-chrono-wrapper';
 
+    // [FIX:yomiyasu-overlay] Mark Yomiyasu wrapper with nt-yomiyasu-floating
+    // so the position:fixed CSS rule in TtuChronoDropdown.svelte activates and
+    // keeps the icon pinned even when its adjacent fixed bar is display:none.
+    const isYomiyasuFrame = getActiveReaderAdapter()?.hostname === 'manga.manabe.es';
+    if (isYomiyasuFrame) wrapper.classList.add('nt-yomiyasu-floating');
     const isFloating = !document.getElementById('ttu-page-footer') && !document.querySelector('div[title="Click to copy Progress"]');
     if (isFloating) wrapper.classList.add('nt-floating');
 
@@ -1294,6 +1321,13 @@ async function setupTTUChronometer() {
         const sidebarOpen = isYatsuSidebarOpen();
         if (sidebarOpen && !_isYatsuSidebarCurrentlyOpen && Date.now() >= _transitionGraceUntil) {
           _isYatsuSidebarCurrentlyOpen = true;
+          // [FIX:yatsu-mode A1] Snapshot isPaginated now so we can detect a
+          // paginated↔continuous switch that happens while the sidebar is open.
+          // recalculateChars bails when the timer is paused, so the normal
+          // mode-change detector in checkAndProcessSectionTransition is dead
+          // during this entire sidebar-open window.
+          const _modeSnap = extractAdvancedCharCount(undefined, false);
+          _yatsuModeWhenSidebarOpened = _modeSnap !== null ? _modeSnap.isPaginated : null;
           if (ttuState.running) {
             _wasTimerRunningBeforeYatsuSidebar = true;
             _autoPauseInProgress = true;
@@ -1304,6 +1338,50 @@ async function setupTTUChronometer() {
           }
         } else if (!sidebarOpen && _isYatsuSidebarCurrentlyOpen) {
           _isYatsuSidebarCurrentlyOpen = false;
+
+          // [FIX:yatsu-mode A1+A2] If the reading mode changed while the sidebar
+          // was open (paginated↔continuous), perform a full session reset and
+          // suppress the automatic timer resume. The user must press ▶ explicitly
+          // to start the new-mode session. We also update lastLoggedPaginatedMode
+          // so the first post-close recalc sees no diff and skips a double-reset.
+          if (_yatsuModeWhenSidebarOpened !== null) {
+            const _modeNow = extractAdvancedCharCount(undefined, false);
+            if (_modeNow !== null && _modeNow.isPaginated !== _yatsuModeWhenSidebarOpened) {
+              // Suppress auto-resume — mode changed, this is a fresh session.
+              _wasTimerRunningBeforeYatsuSidebar = false;
+              lastLoggedPaginatedMode = _modeNow.isPaginated;
+              // Full session reset (mirrors checkAndProcessSectionTransition's
+              // mode-change block so both code paths are in sync).
+              ttuState.timeMs = 0;
+              ttuState.chars = 0;
+              // ttuState.running is already false (timer was paused when sidebar opened).
+              stateRefs.globalSessionStartChar = -1;
+              stateRefs.sectionStartChar = 0;
+              stateRefs.sessionStartSection = -1;
+              stateRefs.sessionStartCurrent = 0;
+              stateRefs.lastGoodChars = 0;
+              stateRefs.globalManualCharOffset = 0;
+              stateRefs.lastSectionIndex = -1;
+              stateRefs.lastSectionTotal = 0;
+              stateRefs.visitedSections.clear();
+              stateRefs.visitedSectionTotals.clear();
+              stateRefs.imageSections.clear();
+              stateRefs.seenSections.clear();
+              stateRefs.lastDir = 1;
+              _lastProgressVal = null;
+              _sessionStartProgress = null;
+              stateRefs.baseChars = 0;
+              stateRefs.prevSec = -1;
+              stateRefs.prevCur = 0;
+              stateRefs.globalLastTick = Date.now();
+              const _wr = document.getElementById('nt-ttu-chrono-wrapper');
+              if (_wr) _wr.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+            }
+          }
+          _yatsuModeWhenSidebarOpened = null;
+
+          // Resume only if the timer was running before AND the mode was not
+          // changed during the sidebar session (cleared above if mode changed).
           if (_wasTimerRunningBeforeYatsuSidebar) {
             ttuState.running = true;
             stateRefs.globalLastTick = Date.now();

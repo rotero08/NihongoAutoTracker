@@ -1285,6 +1285,21 @@
         font-family: var(--font-mono, var(--nt-font, sans-serif)) !important;
     }
 
+    /* [FIX:yomiyasu-overlay] When mounted as a sibling of the fixed bottom bar
+       (afterend), the wrapper needs position:fixed to stay pinned visually even
+       when the bar itself gets display:none. bottom:0 and left:0 align the icon
+       flush with the bar's own bottom edge and left edge so it sits in the same
+       visual position it had when it was mounted inside the bar. height:2rem
+       matches the bar's h-8 (32px) so vertical centering is preserved. */
+    :global(#nt-ttu-chrono-wrapper.nt-yomiyasu-floating) {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        width: 2rem !important;
+        height: 2rem !important;
+        z-index: 9999 !important;
+    }
+
     /* Defeat default browser focus outline ring entirely */
     :global(#nt-ttu-chrono-wrapper *:focus),
     :global(#nt-ttu-chrono-wrapper *:focus-visible),
@@ -1375,7 +1390,7 @@
         direction: ltr;
         transform-origin: bottom left !important;
         cursor: default;
-        z-index: 10001;
+        z-index: 59;
     }
     :global(#nt-ttu-dropdown.open) {
         display: flex;
