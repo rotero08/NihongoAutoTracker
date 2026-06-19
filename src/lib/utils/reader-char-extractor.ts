@@ -55,6 +55,16 @@ if (typeof window !== 'undefined') {
  */
 const JP_CHAR_PATTERN = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25EF\u25CF\u25A0\u25A1]/gu;
 
+// [FIX:jiten] Non-global twin of JP_CHAR_PATTERN for `.test()`. A `/g` regex's
+// `.test()` is STATEFUL — it resumes from the regex's leftover `.lastIndex`
+// instead of position 0. After a prior match that left `lastIndex` at e.g. 1, a
+// `.test()` on a SINGLE-character text node (very common once furigana <ruby> and
+// the Jiten dictionary fragment paragraphs into 1-char nodes) starts past the
+// only character and wrongly reports "no Japanese here", so the node is skipped
+// and its char never counted. `.match()` is unaffected (it ignores lastIndex), so
+// only the `.test()` guard needs the stateless twin.
+const JP_CHAR_TEST = new RegExp(JP_CHAR_PATTERN.source, 'u');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [NT-EX-DBG] Extractor debug instrumentation. PURELY OBSERVATIONAL — changes NO
 // counting behavior. Inert unless window.__NT_TT_DEBUG__ is truthy (same flag as
@@ -473,6 +483,36 @@ export function extractAdvancedCharCount(
         const total = ttuCachedAccumulated[ttuCachedAccumulated.length - 1] || 0;
         lastCachedTotal = total;
 
+        // [NT-EX-DBG] One-shot per-paragraph cached-vs-fresh recount. Set by the
+        // audit hotkey via window.__NT_RECHECK__. Reveals whether the per-paragraph
+        // cache (ttuCharCountCache) holds a stale count (jiten mid-parse) or whether
+        // a fresh recount also disagrees (real furigana/word miscount). Read-only.
+        if (NT_EX_DBG.on() && typeof window !== 'undefined' && (window as any).__NT_RECHECK__) {
+            (window as any).__NT_RECHECK__ = false;
+            try {
+                const freshTest = new RegExp(JP_CHAR_PATTERN.source, 'g' + (JP_CHAR_PATTERN.flags.includes('u') ? 'u' : ''));
+                let freshAcc = 0;
+                const mism: any[] = [];
+                for (let i = 0; i < pTags.length; i++) {
+                    const el = pTags[i];
+                    let t = '';
+                    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+                    let nn: Node | null;
+                    while ((nn = w.nextNode())) {
+                        if (!shouldIgnoreNode(nn.parentElement)) t += nn.nodeValue || '';
+                    }
+                    freshTest.lastIndex = 0;
+                    const fresh = (t.match(freshTest) || []).length;
+                    const cached = ttuCharCountCache.get(el);
+                    freshAcc += fresh;
+                    if (cached !== fresh && mism.length < 20) {
+                        mism.push({ i, cached: cached ?? null, fresh, d: fresh - (cached ?? 0), txt: t.slice(0, 18) });
+                    }
+                }
+                NT_EX_DBG.log('RECHECK', { cachedTotal: total, freshTotal: freshAcc, totalDelta: freshAcc - total, nMismatch: mism.length, nPara: pTags.length, sample: mism });
+            } catch (e) { NT_EX_DBG.log('RECHECK:err', { e: String(e) }); }
+        }
+
         // 4. Binary Search for last explored paragraph
         let low = 0;
         let high = ttuCachedNodes.length - 1;
@@ -543,7 +583,21 @@ export function extractAdvancedCharCount(
             if (needsSubParagraphTracking) {
                 const spans = activeEl.querySelectorAll("[class^='ttu-whispersync-line-highlight-']");
 
-                if (spans.length > 0) {
+                // [FIX:jiten] Furigana/jiten rewraps the active paragraph so a ttu-whispersync
+                // line — and even a single word — can render across a page-column break. Its
+                // union getBoundingClientRect() then straddles the fold, so the all-or-nothing
+                // span test (and a per-node test) wrongly drops the WHOLE line/word even though
+                // most of its characters have already scrolled off — an accumulating undercount,
+                // jiten-ON only. Only a per-CHARACTER rect avoids the union-box artifact, so when
+                // jiten is present we count each scrolled-off character individually (the
+                // dedicated branch below). Furigana renders to the side (vertical) / above
+                // (horizontal) of the base, so it never shifts the scroll-axis edge the test
+                // reads. The non-jiten path keeps using the span branch byte-for-byte, so
+                // jiten-OFF stays exact. Same axis ladder works on ttsu / Yatsu / Yomiyasu
+                // (Yomiyasu's iframe measures against its own viewport).
+                const jitenActive = !!activeEl.querySelector('.jiten-word, ruby[data-furi]');
+
+                if (spans.length > 0 && !jitenActive) {
                     spans.forEach(s => {
                         if (shouldIgnoreNode(s)) return;
 
@@ -574,6 +628,60 @@ export function extractAdvancedCharCount(
                             }
                         }
                     });
+                } else if (jitenActive) {
+                    // [FIX:jiten] Per-character scrolled-off count for the active paragraph.
+                    // Mirrors the exact sExp axis logic used everywhere else, but tests each
+                    // character's OWN rect so a fold-straddling line/word contributes precisely
+                    // its read portion instead of being counted 0/all. A node-level fast path
+                    // keeps it cheap: a node whose own box is cleanly scrolled off counts all its
+                    // JP at once; only a node whose box crosses the fold is walked per character.
+                    if (!reusableRange && typeof document !== 'undefined') {
+                        reusableRange = document.createRange();
+                    }
+                    const rectExpanded = (rc: DOMRect): boolean => {
+                        if (cachedIsVertical) {
+                            if (cachedIsPaginated) return rc.bottom <= 0.5;
+                            if (cachedWritingMode === 'vertical-rl') return rc.left >= (cachedVw + 0.5);
+                            return rc.right <= 0.5;
+                        }
+                        if (cachedIsPaginated) return rc.right <= 0.5;
+                        return rc.bottom <= 0.5;
+                    };
+                    const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
+                    let n: Node | null;
+                    while ((n = walker.nextNode())) {
+                        const parent = (n as Text).parentElement;
+                        if (!parent || shouldIgnoreNode(parent)) {
+                            continue;
+                        }
+                        const text = n.nodeValue || '';
+                        if (!text.trim() || !JP_CHAR_TEST.test(text)) { // [FIX:jiten] non-stateful test
+                            continue;
+                        }
+                        if (!reusableRange) continue;
+
+                        // Fast path: whole node cleanly scrolled off → count all its JP chars.
+                        reusableRange.selectNodeContents(n);
+                        const nodeRect = reusableRange.getBoundingClientRect();
+                        if (nodeRect.width === 0 && nodeRect.height === 0) continue;
+                        if (rectExpanded(nodeRect)) {
+                            const matches = text.match(JP_CHAR_PATTERN);
+                            if (matches) current += matches.length;
+                            continue;
+                        }
+
+                        // Node straddles the fold (or is fully below): resolve per character so a
+                        // line broken across a page column is counted exactly up to the fold.
+                        for (let k = 0; k < text.length; k++) {
+                            const ch = text[k];
+                            if (!JP_CHAR_TEST.test(ch)) continue;
+                            reusableRange.setStart(n, k);
+                            reusableRange.setEnd(n, k + 1);
+                            const cr = reusableRange.getBoundingClientRect();
+                            if (cr.width === 0 && cr.height === 0) continue;
+                            if (rectExpanded(cr)) current += 1;
+                        }
+                    }
                 } else {
                     // Fallback to text node precision tracking when highlights are absent
                     const walker = document.createTreeWalker(activeEl, NodeFilter.SHOW_TEXT);
@@ -607,7 +715,7 @@ export function extractAdvancedCharCount(
                                 NT_EX_DBG.log('BUG3:test-divergence', { lastIndexOnEntry: li, freshHas, statefulHas, willWronglySkip: freshHas && !statefulHas, text: text.slice(0, 24) });
                             }
                         }
-                        if (!text.trim() || !JP_CHAR_PATTERN.test(text)) {
+                        if (!text.trim() || !JP_CHAR_TEST.test(text)) { // [FIX:jiten] was JP_CHAR_PATTERN.test (stateful)
                             continue;
                         }
 

@@ -456,8 +456,121 @@ const NT_DBG = (() => {
       sampleRubyHTML: sampleRuby,
       sampleJitenHTML: sampleJiten
     };
+    // [NT-EX-DBG] Trigger a one-shot cached-vs-fresh per-paragraph recount in the
+    // extractor on the next tick (it reads this flag). Confirms stale-cache vs miscount.
+    try { (window as any).__NT_RECHECK__ = true; } catch { /* noop */ }
+
     /* eslint-disable-next-line no-console */
     console.log('%c[NT-DBG audit]', 'color:#fff;background:#06c;padding:1px 4px;border-radius:3px', out);
+
+    // [NT-WS-DBG] Whispersync probe. Goal: find how ttu marks a line as READ
+    // (distinct class/attr vs just the sequential -NNN id) and see the read/unread
+    // boundary geometry, so `current` can match ttu's progress exactly instead of
+    // lagging by the read-but-still-visible lines on the current page. Read-only.
+    try {
+      const ws: any = {
+        progress: (typeof readReaderProgress === 'function') ? readReaderProgress() : null,
+        extractor_current: ex?.current ?? null,
+        paginated: ex?.isPaginated ?? null,
+        totalSpans: 0, jpInAllSpans: 0, sExpSpans: 0, sExpJp: 0,
+        otherClassesSeen: [] as string[], attrsSeen: [] as string[],
+        boundary: [] as any[], sample: ''
+      };
+      if (container) {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const wmode = getComputedStyle(container).writingMode || '';
+        const vert = wmode.startsWith('vertical');
+        const isPag = !!ex?.isPaginated;
+        const jp = /[\p{L}\p{N}]/gu;
+        const spans = Array.from(container.querySelectorAll("[class^='ttu-whispersync-line-highlight-']")) as HTMLElement[];
+        ws.totalSpans = spans.length;
+        const cls = new Set<string>(), att = new Set<string>();
+        for (const s of spans) {
+          const cp = ((s.textContent || '').match(jp) || []).length;
+          ws.jpInAllSpans += cp;
+          const sr = s.getBoundingClientRect();
+          let sExp = false;
+          if (vert) sExp = isPag ? sr.bottom <= 0.5 : (wmode.includes('rl') ? sr.left >= vw + 0.5 : sr.right <= 0.5);
+          else sExp = isPag ? sr.right <= 0.5 : sr.bottom <= 0.5;
+          if (sExp) { ws.sExpSpans++; ws.sExpJp += cp; }
+          s.classList.forEach(c => { if (!c.startsWith('ttu-whispersync-line-highlight-')) cls.add(c); });
+          s.getAttributeNames().forEach(a => { if (a !== 'class') att.add(a); });
+          const onOrNearScreen = sr.bottom > -120 && sr.top < vh + 120 && sr.right > -120 && sr.left < vw + 120;
+          if (onOrNearScreen && ws.boundary.length < 50) {
+            ws.boundary.push({
+              id: (Array.from(s.classList).find(c => c.startsWith('ttu-whispersync-line-highlight-')) || '').replace('ttu-whispersync-line-highlight-', '#'),
+              cp, sExp,
+              other: Array.from(s.classList).filter(c => !c.startsWith('ttu-whispersync-line-highlight-')),
+              attrs: s.getAttributeNames().filter(a => a !== 'class').map(a => a + '=' + s.getAttribute(a)),
+              t: Math.round(sr.top), b: Math.round(sr.bottom), l: Math.round(sr.left), r: Math.round(sr.right)
+            });
+          }
+        }
+        ws.otherClassesSeen = Array.from(cls);
+        ws.attrsSeen = Array.from(att);
+        if (spans[0]) ws.sample = spans[0].outerHTML.slice(0, 220);
+      }
+      /* eslint-disable-next-line no-console */
+      console.log('%c[NT-WS-DBG]', 'color:#fff;background:#b5651d;padding:1px 4px;border-radius:3px', ws);
+      // Flat copies so the console doesn't collapse them into "(N) […]".
+      ws.boundary.sort((a: any, b: any) => parseInt(String(a.id).replace('#', '')) - parseInt(String(b.id).replace('#', '')));
+      /* eslint-disable-next-line no-console */
+      console.log('[NT-WS-DBG flat]', JSON.stringify({
+        progress: ws.progress, extractor_current: ws.extractor_current,
+        totalSpans: ws.totalSpans, jpInAllSpans: ws.jpInAllSpans,
+        sExpSpans: ws.sExpSpans, sExpJp: ws.sExpJp,
+        otherClassesSeen: ws.otherClassesSeen, attrsSeen: ws.attrsSeen
+      }));
+      /* eslint-disable-next-line no-console */
+      console.log('[NT-WS-DBG boundary]', JSON.stringify(ws.boundary));
+    } catch (e) { /* eslint-disable-next-line no-console */ console.log('[NT-WS-DBG] err', e); }
+
+    // [NT-JITEN-DBG] Hunt characters jiten renders but textContent misses. ttu counts
+    // its own fixed text map; our walker counts live-DOM text nodes. If jiten renders a
+    // base char via a CSS pseudo-element (::before/::after, e.g. content:attr(...)) or
+    // leaves an empty word-span, that char is absent from textContent -> we undercount
+    // while ttu still counts it. This census finds exactly those, with the responsible
+    // element's classes/attrs/pseudo-content so the count path can be matched to jiten.
+    try {
+      const jp = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
+      const jpc = (s: string | null) => { if (!s) return 0; jp.lastIndex = 0; const m = s.match(jp); return m ? m.length : 0; };
+      const clean = (s: string) => (s === 'none' || s === 'normal') ? '' : s.replace(/^"|"$/g, '');
+      const j: any = {
+        container_textContentJp: 0, container_innerTextJp: 0,
+        jitenSpans: 0, emptyJitenSpans: 0, emptyButRendered: 0,
+        rubyDataFuri: 0, pseudoJpTotal: 0, classVariants: {} as Record<string, number>,
+        emptySamples: [] as any[], pseudoSamples: [] as any[]
+      };
+      if (container) {
+        j.container_textContentJp = jpc(container.textContent || '');
+        j.container_innerTextJp = jpc((container as HTMLElement).innerText || '');
+        j.rubyDataFuri = container.querySelectorAll('ruby[data-furi]').length;
+        const spans = Array.from(container.querySelectorAll('.jiten-word')) as HTMLElement[];
+        j.jitenSpans = spans.length;
+        for (const s of spans) {
+          (s.classList as any).forEach((c: string) => { if (c !== 'jiten-word') j.classVariants[c] = (j.classVariants[c] || 0) + 1; });
+          const before = clean(getComputedStyle(s, '::before').content);
+          const after = clean(getComputedStyle(s, '::after').content);
+          const pjp = jpc(before) + jpc(after);
+          if (pjp > 0) {
+            j.pseudoJpTotal += pjp;
+            if (j.pseudoSamples.length < 15) j.pseudoSamples.push({ cls: s.className, tc: (s.textContent || '').slice(0, 6), before, after, attrs: s.getAttributeNames().map(a => a + '=' + (s.getAttribute(a) || '').slice(0, 10)) });
+          }
+          if (jpc(s.textContent) === 0) {
+            j.emptyJitenSpans++;
+            const r = s.getBoundingClientRect();
+            const rendered = r.width > 0.5 && r.height > 0.5;
+            if (rendered) j.emptyButRendered++;
+            if ((rendered || before || after) && j.emptySamples.length < 20) {
+              j.emptySamples.push({ cls: s.className, w: Math.round(r.width), h: Math.round(r.height), before, after, attrs: s.getAttributeNames().map(a => a + '=' + (s.getAttribute(a) || '').slice(0, 10)) });
+            }
+          }
+        }
+      }
+      /* eslint-disable-next-line no-console */
+      console.log('[NT-JITEN-DBG]', JSON.stringify(j));
+    } catch (e) { /* eslint-disable-next-line no-console */ console.log('[NT-JITEN-DBG] err', e); }
+
     return out;
   };
 
