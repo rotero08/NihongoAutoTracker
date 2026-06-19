@@ -317,297 +317,6 @@ const ttuState = new Proxy({
 
 let isSyncing = false;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// [NT-DBG] Debugging instrumentation. PURELY OBSERVATIONAL — changes NO behavior.
-// Inert (every entry early-returns) unless window.__NT_TT_DEBUG__ is truthy, so
-// it has zero effect on production. The native "always-correct" counters are read
-// ONLY as a read-only reference here and are NEVER fed back into the tracker, so
-// the solution stays entirely separate from them, as required.
-//
-// Turn on at runtime, in the reader tab's devtools console:
-//   __NT_TT_DEBUG__ = true            // enable logging
-//   __NT_TT_DEBUG_VERBOSE__ = true    // also log idle / no-op recalc ticks
-//   __ntTT.dump()                     // console.table of the last events
-//   __ntTT.export()                   // copy a CSV of the ring buffer to clipboard
-//   __ntTT.audit()                    // furigana / jiten char-count audit (bug 3)
-//   __ntTT.clear()                    // empty the ring buffer
-//   __ntTT.refs                       // live { ttuState, stateRefs } for poking
-// Optional: tell the oracle where your hidden "always-correct" SESSION-chars
-// element is, so each row shows native vs tracker side-by-side. Absolute book
-// progress is read automatically from the reader's own progress footer.
-//   __NT_TT_DEBUG_NATIVE_SEL__ = 'YOUR_CSS_SELECTOR'
-// ─────────────────────────────────────────────────────────────────────────────
-const NT_DBG = (() => {
-  const RING_MAX = 600;
-  const ring: any[] = [];
-  let absStart: number | null = null;   // native absolute progress captured when tracker chars == 0
-  let lastTtForZero = -1;
-
-  const on = () => typeof window !== 'undefined' && !!(window as any).__NT_ON__;
-  const verbose = () => !!(typeof window !== 'undefined' && (window as any).__NT_VERBOSE__);
-
-  // First numeric token of the reader's own progress footer = absolute book position.
-  const readAbs = (): number | null => {
-    try {
-      const el = document.querySelector('div[title="Click to copy Progress"]');
-      if (!el || !el.textContent) return null;
-      const m = el.textContent.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
-      return m ? parseFloat(m[0]) : null;
-    } catch { return null; }
-  };
-
-  // The user's hidden, "always-correct" native SESSION-chars element (optional).
-  const readNative = (): number | null => {
-    try {
-      const sel = (window as any).__NT_TT_DEBUG_NATIVE_SEL__;
-      if (!sel) return null;
-      const el = document.querySelector(sel);
-      if (!el || !el.textContent) return null;
-      const m = el.textContent.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
-      return m ? parseFloat(m[0]) : null;
-    } catch { return null; }
-  };
-
-  const log = (label: string, extra?: Record<string, any>) => {
-    if (!on()) return;
-    const abs = readAbs();
-    const tt = ttuState.chars;
-    // Re-anchor the absolute oracle whenever the tracker session is at zero.
-    if (tt === 0 && abs !== null && lastTtForZero !== 0) { absStart = abs; }
-    if (tt === 0) lastTtForZero = 0; else lastTtForZero = tt;
-    if (absStart === null && abs !== null) absStart = abs;
-    const absDelta = (abs !== null && absStart !== null) ? (abs - absStart) : null;
-    const rec = {
-      t: Math.round(performance.now()),
-      label,
-      run: ttuState.running ? 1 : 0,
-      tt,                                   // tracker session chars (what we display)
-      good: stateRefs.lastGoodChars,
-      base: stateRefs.baseChars,
-      sec: stateRefs.lastSectionIndex,
-      ssec: stateRefs.sessionStartSection,
-      scur: stateRefs.sessionStartCurrent,
-      dir: stateRefs.lastDir,
-      prevSec: stateRefs.prevSec,
-      prevCur: stateRefs.prevCur,
-      abs,                                  // native absolute book position
-      absΔ: absDelta,                       // native chars read since session start (oracle)
-      diff: (absDelta !== null) ? (tt - absDelta) : null,   // tracker - oracle  (≈0 == correct)
-      nat: readNative(),                    // native hidden session counter, if selector set
-      nTot: stateRefs.visitedSectionTotals.size,
-      ...(extra || {})
-    };
-    ring.push(rec);
-    if (ring.length > RING_MAX) ring.shift();
-    // Highlight meaningful divergence so glitches jump out in the console stream.
-    const big = rec.diff !== null && Math.abs(rec.diff as number) >= 50;
-    const css = big ? 'color:#fff;background:#b00;padding:1px 4px;border-radius:3px'
-      : 'color:#888';
-    // eslint-disable-next-line no-console
-    console.log(`%c[NT-DBG] ${label}`, css, rec);
-  };
-
-  const dump = () => { /* eslint-disable-next-line no-console */ console.table(ring.slice(-Math.min(ring.length, 120))); return ring.length; };
-  const clear = () => { ring.length = 0; absStart = null; lastTtForZero = -1; };
-  const exportCsv = () => {
-    if (!ring.length) return 'empty';
-    const cols = Object.keys(ring[ring.length - 1]);
-    const head = cols.join(',');
-    const rows = ring.map(r => cols.map(c => (r[c] === undefined || r[c] === null) ? '' : String(r[c])).join(','));
-    const csv = [head, ...rows].join('\n');
-    try { (navigator as any).clipboard?.writeText(csv); } catch { }
-    return csv;
-  };
-
-  // Furigana / jiten audit (bug 3). Compares the reader DOM's own raw text length
-  // (with and without <rt>/<rp> furigana readings) against what the extractor
-  // returns, and prints sample jiten/ruby structures so the wrapping shape the
-  // extractor must handle is visible. Read-only.
-  const audit = () => {
-    const container = document.querySelector(
-      '.book-content-container, .book-content, [data-ref="container"], .reader-container, #reader-container, .reader-wrapper, .writing-container, #writing-container'
-    ) as HTMLElement | null;
-    const countCp = (s: string) => Array.from(s.replace(/\s+/g, '')).length;
-    let rawLen = 0, noFuriganaLen = 0, rtCount = 0, rubyCount = 0, jitenCount = 0;
-    let sampleRuby = '', sampleJiten = '';
-    if (container) {
-      rawLen = countCp(container.textContent || '');
-      const clone = container.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll('rt, rp').forEach(n => n.remove());
-      noFuriganaLen = countCp(clone.textContent || '');
-      rubyCount = container.querySelectorAll('ruby').length;
-      rtCount = container.querySelectorAll('rt').length;
-      const jitenEls = container.querySelectorAll('[class*="jiten" i], [ajb="true"]');
-      jitenCount = jitenEls.length;
-      const r = container.querySelector('ruby'); if (r) sampleRuby = r.outerHTML.slice(0, 300);
-      const j = jitenEls[0] as HTMLElement | undefined; if (j) sampleJiten = j.outerHTML.slice(0, 300);
-    }
-    const ex = extractAdvancedCharCount(undefined, ttuState.running);
-    const out = {
-      containerFound: !!container,
-      domRawLen: rawLen,
-      domNoFuriganaLen: noFuriganaLen,     // ← what ttu-style counting "should" see
-      furiganaCharsInRaw: rawLen - noFuriganaLen,
-      rubyCount, rtCount, jitenCount,
-      extractor_current: ex?.current ?? null,
-      extractor_total: ex?.total ?? null,
-      extractor_section: ex?.sectionIndex ?? null,
-      extractor_paginated: ex?.isPaginated ?? null,
-      sampleRubyHTML: sampleRuby,
-      sampleJitenHTML: sampleJiten
-    };
-    // [NT-EX-DBG] Trigger a one-shot cached-vs-fresh per-paragraph recount in the
-    // extractor on the next tick (it reads this flag). Confirms stale-cache vs miscount.
-    try { (window as any).__NT_RECHECK__ = true; } catch { /* noop */ }
-
-    /* eslint-disable-next-line no-console */
-    console.log('%c[NT-DBG audit]', 'color:#fff;background:#06c;padding:1px 4px;border-radius:3px', out);
-
-    // [NT-WS-DBG] Whispersync probe. Goal: find how ttu marks a line as READ
-    // (distinct class/attr vs just the sequential -NNN id) and see the read/unread
-    // boundary geometry, so `current` can match ttu's progress exactly instead of
-    // lagging by the read-but-still-visible lines on the current page. Read-only.
-    try {
-      const ws: any = {
-        progress: (typeof readReaderProgress === 'function') ? readReaderProgress() : null,
-        extractor_current: ex?.current ?? null,
-        paginated: ex?.isPaginated ?? null,
-        totalSpans: 0, jpInAllSpans: 0, sExpSpans: 0, sExpJp: 0,
-        otherClassesSeen: [] as string[], attrsSeen: [] as string[],
-        boundary: [] as any[], sample: ''
-      };
-      if (container) {
-        const vw = window.innerWidth, vh = window.innerHeight;
-        const wmode = getComputedStyle(container).writingMode || '';
-        const vert = wmode.startsWith('vertical');
-        const isPag = !!ex?.isPaginated;
-        const jp = /[\p{L}\p{N}]/gu;
-        const spans = Array.from(container.querySelectorAll("[class^='ttu-whispersync-line-highlight-']")) as HTMLElement[];
-        ws.totalSpans = spans.length;
-        const cls = new Set<string>(), att = new Set<string>();
-        for (const s of spans) {
-          const cp = ((s.textContent || '').match(jp) || []).length;
-          ws.jpInAllSpans += cp;
-          const sr = s.getBoundingClientRect();
-          let sExp = false;
-          if (vert) sExp = isPag ? sr.bottom <= 0.5 : (wmode.includes('rl') ? sr.left >= vw + 0.5 : sr.right <= 0.5);
-          else sExp = isPag ? sr.right <= 0.5 : sr.bottom <= 0.5;
-          if (sExp) { ws.sExpSpans++; ws.sExpJp += cp; }
-          s.classList.forEach(c => { if (!c.startsWith('ttu-whispersync-line-highlight-')) cls.add(c); });
-          s.getAttributeNames().forEach(a => { if (a !== 'class') att.add(a); });
-          const onOrNearScreen = sr.bottom > -120 && sr.top < vh + 120 && sr.right > -120 && sr.left < vw + 120;
-          if (onOrNearScreen && ws.boundary.length < 50) {
-            ws.boundary.push({
-              id: (Array.from(s.classList).find(c => c.startsWith('ttu-whispersync-line-highlight-')) || '').replace('ttu-whispersync-line-highlight-', '#'),
-              cp, sExp,
-              other: Array.from(s.classList).filter(c => !c.startsWith('ttu-whispersync-line-highlight-')),
-              attrs: s.getAttributeNames().filter(a => a !== 'class').map(a => a + '=' + s.getAttribute(a)),
-              t: Math.round(sr.top), b: Math.round(sr.bottom), l: Math.round(sr.left), r: Math.round(sr.right)
-            });
-          }
-        }
-        ws.otherClassesSeen = Array.from(cls);
-        ws.attrsSeen = Array.from(att);
-        if (spans[0]) ws.sample = spans[0].outerHTML.slice(0, 220);
-      }
-      /* eslint-disable-next-line no-console */
-      console.log('%c[NT-WS-DBG]', 'color:#fff;background:#b5651d;padding:1px 4px;border-radius:3px', ws);
-      // Flat copies so the console doesn't collapse them into "(N) […]".
-      ws.boundary.sort((a: any, b: any) => parseInt(String(a.id).replace('#', '')) - parseInt(String(b.id).replace('#', '')));
-      /* eslint-disable-next-line no-console */
-      console.log('[NT-WS-DBG flat]', JSON.stringify({
-        progress: ws.progress, extractor_current: ws.extractor_current,
-        totalSpans: ws.totalSpans, jpInAllSpans: ws.jpInAllSpans,
-        sExpSpans: ws.sExpSpans, sExpJp: ws.sExpJp,
-        otherClassesSeen: ws.otherClassesSeen, attrsSeen: ws.attrsSeen
-      }));
-      /* eslint-disable-next-line no-console */
-      console.log('[NT-WS-DBG boundary]', JSON.stringify(ws.boundary));
-    } catch (e) { /* eslint-disable-next-line no-console */ console.log('[NT-WS-DBG] err', e); }
-
-    // [NT-JITEN-DBG] Hunt characters jiten renders but textContent misses. ttu counts
-    // its own fixed text map; our walker counts live-DOM text nodes. If jiten renders a
-    // base char via a CSS pseudo-element (::before/::after, e.g. content:attr(...)) or
-    // leaves an empty word-span, that char is absent from textContent -> we undercount
-    // while ttu still counts it. This census finds exactly those, with the responsible
-    // element's classes/attrs/pseudo-content so the count path can be matched to jiten.
-    try {
-      const jp = /[\p{L}\p{N}\u3007\u25CB\u25EF\u25CF\u25A0\u25A1]/gu;
-      const jpc = (s: string | null) => { if (!s) return 0; jp.lastIndex = 0; const m = s.match(jp); return m ? m.length : 0; };
-      const clean = (s: string) => (s === 'none' || s === 'normal') ? '' : s.replace(/^"|"$/g, '');
-      const j: any = {
-        container_textContentJp: 0, container_innerTextJp: 0,
-        jitenSpans: 0, emptyJitenSpans: 0, emptyButRendered: 0,
-        rubyDataFuri: 0, pseudoJpTotal: 0, classVariants: {} as Record<string, number>,
-        emptySamples: [] as any[], pseudoSamples: [] as any[]
-      };
-      if (container) {
-        j.container_textContentJp = jpc(container.textContent || '');
-        j.container_innerTextJp = jpc((container as HTMLElement).innerText || '');
-        j.rubyDataFuri = container.querySelectorAll('ruby[data-furi]').length;
-        const spans = Array.from(container.querySelectorAll('.jiten-word')) as HTMLElement[];
-        j.jitenSpans = spans.length;
-        for (const s of spans) {
-          (s.classList as any).forEach((c: string) => { if (c !== 'jiten-word') j.classVariants[c] = (j.classVariants[c] || 0) + 1; });
-          const before = clean(getComputedStyle(s, '::before').content);
-          const after = clean(getComputedStyle(s, '::after').content);
-          const pjp = jpc(before) + jpc(after);
-          if (pjp > 0) {
-            j.pseudoJpTotal += pjp;
-            if (j.pseudoSamples.length < 15) j.pseudoSamples.push({ cls: s.className, tc: (s.textContent || '').slice(0, 6), before, after, attrs: s.getAttributeNames().map(a => a + '=' + (s.getAttribute(a) || '').slice(0, 10)) });
-          }
-          if (jpc(s.textContent) === 0) {
-            j.emptyJitenSpans++;
-            const r = s.getBoundingClientRect();
-            const rendered = r.width > 0.5 && r.height > 0.5;
-            if (rendered) j.emptyButRendered++;
-            if ((rendered || before || after) && j.emptySamples.length < 20) {
-              j.emptySamples.push({ cls: s.className, w: Math.round(r.width), h: Math.round(r.height), before, after, attrs: s.getAttributeNames().map(a => a + '=' + (s.getAttribute(a) || '').slice(0, 10)) });
-            }
-          }
-        }
-      }
-      /* eslint-disable-next-line no-console */
-      console.log('[NT-JITEN-DBG]', JSON.stringify(j));
-    } catch (e) { /* eslint-disable-next-line no-console */ console.log('[NT-JITEN-DBG] err', e); }
-
-    return out;
-  };
-
-  return { on, verbose, log, dump, clear, export: exportCsv, audit, get refs() { return { ttuState, stateRefs }; } };
-})();
-if (typeof window !== 'undefined') (window as any).__ntTT = NT_DBG;
-
-// [NT-DBG] Hotkey control. Content scripts run in an ISOLATED world, so the
-// DevTools console (page world) cannot read/set our window globals or call
-// __ntTT directly. Keyboard shortcuts work because the listener lives in this
-// same isolated world and fires on real key presses. console.log/table output
-// still shows up in the page console, so the user just presses keys and reads.
-//   Ctrl+Shift+D  toggle debug logging on/off
-//   Ctrl+Shift+V  toggle verbose (per-tick raw extractor output)
-//   Ctrl+Shift+S  dump tracker + extractor tables
-//   Ctrl+Shift+A  furigana / jiten audit (Bug 3)
-//   Ctrl+Shift+K  dump extractor section keys (Bug 1)
-//   Ctrl+Shift+C  copy tracker CSV to clipboard
-//   Ctrl+Shift+X  clear buffers
-if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-  document.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (!e.ctrlKey || !e.shiftKey) return;
-    const k = (e.key || '').toLowerCase();
-    if (!['d', 'v', 's', 'a', 'k', 'c', 'x'].includes(k)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const w = window as any;
-    const exApi = w.__NT_EX_API__;
-    if (k === 'd') { w.__NT_ON__ = !w.__NT_ON__; console.log('%c[NT-DBG] logging ' + (w.__NT_ON__ ? 'ON' : 'OFF'), 'color:#fff;background:' + (w.__NT_ON__ ? '#0a0' : '#777') + ';padding:2px 6px;border-radius:3px'); }
-    else if (k === 'v') { w.__NT_VERBOSE__ = !w.__NT_VERBOSE__; console.log('[NT-DBG] verbose ' + (w.__NT_VERBOSE__ ? 'ON' : 'OFF')); }
-    else if (k === 's') { console.log('%c[NT-DBG] tracker dump:', 'color:#06c'); NT_DBG.dump(); if (exApi) { console.log('%c[NT-EX] extractor dump:', 'color:#960'); exApi.dump(); } }
-    else if (k === 'a') { NT_DBG.audit(); }
-    else if (k === 'k') { if (exApi) exApi.keys(); else console.log('[NT-DBG] extractor API not present'); }
-    else if (k === 'c') { NT_DBG.export(); console.log('[NT-DBG] tracker CSV copied (or see clipboard-blocked note)'); }
-    else if (k === 'x') { NT_DBG.clear(); if (exApi) exApi.clear(); console.log('[NT-DBG] buffers cleared'); }
-  }, true);
-}
 
 // Query the background frame title cache asynchronously to resolve Cross-Origin DOM blocks securely
 function updateCachedActiveTabTitle() {
@@ -933,7 +642,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     stateRefs.globalLastTick = Date.now();
     lastLoggedPaginatedMode = isPaginated;
     if (!isPaginated) _transitionGraceUntil = Date.now() + 400;
-    NT_DBG.on() && NT_DBG.log('TX:mode-switch-reset', { isPaginated, activeSection, total }); // [NT-DBG]
     return true;
   }
 
@@ -958,7 +666,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
   // section so the freeze can complete it. Only after the session has a real
   // anchor (lastSectionIndex !== -1).
   if (isPaginated && !measured && stateRefs.lastSectionIndex !== -1 && activeSection !== stateRefs.lastSectionIndex) {
-    NT_DBG.on() && NT_DBG.log('TX:image-guard-skip', { activeSection, pinnedTo: stateRefs.lastSectionIndex, total, measured }); // [NT-DBG]
     return false;
   }
 
@@ -1007,7 +714,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
             stateRefs.lastSectionTotal = total;
             stateRefs.prevSec = activeSection;
             stateRefs.prevCur = charData.current;
-            NT_DBG.on() && NT_DBG.log('TX:skip-stop', { from: stateRefs.lastSectionIndex, to: activeSection, frozenAt: stateRefs.lastGoodChars }); // [NT-DBG]
             triggerSkipStop();
             return true;
           }
@@ -1036,7 +742,6 @@ function checkAndProcessSectionTransition(charData: any): boolean {
       stateRefs.lastSectionTotal = total;
 
       _transitionGraceUntil = Date.now() + 400;
-      NT_DBG.on() && NT_DBG.log('TX:section-change', { isPaginated, toSection: activeSection, total, prevSection: stateRefs.prevSec }); // [NT-DBG]
 
       if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten();
       else stabilizer.runGracePeriodIfJiten();
@@ -1188,10 +893,6 @@ function recalculateChars(force = false) {
 
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
-    // [NT-DBG] Raw extractor output every tick (verbose only): the ground truth the
-    // whole pipeline is built on. If `current`/`total` are wrong here, the bug is in
-    // the extractor (furigana/jiten), not in the logic below.
-    NT_DBG.on() && NT_DBG.verbose() && NT_DBG.log('tick:charData', { cur: charData.current, tot: charData.total, sec: charData.sectionIndex, pag: charData.isPaginated, defer: charData.isLayoutDeferred, force }); // [NT-DBG]
     // Resume re-anchor: when the timer just went paused -> running, re-anchor the
     // paginated session to the CURRENT position while keeping the displayed count.
     // This makes the count continue from where it was instead of jumping to an
@@ -1219,7 +920,6 @@ function recalculateChars(force = false) {
           stateRefs.prevCur = charData.current;
           _needsRebase = false;
           ttuState.chars = stateRefs.lastGoodChars;
-          NT_DBG.on() && NT_DBG.log('rebase:commit', { active, total: Number(charData.total), cur: charData.current }); // [NT-DBG]
           const w = document.getElementById('nt-ttu-chrono-wrapper');
           if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
           return; // next tick computes from the new anchor; no jump
@@ -1227,7 +927,6 @@ function recalculateChars(force = false) {
           // Resumed on an image / loading page: hold the frozen value, keep the
           // flag, and rebase once a real page is active.
           ttuState.chars = stateRefs.lastGoodChars;
-          NT_DBG.on() && NT_DBG.log('rebase:hold-image', { total: Number(charData.total), defer: charData.isLayoutDeferred }); // [NT-DBG]
           const w = document.getElementById('nt-ttu-chrono-wrapper');
           if (w) w.dispatchEvent(new CustomEvent('nt-linker-refresh'));
           return;
@@ -1280,7 +979,6 @@ function recalculateChars(force = false) {
       if (charData.isLayoutDeferred) {
         // Genuine chapter loading — layout not measured. Hold the last value.
         ttuState.chars = stateRefs.lastGoodChars;
-        NT_DBG.on() && NT_DBG.log('P:layout-deferred-hold', { activeSection }); // [NT-DBG]
       } else if (!charData.total || Number(charData.total) === 0) {
         // BACK-TO-START GUARD. Fast backward flips land on unmeasured pages, so
         // lastSectionIndex stays pinned high and the closest-bracket below would
@@ -1306,7 +1004,6 @@ function recalculateChars(force = false) {
           stateRefs.prevCur = cur;
           stateRefs.lastGoodChars = val;
           ttuState.chars = val;
-          NT_DBG.on() && NT_DBG.log('P:image-atStart', { sIdx, startSec, cur, val, progNow, sessStartProg: _sessionStartProgress }); // [NT-DBG]
         } else {
           // Image page. Chars read while on an image == all real text in sections
           // BEFORE it. When the image's OWN section index is trustworthy (a fresh
@@ -1349,7 +1046,6 @@ function recalculateChars(force = false) {
           }
           stateRefs.lastGoodChars = val;
           ttuState.chars = val;
-          NT_DBG.on() && NT_DBG.log('P:image-bracket', { pinned: stateRefs.lastSectionIndex, imgSec, imgPath, throughVal, belowVal, chosen: val, dir: stateRefs.lastDir }); // [NT-DBG]
         }
       } else {
         // Real text page: infer travel direction from section/position movement.
@@ -1363,18 +1059,15 @@ function recalculateChars(force = false) {
         const val = paginatedReadChars(activeSection, current);
         stateRefs.lastGoodChars = val;
         ttuState.chars = val;
-        NT_DBG.on() && NT_DBG.log('P:real-text', { activeSection, current, val, aBelow: absBelow(activeSection), basePos: sessionBasePos() }); // [NT-DBG]
       }
     } else {
       // ── CONTINUOUS MODE — UNCHANGED ──
       if (!charData.total || Number(charData.total) === 0 || charData.isLayoutDeferred) {
         ttuState.chars = stateRefs.globalManualCharOffset + stateRefs.lastSectionTotal;
-        NT_DBG.on() && NT_DBG.log('C:hold', { off: stateRefs.globalManualCharOffset, lastTot: stateRefs.lastSectionTotal }); // [NT-DBG]
       } else {
         let diff = current - stateRefs.globalSessionStartChar;
         if (diff < 0) diff = 0;
         ttuState.chars = diff + stateRefs.globalManualCharOffset;
-        NT_DBG.on() && NT_DBG.log('C:text', { current, start: stateRefs.globalSessionStartChar, diff, off: stateRefs.globalManualCharOffset }); // [NT-DBG]
       }
     }
 
