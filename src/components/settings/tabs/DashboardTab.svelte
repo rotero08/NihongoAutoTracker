@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { storage } from "wxt/utils/storage";
   import { configStorage } from "@/lib/storage/config";
+  import { LAST_LOG_SUBMITTED_AT_KEY } from "@/lib/constants";
   import { 
     compileBaseLogs, 
     generateHeatmapCells, 
@@ -64,6 +65,27 @@
   let overviewYear = $state(2026);
   let monthsExpanded = $state(false);
   let isDragging = $state(false);
+
+  // ── Stats freshness tracking ──
+  let lastUpdatedAt = $state<number | null>(null);
+  let isRefreshing = $state(false);
+
+  /** Human-readable relative time string, e.g. "2 mins ago" */
+  function formatRelativeTime(ts: number | null): string {
+    if (!ts) return 'never';
+    const diffMs = Date.now() - ts;
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin} min${diffMin === 1 ? '' : 's'} ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hr${diffHr === 1 ? '' : 's'} ago`;
+    return new Date(ts).toLocaleDateString();
+  }
+
+  // Re-compute relative time label every 30 seconds so it stays current
+  let lastUpdatedLabel = $state('never');
+  let relativeTimerInterval: ReturnType<typeof setInterval> | null = null;
 
   // ── Highly Optimized Decoupled Reactivity Derivations ──
   // Base single-pass calculation runs ONLY when statsData updates
@@ -192,15 +214,44 @@
     if (config?.username) {
       try {
         statsData = await fetchAndCacheUserStats(config.username);
+        lastUpdatedAt = Date.now();
+        lastUpdatedLabel = formatRelativeTime(lastUpdatedAt);
       } catch (e) {}
+    }
+  }
+
+  /** Force a fresh fetch from the server, bypassing the 5-min cache. */
+  async function forceRefresh() {
+    if (isRefreshing || !config?.username) return;
+    isRefreshing = true;
+    try {
+      statsData = await fetchAndCacheUserStats(config.username, true);
+      lastUpdatedAt = Date.now();
+      lastUpdatedLabel = formatRelativeTime(lastUpdatedAt);
+    } catch (e) {
+    } finally {
+      isRefreshing = false;
     }
   }
 
   onMount(() => {
     loadData();
+
+    // Watch for storage-level stats updates (e.g. from other tabs re-caching)
     const unwatch = storage.watch<any>('local:userStats', (newVal) => {
       statsData = newVal;
     });
+
+    // Watch for the "stats are stale" signal emitted after every successful log submission.
+    // When triggered, bypass the cache and force a fresh fetch from the server.
+    const unwatchInvalidation = storage.watch<number>(LAST_LOG_SUBMITTED_AT_KEY, (_newVal) => {
+      forceRefresh();
+    });
+
+    // Keep the relative-time label current without re-running heavy derivations
+    relativeTimerInterval = setInterval(() => {
+      lastUpdatedLabel = formatRelativeTime(lastUpdatedAt);
+    }, 30_000);
 
     checkScrollability();
     const resizeObserver = new ResizeObserver(checkScrollability);
@@ -210,6 +261,8 @@
 
     return () => {
       unwatch();
+      unwatchInvalidation();
+      if (relativeTimerInterval) clearInterval(relativeTimerInterval);
       resizeObserver.disconnect();
     };
   });
@@ -293,6 +346,28 @@
       {/if}
     </div>
     <div class="header-controls">
+      <!-- Last-updated timestamp + manual refresh button -->
+      <div class="refresh-status-group">
+        <span class="last-updated-label font-mono" title="Last fetched from NihongoTracker">
+          Updated: {lastUpdatedLabel}
+        </span>
+        <button
+          id="dashboard-refresh-btn"
+          class="btn-refresh font-mono"
+          class:spinning={isRefreshing}
+          onclick={forceRefresh}
+          disabled={isRefreshing || !config?.username}
+          aria-label="Refresh stats"
+          title="Fetch latest stats from NihongoTracker"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="refresh-icon">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+        </button>
+      </div>
       <a href="https://nihongotracker.app/user/{encodeURIComponent(config?.username || '')}/stats" target="_blank" rel="noopener noreferrer" class="btn-profile font-mono">
         <span>View Web Profile</span>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="profile-link-icon">
@@ -648,6 +723,68 @@ Listening: {formatMinutesToHuman(day.listeningMins)}">
     color: var(--color-text);
     letter-spacing: 0.04em;
     margin: 0;
+  }
+
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .refresh-status-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .last-updated-label {
+    font-size: 9px;
+    color: var(--color-text-muted, #7a8ca5);
+    white-space: nowrap;
+    letter-spacing: 0.03em;
+  }
+
+  .btn-refresh {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-weight: bold;
+    font-size: 10px;
+    padding: 5px 10px;
+    border-radius: var(--rounded-btn, 4px);
+    background-color: var(--color-surface-alt, #10101f);
+    border: 1px solid var(--color-border, #1a2235);
+    color: var(--color-text-muted, #7a8ca5);
+    transition: color 0.15s, border-color 0.15s;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+  }
+
+  .btn-refresh:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+
+  .btn-refresh:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .refresh-icon {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+    transition: transform 0.4s ease;
+  }
+
+  @keyframes spin-refresh {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .btn-refresh.spinning .refresh-icon {
+    animation: spin-refresh 0.8s linear infinite;
   }
 
   .btn-profile {

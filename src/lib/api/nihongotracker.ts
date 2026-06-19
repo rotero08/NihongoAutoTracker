@@ -13,6 +13,7 @@ import { browser } from 'wxt/browser';
 import { configStorage } from '../storage/config';
 import { addDebugLog } from '../storage/debug';
 import { notify } from '../utils/toast';
+import { LAST_LOG_SUBMITTED_AT_KEY } from '../constants';
 
 /** Base URL for the NihongoTracker API */
 const API_BASE = 'https://nihongotracker.app/api';
@@ -130,6 +131,12 @@ export async function submitLog(
         console.log(`[NAT DEV - API] Log sent successfully`);
       }
       if (!silent) notify('Success', 'Log sent to NihongoTracker!');
+
+      // Signal to the dashboard that stats are now stale and should be re-fetched.
+      // Only stamp from the authoritative context (background/popup) — content scripts
+      // relay through background which handles the actual submission.
+      try { await storage.setItem(LAST_LOG_SUBMITTED_AT_KEY, Date.now()); } catch { }
+
       return { success: true, status: response.status };
     } else {
       const errorText = await response.text();
