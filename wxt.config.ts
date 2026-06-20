@@ -81,7 +81,7 @@ export default defineConfig({
   manifest: {
     name: 'NihongoAutoTracker',
     description: 'An unofficial NihongoTracker extension to automate your Japanese immersion logging.',
-    version: '4.2.4', // DO NOT CHANGE THIS MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY
+    version: '4.2.5', // DO NOT CHANGE THIS MANUALLY, USE pnpm release TO RELEASE, AND IT WILL CHANGE AUTOMATICALLY
     permissions: [
       'storage',
       'contextMenus',
