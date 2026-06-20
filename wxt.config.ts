@@ -60,6 +60,10 @@ export default defineConfig({
     },
   },
 
+  web_accessible_resources: [
+    { resources: ['ttu-live-bridge.js'], matches: ['https://reader.ttsu.app/*', 'https://app.yatsu.moe/*', 'https://manga.manabe.es/*'] }
+  ],
+
   webExt: {
     keepProfileChanges: true,
     ...(isFirefox && { firefoxProfile: firefoxProfilePath }),

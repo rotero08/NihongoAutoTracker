@@ -26,6 +26,8 @@ import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getRead
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/core/overlay-controller';
 import { clearExtractorCache, extractAdvancedCharCount, extractAllSectionTotals } from '@/lib/utils/reader-char-extractor';
+import { initTtuProgressDb, readTtuDbProgress } from '@/lib/utils/ttu-progress-db';
+import { initTtuLive, readTtuLiveExplored } from '@/lib/utils/ttu-live';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
@@ -88,6 +90,41 @@ let _lastProgressVal: number | null = null;
 // this, the reader has scrolled back to (or before) where the session began, so
 // the read count must be free to fall to 0 instead of sticking on an image.
 let _sessionStartProgress: number | null = null;
+
+// [FIX:ttudb] ─ IndexedDB / live value is the PRIMARY source for the read count ─
+// Whenever ttu's own exploredCharCount can be read (live bridge or IndexedDB) it
+// drives the count (furigana-free and exact) and the geometric extractor is
+// SKIPPED entirely. The geometric path runs ONLY as a fallback when no value is
+// available. The DB path is deliberately LEAN: no skip-stop / jump guard and no
+// jiten-layout handling — that scaffolding exists only to clean up the geometric
+// estimate and is unnecessary against an authoritative value.
+let _dbIsSource = false;            // is the DB/live value currently driving the count?
+let _liveRecalcRaf = 0;            // coalesces live-update recalcs to one frame
+let _dbCarryChars: number | null = null; // value to carry into geometric fallback
+// Sticky for the whole reading session: true once the DB/live solution has driven
+// the count at all. While true, the geometric-only crutches (skip-stop notice,
+// jiten-layout "waiting" notice) are suppressed — ttu counts perfectly from the DB
+// without them, so we do too. Reset only at real session boundaries.
+let _dbEverActive = false;
+
+// Which source last drove the displayed count: surfaced via a data-* attribute on
+// the wrapper (always) and a console line (dev builds only) for debugging.
+let _countSource: 'live' | 'db' | 'fallback' | null = null;
+function setCountSource(src: 'live' | 'db' | 'fallback') {
+  if (_countSource === src) return;
+  _countSource = src;
+  const w = document.getElementById('nt-ttu-chrono-wrapper');
+  if (w) w.setAttribute('data-nt-count-source', src);
+  if (import.meta.env.DEV) console.log('[nt-tracker] count source →', src,
+    src === 'fallback' ? '(geometric fallback)' : '(IndexedDB solution)');
+}
+
+// Re-anchor the DB session. Called wherever the geometric session is reset, so the
+// DB delta restarts from the same place.
+function resetTtuDbSession() {
+  _dbIsSource = false;
+  stateRefs.ttuDbBaseExplored = null;
+}
 
 // Highly-performant module-level cached variables to bypass frequent deep DOM queries
 let _cachedYatsuSidebarOpen = false;
@@ -172,14 +209,17 @@ const stabilizer = new DOMMutationStabilizer(
   updateDropdownOverlayState,
   () => recalculateChars(),
   (active) => {
+    // [FIX:ttudb] Never surface the jiten-layout notice while the DB/live solution
+    // is active — the count doesn't depend on jiten finishing its layout.
+    const effectiveActive = active && !_dbEverActive;
     const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
     if (wrapper) {
-      wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: active } }));
+      wrapper.dispatchEvent(new CustomEvent('nt-jiten-status', { detail: { parsing: effectiveActive } }));
     }
     const btn = document.getElementById('nt-ttu-chrono-btn') as HTMLElement;
     if (btn && wrapper) {
       let tooltip = wrapper.querySelector('.nt-chrono-tooltip') as HTMLElement;
-      if (active) {
+      if (effectiveActive) {
         btn.classList.add('nt-btn-suspended-running');
         btn.style.setProperty('cursor', 'help', 'important');
         if (!tooltip) {
@@ -250,6 +290,10 @@ interface StateRefs {
   // the image's index during a page flip, and recording that phantom permanently
   // inflated the whole-book position (the over-count).
   imageSections: Set<number>;
+  // [FIX:ttudb] exploredCharCount captured at the current session anchor. DB-mode
+  // session chars = baseChars + max(0, exploredNow - ttuDbBaseExplored). null when
+  // not yet anchored (set on entering DB mode / after each reset|checkpoint).
+  ttuDbBaseExplored: number | null;
 }
 
 const stateRefs: StateRefs = {
@@ -269,7 +313,8 @@ const stateRefs: StateRefs = {
   prevSec: -1,
   prevCur: 0,
   baseChars: 0,
-  imageSections: new Set<number>() // [FIX:yatsu]
+  imageSections: new Set<number>(), // [FIX:yatsu]
+  ttuDbBaseExplored: null // [FIX:ttudb]
 };
 
 const ttuState = new Proxy({
@@ -557,6 +602,7 @@ async function saveSessionAndQueue() {
   _lastProgressVal = null;
   _sessionStartProgress = null;
   stateRefs.baseChars = 0;
+  resetTtuDbSession(); _dbCarryChars = null; _dbEverActive = false; // [FIX:ttudb]
   stateRefs.prevSec = -1;
   stateRefs.prevCur = 0;
   stateRefs.globalLastTick = Date.now();
@@ -657,6 +703,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
     _lastProgressVal = null;
     _sessionStartProgress = null;
     stateRefs.baseChars = 0;
+    resetTtuDbSession(); // [FIX:ttudb]
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
     ttuState.chars = 0;
@@ -705,6 +752,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
         _lastProgressVal = null;
         _sessionStartProgress = null;
         stateRefs.baseChars = 0;
+        resetTtuDbSession(); // [FIX:ttudb]
         stateRefs.prevSec = -1;
         stateRefs.prevCur = 0;
       }
@@ -730,6 +778,7 @@ function checkAndProcessSectionTransition(charData: any): boolean {
             // position, so resuming continues from here instead of jumping to an
             // absolute position that would include the skipped (uncounted) gap.
             stateRefs.baseChars = stateRefs.lastGoodChars;
+            resetTtuDbSession(); // [FIX:ttudb] checkpoint re-anchor
             stateRefs.sessionStartSection = activeSection;
             stateRefs.sessionStartCurrent = charData.current;
             stateRefs.lastSectionIndex = activeSection;
@@ -789,6 +838,10 @@ function checkAndProcessSectionTransition(charData: any): boolean {
 // re-appears on reopen or reset.
 function triggerSkipStop() {
   if (!ttuState.running) return;
+  // [FIX:ttudb] No skip-stop while the DB/live solution is driving this session —
+  // exploredCharCount is read directly, so a fast page-skip is counted correctly
+  // and there is nothing to stop for.
+  if (_dbEverActive) return;
   _autoPauseInProgress = true;
   ttuState.running = false;
   _autoPauseInProgress = false;
@@ -913,6 +966,54 @@ function recalculateChars(force = false) {
     return;
   }
 
+  // [FIX:ttudb] ── PRIMARY SOURCE: ttu's own exploredCharCount ─────────────────
+  // Prefer the LIVE value (zero-lag, from the page.change bridge); fall back to
+  // the debounced IndexedDB value (exact at rest) when live isn't available yet
+  // (before the first page-turn) or the bridge couldn't inject. Both are the same
+  // furigana-free quantity, so they share one coordinate system — mixing across
+  // ticks is safe. When neither resolves, the geometric path below runs.
+  const _liveExplored = readTtuLiveExplored();
+  const dbProg: { explored: number } | null =
+    _liveExplored != null ? { explored: _liveExplored } : readTtuDbProgress();
+  if (dbProg) {
+    setCountSource(_liveExplored != null ? 'live' : 'db');
+    _dbEverActive = true; // [FIX:ttudb] DB solution is driving this session
+    // Re-anchor ONLY when (a) entering DB mode (fresh session / switch back from
+    // the geometric fallback) or (b) resuming after a pause (_needsRebase, set by
+    // the running false->true transition). Carrying the displayed value as
+    // baseChars and anchoring at the current explored count keeps the count
+    // continuous and ensures scrolling done WHILE PAUSED is not counted.
+    // No skip-stop and no jiten-layout grace here: the value is authoritative.
+    if (!_dbIsSource || stateRefs.ttuDbBaseExplored === null || _needsRebase) {
+      stateRefs.baseChars = stateRefs.lastGoodChars;
+      stateRefs.ttuDbBaseExplored = dbProg.explored;
+      _dbIsSource = true;
+      _needsRebase = false;
+    }
+    // Only the OUTER clamp. Scrolling BACK (incl. a fast jump to the very start)
+    // must REDUCE the count and reach 0 at the session's start position, so the
+    // inner delta is NOT clamped at 0 (that was the "stuck on a previous number"
+    // bug). baseChars - anchor encodes -(session-start position), so returning to
+    // the book start lands the count exactly on 0.
+    const dbVal = Math.max(0, stateRefs.baseChars + (dbProg.explored - stateRefs.ttuDbBaseExplored));
+    stateRefs.lastGoodChars = dbVal;
+    ttuState.chars = dbVal;
+
+    const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+    if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+    return; // authoritative — geometric extraction skipped
+  }
+
+  // [FIX:ttudb] No live/DB value → fall back to the ORIGINAL geometric path below.
+  if (_dbIsSource) {
+    // Leaving DB mode mid-session: carry the displayed value so the geometric
+    // session re-anchors from it (no reset to zero), then run the original code.
+    _dbCarryChars = stateRefs.lastGoodChars;
+    _dbIsSource = false;
+    _needsRebase = true;
+  }
+  setCountSource('fallback');
+
   const charData = extractAdvancedCharCount(undefined, ttuState.running);
   if (charData !== null) {
     // Resume re-anchor: when the timer just went paused -> running, re-anchor the
@@ -932,6 +1033,7 @@ function recalculateChars(force = false) {
         const active = charData.sectionIndex !== null ? charData.sectionIndex : stateRefs.lastSectionIndex;
         if (!charData.isLayoutDeferred && Number(charData.total) > 0) {
           stateRefs.baseChars = stateRefs.lastGoodChars;
+          resetTtuDbSession(); // [FIX:ttudb] resume re-anchor
           stateRefs.sessionStartSection = active;
           stateRefs.sessionStartCurrent = charData.current;
           stateRefs.lastSectionIndex = active;
@@ -1360,6 +1462,7 @@ async function setupTTUChronometer() {
               stateRefs.sessionStartSection = -1;
               stateRefs.sessionStartCurrent = 0;
               stateRefs.lastGoodChars = 0;
+              resetTtuDbSession(); _dbCarryChars = null; _dbEverActive = false; // [FIX:ttudb]
               stateRefs.globalManualCharOffset = 0;
               stateRefs.lastSectionIndex = -1;
               stateRefs.lastSectionTotal = 0;
@@ -1503,7 +1606,17 @@ function initSessionRefs(current: number, activeSection: number, total: number, 
   stateRefs.lastDir = 1;
   _lastProgressVal = null;
   _sessionStartProgress = readReaderProgress();
-  stateRefs.baseChars = 0;
+  // [FIX:ttudb] Re-anchor DB session. If we are falling back from DB mode, carry
+  // the last DB value as the base so the geometric count continues from it
+  // (no reset to zero); otherwise a fresh session starts at 0.
+  resetTtuDbSession();
+  if (_dbCarryChars != null) {
+    stateRefs.baseChars = _dbCarryChars;
+    stateRefs.lastGoodChars = _dbCarryChars;
+    _dbCarryChars = null;
+  } else {
+    stateRefs.baseChars = 0;
+  }
   stateRefs.prevSec = activeSection;
   stateRefs.prevCur = current;
   if (isPaginated && activeSection !== -1) stateRefs.seenSections.add(activeSection);
@@ -1598,7 +1711,10 @@ function setupOptimizedMutationObserver() {
             }
           }
         }
-        if (hasJitenAdded) {
+        if (hasJitenAdded && !_dbEverActive) {
+          // [FIX:ttudb] Only wait on jiten layout in the geometric fallback. With
+          // the DB/live solution the count comes from exploredCharCount, which is
+          // furigana-independent, so no "waiting for jiten" pause/notice is needed.
           if (ttuState.running) stabilizer.runSilentGracePeriodIfJiten(true);
           else stabilizer.runGracePeriodIfJiten(true);
         }
@@ -1752,6 +1868,7 @@ function handleMutations() {
     _lastProgressVal = null;
     _sessionStartProgress = null;
     stateRefs.baseChars = 0;
+    resetTtuDbSession(); _dbCarryChars = null; _dbEverActive = false; // [FIX:ttudb]
     stateRefs.prevSec = -1;
     stateRefs.prevCur = 0;
     stateRefs.globalLastTick = Date.now();
@@ -1894,6 +2011,18 @@ export default defineContentScript({
 
     const activeThemeCfg = getActiveThemeConfig(cfg);
     const adapter = getActiveReaderAdapter();
+    // [FIX:ttudb] Start the IndexedDB progress reader on any ttu/fork reader frame
+    // (incl. the Yomiyasu iframe — this main() runs inside it via allFrames). Reads
+    // the frame's own same-origin "books" db; no extra permission needed.
+    if (adapter) initTtuProgressDb(getTTUTitle);
+    // [FIX:ttulive] Read ttu's LIVE exploredCharCount directly (zero-lag, matches
+    // ttu exactly even during fast scroll, works with the progress bar hidden).
+    // Recompute on every page.change so the count never sits an event behind ttu;
+    // coalesce to one animation frame so fast scrolling stays cheap.
+    if (adapter) initTtuLive(() => {
+      if (_liveRecalcRaf) return;
+      _liveRecalcRaf = requestAnimationFrame(() => { _liveRecalcRaf = 0; recalculateChars(true); });
+    });
     const originalName = adapter ? adapter.name : null;
     if (adapter && originalName && (originalName.includes('Yatsu') || originalName.includes('YomiYasu'))) {
       safelySetAdapterName(adapter, 'ッツ Ebook Reader');
@@ -2010,6 +2139,7 @@ export default defineContentScript({
             stateRefs.sessionStartSection = initCount !== null ? (initCount.sectionIndex ?? -1) : -1;
             stateRefs.sessionStartCurrent = initCount !== null ? initCount.current : 0;
             stateRefs.lastGoodChars = 0;
+            resetTtuDbSession(); _dbCarryChars = null; _dbEverActive = false; // [FIX:ttudb]
             stateRefs.globalManualCharOffset = 0;
 
             const timeVal = document.querySelector('#nt-ttu-val-time');

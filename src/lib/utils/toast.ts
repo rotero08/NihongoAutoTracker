@@ -311,7 +311,7 @@ function showNativeNotification(title: string, message: string): void {
     const cleanMsg = message.replace(/[✓✗⚠]/g, '').trim();
     browser.notifications.create({
       type: 'basic',
-      iconUrl: browser.runtime.getURL('icon/96.png'),
+      iconUrl: browser.runtime.getURL('/icon/96.png'),
       title: cleanTitle,
       message: cleanMsg,
     }).catch(() => null);
