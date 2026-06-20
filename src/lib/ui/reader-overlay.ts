@@ -10,6 +10,15 @@ import { fmt } from '../utils/time';
 import { getTheme } from './themes';
 
 let overlayDismissed = false;
+let _overlayTickInterval: any = null;
+let _dragMoveHandler: ((e: MouseEvent) => void) | null = null;
+let _dragUpHandler: (() => void) | null = null;
+
+export function disposeOverlay(): void {
+  if (_overlayTickInterval !== null) { clearInterval(_overlayTickInterval); _overlayTickInterval = null; }
+  if (_dragMoveHandler) { document.removeEventListener('mousemove', _dragMoveHandler); _dragMoveHandler = null; }
+  if (_dragUpHandler) { document.removeEventListener('mouseup', _dragUpHandler); _dragUpHandler = null; }
+}
 
 export function getOverlayDismissed(): boolean {
   return overlayDismissed;
@@ -349,8 +358,10 @@ export function runOverlaySetup(cfg: any) {
       overlay!.style.setProperty('top', r.top + 'px', 'important');
       handle.style.cursor = 'grabbing'; e.preventDefault();
     });
-    document.addEventListener('mousemove', e => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } });
-    document.addEventListener('mouseup', () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } });
+    _dragMoveHandler = (e: MouseEvent) => { if (dragging) { overlay!.style.setProperty('left', (e.clientX - ox) + 'px', 'important'); overlay!.style.setProperty('top', (e.clientY - oy) + 'px', 'important'); } };
+    _dragUpHandler = () => { if (dragging) { dragging = false; handle.style.cursor = 'grab'; } };
+    document.addEventListener('mousemove', _dragMoveHandler);
+    document.addEventListener('mouseup', _dragUpHandler);
 
     // Centralized helper to immediately sync state modifications to the layout DOM elements
     const updateOverlayUI = () => {
@@ -408,7 +419,7 @@ export function runOverlaySetup(cfg: any) {
     });
 
     // Run interval tick updates at 200ms to keep timer transitions smooth
-    setInterval(updateOverlayUI, 200);
+    _overlayTickInterval = setInterval(updateOverlayUI, 200);
   }
 
   const pos = cfg.overlayPosition ?? 'top-right';

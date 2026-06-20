@@ -20,7 +20,8 @@ import {
   injectOverlayCustomOverrides,
   injectThemeStyles,
   isWebsiteOverlaySkipped,
-  updatePauseIconState
+  updatePauseIconState,
+  disposeOverlay
 } from '@/lib/ui/reader-overlay';
 import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getReaderConfig } from '@/lib/ui/text-tracker-theme-manager';
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
@@ -2060,6 +2061,7 @@ export default defineContentScript({
       clearExtractorCache();
       disposeTtuProgressDb();
       disposeTtuLive();
+      disposeOverlay();
     });
 
     currentConfig = await configStorage.getValue() || {};

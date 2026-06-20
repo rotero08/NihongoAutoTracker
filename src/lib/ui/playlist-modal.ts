@@ -173,7 +173,17 @@ export function cleanupPlaylistModal() {
     el.remove();
   });
   activePlaylistModalInstance = null;
-  cleanupActiveObservers();
+  if (globalTitleResizeObserver) {
+    globalTitleResizeObserver.disconnect();
+    globalTitleResizeObserver = null;
+  }
+  activeObservedElements = [];
+  if (maskRafId !== null) { cancelAnimationFrame(maskRafId); maskRafId = null; }
+  pendingMaskUpdates.clear();
+}
+
+export function clearPlaylistCache(): void {
+  playlistVideosCache.clear();
 }
 
 export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: boolean, themeName: string) {

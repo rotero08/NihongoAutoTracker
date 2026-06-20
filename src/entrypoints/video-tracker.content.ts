@@ -12,7 +12,7 @@ import { configStorage } from '@/lib/storage/config';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { DEFAULT_THEME } from '@/lib/types';
-import { cleanupPlaylistModal, showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
+import { cleanupPlaylistModal, clearPlaylistCache, showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
 import { applyThemeToDocument, getTheme, resolveThemeColors } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal, cleanupActiveModal } from '@/lib/ui/video-modal';
@@ -803,6 +803,9 @@ export default defineContentScript({
 
       // 6. Run storage unwatches
       unwatches.forEach(fn => fn());
+
+      // 7. Clear module-level caches
+      clearPlaylistCache();
     });
 
     unwatches.push(
