@@ -1835,6 +1835,7 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        line-height: 3;
     }
 
     :global(.nt-ttu-link-item:hover .nt-ttu-link-t) {
