@@ -18,7 +18,7 @@ An unofficial, customizable browser extension for **[NihongoTracker](https://nih
 
 <p align="center">
   <a href="https://addons.mozilla.org/en-US/firefox/addon/nihongoautotracker/"><img src="https://img.shields.io/badge/Firefox_Add--ons-FF7100?style=for-the-badge&logo=firefox-browser&logoColor=white" height="40" alt="Get it on Firefox Add-ons" /></a>&nbsp;&nbsp;
-  <a href="#"><img src="https://img.shields.io/badge/Chrome_Web_Store-4285F4?style=for-the-badge&logo=google-chrome&logoColor=white" height="40" alt="Chrome Web Store - Coming Soon" /></a>
+  <img src="https://img.shields.io/badge/Chrome_Web_Store-Coming_Soon-555555?style=for-the-badge&logo=google-chrome&logoColor=white" height="40" alt="Chrome Web Store - Coming Soon" />
 </p>
 
 ## ✨ Features
