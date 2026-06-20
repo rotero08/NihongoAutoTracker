@@ -26,8 +26,8 @@ import { applyActiveTheme, clearThemeDetectionCache, getActiveThemeName, getRead
 import { DOMMutationStabilizer } from '@/lib/core/dom-mutation-stabilizer';
 import { OverlayController } from '@/lib/core/overlay-controller';
 import { clearExtractorCache, extractAdvancedCharCount, extractAllSectionTotals } from '@/lib/utils/reader-char-extractor';
-import { initTtuProgressDb, readTtuDbProgress } from '@/lib/utils/ttu-progress-db';
-import { initTtuLive, readTtuLiveExplored } from '@/lib/utils/ttu-live';
+import { initTtuProgressDb, readTtuDbProgress, disposeTtuProgressDb } from '@/lib/utils/ttu-progress-db';
+import { initTtuLive, readTtuLiveExplored, disposeTtuLive } from '@/lib/utils/ttu-live';
 import { parseTitle } from '@/lib/utils/text-parsing';
 import { TimerEngine } from '@/lib/utils/timer';
 import { showToast } from '@/lib/utils/toast';
@@ -37,6 +37,18 @@ const isRelevantFrame = typeof window !== 'undefined' && typeof window.location 
   window.self === window.top ||
   !!getActiveReaderAdapter()
 );
+
+// Cleanup registry — all event listener removals and history patch reversions land here.
+// Drained in ctx.onInvalidated() so no listener survives a content-script reload.
+const _allUnlisteners: (() => void)[] = [];
+function _on(target: EventTarget, event: string, fn: any, opts?: boolean | AddEventListenerOptions): void {
+  target.addEventListener(event, fn, opts);
+  const capture = typeof opts === 'boolean' ? opts : (opts?.capture ?? false);
+  _allUnlisteners.push(() => target.removeEventListener(event, fn, capture));
+}
+let _checkInterval: any = null;
+let _origPushState: (typeof window.history.pushState) | null = null;
+let _origReplaceState: (typeof window.history.replaceState) | null = null;
 
 let currentConfig: any = {};
 let isAnalyzingPage = false;
@@ -1539,51 +1551,56 @@ if (isRelevantFrame) {
     }, 150);
   };
 
-  window.addEventListener('scroll', handleScrollUpdate, { passive: true, capture: true });
-  window.addEventListener('resize', handleScrollUpdate, { passive: true });
-  window.addEventListener('click', () => {
+  _on(window, 'scroll', handleScrollUpdate, { passive: true, capture: true });
+  _on(window, 'resize', handleScrollUpdate, { passive: true });
+  _on(window, 'click', () => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive()) {
       setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on click!
     }
   }, { passive: true });
-  window.addEventListener('keyup', (e) => {
+  _on(window, 'keyup', (e: KeyboardEvent) => {
     invalidateYatsuSidebarCache();
     if (ttuState.running && isReadingViewActive() && !stabilizer.getGracePeriodActive() && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space', 'PageUp', 'PageDown'].includes(e.key)) {
       setTimeout(() => { recalculateChars(true); }, 40); // Force immediate on page flip key!
     }
   }, { passive: true });
 
-  window.addEventListener('popstate', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
-  window.addEventListener('hashchange', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
+  _on(window, 'popstate', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
+  _on(window, 'hashchange', () => { invalidateReadingViewCache(); invalidateYatsuSidebarCache(); handleMutations(); });
 
-  const origPushState = window.history.pushState;
+  _origPushState = window.history.pushState;
   window.history.pushState = function (...args) {
-    origPushState.apply(this, args);
+    _origPushState!.apply(this, args);
     invalidateReadingViewCache();
     invalidateYatsuSidebarCache();
     handleMutations();
   };
-  const origReplaceState = window.history.replaceState;
+  _origReplaceState = window.history.replaceState;
   window.history.replaceState = function (...args) {
-    origReplaceState.apply(this, args);
+    _origReplaceState!.apply(this, args);
     invalidateReadingViewCache();
     invalidateYatsuSidebarCache();
     handleMutations();
   };
+  // Register reversions for both history patches so onInvalidated can restore them.
+  _allUnlisteners.push(() => {
+    if (_origPushState) { window.history.pushState = _origPushState; _origPushState = null; }
+    if (_origReplaceState) { window.history.replaceState = _origReplaceState; _origReplaceState = null; }
+  });
 
   const forceSyncOnExit = () => {
     if (ttuState.running && getReaderConfig(currentConfig).autoSave !== false) {
       liveSyncQueue(true);
     }
   };
-  document.addEventListener('visibilitychange', () => {
+  _on(document, 'visibilitychange', () => {
     if (document.visibilityState === 'hidden') forceSyncOnExit();
   });
-  window.addEventListener('pagehide', forceSyncOnExit);
-  window.addEventListener('beforeunload', forceSyncOnExit);
+  _on(window, 'pagehide', forceSyncOnExit);
+  _on(window, 'beforeunload', forceSyncOnExit);
 
-  document.addEventListener('nt-theme-lock-released', () => {
+  _on(document, 'nt-theme-lock-released', () => {
     invalidateReadingViewCache();
     invalidateYatsuSidebarCache();
     handleMutations();
@@ -1807,14 +1824,15 @@ function setupOptimizedMutationObserver() {
 
   startObserver();
 
-  const checkInterval = setInterval(() => {
+  _checkInterval = setInterval(() => {
     if (!isReadingViewActive()) return;
     const container = findReaderContainer();
     if (container && currentObservedElement !== container) startObserver();
   }, 1000);
 
   window.addEventListener('unload', () => {
-    clearInterval(checkInterval);
+    clearInterval(_checkInterval);
+    _checkInterval = null;
     if (activeMutationObserver) activeMutationObserver.disconnect();
     if (rootObserver) rootObserver.disconnect();
     if (rootStyleObserver) rootStyleObserver.disconnect();
@@ -1958,7 +1976,7 @@ function handleMutations() {
 }
 
 if (isRelevantFrame && typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessage) {
-  browser.runtime.onMessage.addListener((req: any, _s, sendResponse) => {
+  const _onMsgHandler = (req: any, _s: any, sendResponse: any) => {
     if (req.action === 'GET_ACTIVE_TIME') {
       const nt = (window as any).__nt_tracker_session_active_ms__;
       if (nt && nt.getTotal) sendResponse({ minutes: Math.floor(nt.getTotal() / 60000) });
@@ -1969,11 +1987,15 @@ if (isRelevantFrame && typeof browser !== 'undefined' && browser.runtime && brow
       const msg = req.message || '';
       showToast(title, msg, title.toLowerCase().includes('fail') || title.toLowerCase().includes('error'));
     }
+  };
+  browser.runtime.onMessage.addListener(_onMsgHandler);
+  _allUnlisteners.push(() => {
+    try { browser.runtime.onMessage.removeListener(_onMsgHandler); } catch { /* noop */ }
   });
 }
 
 if (isRelevantFrame) {
-  window.addEventListener('message', (event) => {
+  _on(window, 'message', (event: MessageEvent) => {
     if (event.data?.action === 'SHOW_TOAST') {
       if (window.self !== window.top) return;
       const title = String(event.data.title || '');
@@ -2003,8 +2025,42 @@ export default defineContentScript({
   allFrames: true,
   cssInjectionMode: 'manifest',
 
-  async main() {
+  async main(ctx) {
     if (!isRelevantFrame) return;
+
+    const _unwatches: (() => void)[] = [];
+
+    ctx.onInvalidated(() => {
+      // Timers and animation frames
+      if (scrollTimeout) { clearTimeout(scrollTimeout); scrollTimeout = null; }
+      if (_mutationTimeout) { clearTimeout(_mutationTimeout); _mutationTimeout = null; }
+      if ((window as any).ntChronoInterval) { clearInterval((window as any).ntChronoInterval); (window as any).ntChronoInterval = null; }
+      if (_liveRecalcRaf) { cancelAnimationFrame(_liveRecalcRaf); _liveRecalcRaf = 0; }
+      if (_checkInterval) { clearInterval(_checkInterval); _checkInterval = null; }
+
+      // Svelte component
+      if (mountedChronoComponent) { try { unmount(mountedChronoComponent); } catch { /* noop */ } mountedChronoComponent = null; }
+
+      // Mutation observers
+      if (progressObserver) { progressObserver.disconnect(); progressObserver = null; }
+      if (activeMutationObserver) { activeMutationObserver.disconnect(); activeMutationObserver = null; }
+      if (rootObserver) { rootObserver.disconnect(); rootObserver = null; }
+      if (rootStyleObserver) { rootStyleObserver.disconnect(); rootStyleObserver = null; }
+      if (bodyObserver) { bodyObserver.disconnect(); bodyObserver = null; }
+
+      // Event listeners, history patches, and runtime message handler
+      for (const fn of _allUnlisteners) { try { fn(); } catch { /* noop */ } }
+      _allUnlisteners.length = 0;
+
+      // Storage watchers
+      for (const fn of _unwatches) { try { fn(); } catch { /* noop */ } }
+      _unwatches.length = 0;
+
+      // Module-level disposals
+      clearExtractorCache();
+      disposeTtuProgressDb();
+      disposeTtuLive();
+    });
 
     currentConfig = await configStorage.getValue() || {};
     const cfg = currentConfig;
@@ -2030,7 +2086,7 @@ export default defineContentScript({
     await applyActiveTheme(activeThemeCfg);
     if (adapter && originalName) safelySetAdapterName(adapter, originalName);
 
-    configStorage.watch((newCfg) => {
+    _unwatches.push(configStorage.watch((newCfg) => {
       if (newCfg) {
         // Force reset the cached reading view status and elements to prevent 
         // the chronometer from failing to re-inject after settings/theme changes.
@@ -2100,7 +2156,7 @@ export default defineContentScript({
           } else overlayController.checkAndRunOverlay(newCfg, { get value() { return isAnalyzingPage; }, set value(v) { isAnalyzingPage = v; } });
         }
       }
-    });
+    }));
 
     if (adapter) {
       startTimeTracker();
@@ -2108,12 +2164,12 @@ export default defineContentScript({
       if (!readerCfg.enabled) return;
       setupTTUChronometer();
 
-      ttuHistoryStorage.watch(() => {
+      _unwatches.push(ttuHistoryStorage.watch(() => {
         const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
         if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-history-refresh'));
-      });
+      }));
 
-      readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
+      _unwatches.push(readingQueueStorage.watch(async (queue: QueuedReadingLog[] | null) => {
         const currentQueue = queue || [];
         const rawTitle = getTTUTitle();
         const parsedRaw = parseTitleWithConfig(rawTitle).query;
@@ -2173,7 +2229,7 @@ export default defineContentScript({
             });
           }
         }
-      });
+      }));
       return;
     }
 

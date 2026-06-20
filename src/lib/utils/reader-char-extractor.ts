@@ -287,6 +287,7 @@ export function clearExtractorCache() {
     lastContainerId = '';
     lastCachedTotal = 0;
     lastCachedSectionIndex = null;
+    seenSectionKeys.clear();
     if (containerObserver) {
         containerObserver.disconnect();
         containerObserver = null;

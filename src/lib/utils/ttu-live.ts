@@ -29,6 +29,7 @@ let _liveExplored: number | null = null;
 let _liveTotal: number | null = null;
 let _started = false;
 let _injected = false;
+let _pageChangeHandler: ((e: Event) => void) | null = null;
 
 function num(v: any, positive: boolean): number | null {
     if (typeof v !== 'number' || !isFinite(v)) return null;
@@ -56,16 +57,28 @@ export function initTtuLive(onUpdate?: () => void): void {
     if (_started) return;
     _started = true;
     try {
-        document.addEventListener('ttsu:page.change', (e: Event) => {
+        _pageChangeHandler = (e: Event) => {
             onPageChange(e);
             if (onUpdate) {
                 try { onUpdate(); } catch { /* noop */ }
             }
-        }, true);
+        };
+        document.addEventListener('ttsu:page.change', _pageChangeHandler, true);
     } catch {
         /* noop */
     }
     void injectTtuLiveBridge();
+}
+
+export function disposeTtuLive(): void {
+    if (_pageChangeHandler) {
+        try { document.removeEventListener('ttsu:page.change', _pageChangeHandler, true); } catch { /* noop */ }
+        _pageChangeHandler = null;
+    }
+    _started = false;
+    _injected = false;
+    _liveExplored = null;
+    _liveTotal = null;
 }
 
 /** Inject the MAIN-world bridge once (fallback path only). */
