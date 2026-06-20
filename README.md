@@ -13,6 +13,8 @@ Logs are stored in a local queue, giving you complete control over your data bef
 * **Manual Overrides:** Edit time, character counts, dates, volume and title before hitting "Send".
 * **Smart Matching:** Search and match your reading material (Light Novels) to ensure accurate logging to NihongoTracker. A green checkmark appears when matched.
 * **End-of-Day Sync:** Optionally set the extension to automatically flush your queue and send everything right before midnight.
+* **Stats Dashboard:** View a quick summary of your Japanese learning stats (the complete set of stats remains in the main NihongoTracker dashboard).
+* **Stremio & Trakt Integration:** Sync your anime or movie watched history from Stremio to NihongoTracker automatically using Trakt.
 
 <p align="center">
   <table>
@@ -48,6 +50,7 @@ Never forget to log a video again. The extension integrates smoothly into your v
 Track your reading progress actively and seamlessly sync with popular web readers. 
 
 * **Reader Integrated Dashboard:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Yomiyasu Reader in the background.
+* **Fully Compatible with Jiten & Whispersync:** Integrates perfectly with Jiten dictionary and ttu/yatsu whispersync tools, maintaining layout styling and dynamic icon positioning.
 * **Cohesive Design:** Match the visual appearance of your dashboard and popup directly to your reader's design for a unified workspace.
 * **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time on non-reader websites (e.g. Wikipedia, Asahi Shinbun). Can be customized.
 * **Integrated Matching Logic:** Match your reading material inside the reader before sending it to the queue, ensuring every send is correctly matched.

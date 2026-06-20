@@ -74,6 +74,7 @@ export interface TrackerConfig {
   traktAccessToken?: string;
   traktRefreshToken?: string;
   traktExpiresAt?: number;
+  traktRefreshBackoffUntil?: number;
   traktUserAgent?: string;
   stremioQueueMode?: 'queue' | 'auto';
   stremioPollMinutes?: number;

@@ -7,6 +7,8 @@ Logs are saved locally first, allowing you to edit or adjust entries before send
 * **Manual Overrides:** Easily modify titles, character counts, durations, and volume numbers.
 * **Smart Matching:** Automatically search and match Light Novels inside web readers to ensure accurate logging.
 * **End-of-Day Sync:** Choose to automatically send all queued logs right before midnight.
+* **Stats Dashboard:** View a quick summary of your immersion stats directly inside the extension.
+* **Stremio & Trakt Sync:** Integrate Stremio with Trakt to automatically log your watched anime/movies.
 
 #### 🎥 Advanced YouTube Tracking
 * **In-Player Controls:** Injects a sleek tracking badge directly into the YouTube player to monitor active watch time.
@@ -14,7 +16,7 @@ Logs are saved locally first, allowing you to edit or adjust entries before send
 * **Quick Log:** Right-click any YouTube video link to log it instantly without opening the extension.
 
 #### 📖 Reading & Context Menu Logging
-* **Reader Integration:** Seamlessly tracks reading sessions in the background from Ttu Reader, Yatsu Reader, and Yomiyasu Reader.
+* **Reader Integration:** Seamlessly tracks reading sessions in the background from Ttu Reader, Yatsu Reader, and Yomiyasu Reader. Fully compatible with Jiten lookups and ttu/yatsu whispersync.
 * **Floating Timer Overlay:** A draggable overlay tracks reading time on general Japanese websites (e.g., news sites).
 * **Highlight & Log:** Highlight any text on a page, right-click, and log the character count instantly.
 

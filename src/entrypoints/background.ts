@@ -216,8 +216,25 @@ export default defineBackground(() => {
     });
   });
 
+  function getNext2359Time(): number {
+    const now = new Date();
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0, 0);
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    return target.getTime();
+  }
+
+  function scheduleFlushDailyAlarm() {
+    if (!browser.alarms) return;
+    const targetTime = getNext2359Time();
+    browser.alarms.clear('flushDaily').then(() => {
+      browser.alarms.create('flushDaily', { when: targetTime });
+    }).catch(() => null);
+  }
+
   if (browser.alarms) {
-    browser.alarms.create('flushDaily', { periodInMinutes: 1 });
+    scheduleFlushDailyAlarm();
     browser.alarms.create('stremioTraktPoll', { periodInMinutes: 1 });
     setTimeout(() => pollStremioTrakt(true), 1000);
 
@@ -228,32 +245,35 @@ export default defineBackground(() => {
       }
       if (alarm.name !== 'flushDaily') return;
 
+      scheduleFlushDailyAlarm();
+
       const cfg = await configStorage.getValue();
       if (!cfg.autoSendEndOfDay) return;
 
-      const now = new Date();
-      if (now.getHours() === 23 && now.getMinutes() === 59) {
-        const lastFlushDate = await storage.getItem(LAST_FLUSH_DATE_KEY);
-        const todayStr = now.toLocaleDateString();
-        if (lastFlushDate === todayStr) return;
-
-        await flushTodayQueue('reading', readingQueueStorage);
-        await flushTodayQueue('video', videoQueueStorage);
-        await flushTodayQueue('stremio', stremioQueueStorage);
-        await storage.setItem(LAST_FLUSH_DATE_KEY, todayStr);
+      const flushDate = new Date();
+      if (flushDate.getHours() < 4) {
+        flushDate.setDate(flushDate.getDate() - 1);
       }
+      const targetDateStr = flushDate.toLocaleDateString();
+
+      const lastFlushDate = await storage.getItem(LAST_FLUSH_DATE_KEY);
+      if (lastFlushDate === targetDateStr) return;
+
+      await flushTodayQueue('reading', readingQueueStorage, targetDateStr);
+      await flushTodayQueue('video', videoQueueStorage, targetDateStr);
+      await flushTodayQueue('stremio', stremioQueueStorage, targetDateStr);
+      await storage.setItem(LAST_FLUSH_DATE_KEY, targetDateStr);
     });
   }
 
-  async function flushTodayQueue(type: any, qStorage: any) {
+  async function flushTodayQueue(type: any, qStorage: any, targetDateStr: string) {
     const q = await qStorage.getValue();
-    const todayStr = new Date().toLocaleDateString();
     const remaining: any[] = [];
 
     for (const item of q) {
       const itemDateStr = new Date(item.date).toLocaleDateString();
-      const sessionsToday = item.sessions?.filter((s: any) => new Date(s.date).toLocaleDateString() === todayStr) || [];
-      if (itemDateStr !== todayStr && sessionsToday.length === 0) {
+      const sessionsToday = item.sessions?.filter((s: any) => new Date(s.date).toLocaleDateString() === targetDateStr) || [];
+      if (itemDateStr !== targetDateStr && sessionsToday.length === 0) {
         remaining.push(item);
         continue;
       }

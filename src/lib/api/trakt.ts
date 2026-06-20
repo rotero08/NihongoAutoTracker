@@ -732,26 +732,62 @@ async function ensureFreshTraktToken(config: TrackerConfig): Promise<TrackerConf
     return config;
   }
 
-  const token = await traktFetch(config, '/oauth/token', {
-    method: 'POST',
-    auth: false,
-    body: {
-      refresh_token: config.traktRefreshToken,
-      client_id: config.traktClientId,
-      client_secret: config.traktClientSecret,
-      redirect_uri: 'urn:ietf:wg:oauth:2.0:oob',
-      grant_type: 'refresh_token',
-    },
-  });
+  if (config.traktRefreshBackoffUntil && Date.now() < Number(config.traktRefreshBackoffUntil)) {
+    console.warn('[NAT TRAKT] Skipping token refresh due to active backoff until:', new Date(config.traktRefreshBackoffUntil).toISOString());
+    return config;
+  }
 
-  const updated = {
-    ...config,
-    traktAccessToken: token.access_token,
-    traktRefreshToken: token.refresh_token,
-    traktExpiresAt: Date.now() + token.expires_in * 1000,
-  };
-  await configStorage.setValue(updated);
-  return updated;
+  try {
+    const token = await traktFetch(config, '/oauth/token', {
+      method: 'POST',
+      auth: false,
+      body: {
+        refresh_token: config.traktRefreshToken,
+        client_id: config.traktClientId,
+        client_secret: config.traktClientSecret,
+        redirect_uri: 'urn:ietf:wg:oauth:2.0:oob',
+        grant_type: 'refresh_token',
+      },
+    });
+
+    const updated = {
+      ...config,
+      traktAccessToken: token.access_token,
+      traktRefreshToken: token.refresh_token,
+      traktExpiresAt: Date.now() + token.expires_in * 1000,
+      traktRefreshBackoffUntil: 0,
+    };
+    await configStorage.setValue(updated);
+    return updated;
+  } catch (error: any) {
+    let backoffMs = 15 * 60 * 1000; // Default 15 minutes backoff
+    
+    if (error?.status === 429) {
+      backoffMs = 30 * 60 * 1000; // 30 minutes for 429
+    }
+    
+    const match = String(error?.message || '').match(/wait\s+(\d+)\s+seconds/i);
+    if (match) {
+      const seconds = parseInt(match[1], 10);
+      if (!isNaN(seconds)) {
+        backoffMs = (seconds + 10) * 1000; // Add 10 seconds buffer
+      }
+    }
+
+    const backoffUntil = Date.now() + backoffMs;
+    console.error(`[NAT TRAKT] Token refresh failed. Backing off for ${Math.round(backoffMs / 1000)}s until:`, new Date(backoffUntil).toISOString(), error);
+    
+    try {
+      await configStorage.setValue({
+        ...config,
+        traktRefreshBackoffUntil: backoffUntil
+      });
+    } catch (e) {
+      // Ignore storage write error
+    }
+    
+    throw error;
+  }
 }
 
 async function traktFetch(config: TrackerConfig, path: string, options: any = {}) {

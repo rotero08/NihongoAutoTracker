@@ -24,8 +24,59 @@ export const yatsuAdapter: ReaderAdapter = {
       )
     );
     if (isWhispersyncActive) {
-      wrapper.style.setProperty('margin-left', '12px', 'important');
       wrapper.style.setProperty('gap', '12px', 'important');
+
+      const alignChronoIcon = () => {
+        const footer = document.getElementById('ttu-page-footer');
+        if (!footer) return;
+
+        const buttons = Array.from(footer.querySelectorAll('button'))
+          .filter(btn => btn.id !== 'nt-ttu-chrono-btn' && btn.offsetWidth > 0);
+
+        if (buttons.length === 0) {
+          wrapper.style.setProperty('margin-left', '12px', 'important');
+          return;
+        }
+
+        buttons.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+
+        let d = 1;
+
+        if (buttons.length >= 2) {
+          const r0 = buttons[0].getBoundingClientRect();
+          const r1 = buttons[1].getBoundingClientRect();
+          const measuredGap = r1.left - r0.right;
+          if (measuredGap > 0) {
+            d = measuredGap;
+          }
+        } else {
+          const footerStyle = window.getComputedStyle(footer);
+          const gapVal = parseFloat(footerStyle.gap || footerStyle.columnGap);
+          if (!isNaN(gapVal) && gapVal > 0) {
+            d = gapVal;
+          }
+        }
+
+        const BL = buttons[buttons.length - 1];
+        const rectBL = BL.getBoundingClientRect();
+
+        const chronoBtn = wrapper.querySelector('#nt-ttu-chrono-btn') || wrapper;
+        const rectC = chronoBtn.getBoundingClientRect();
+
+        const currentMargin = parseFloat(window.getComputedStyle(wrapper).marginLeft) || 0;
+        const newMargin = d - (rectC.left - rectBL.right) + currentMargin;
+
+        if (newMargin >= -200 && newMargin < 100) {
+          wrapper.style.setProperty('margin-left', `${newMargin}px`, 'important');
+        } else {
+          wrapper.style.setProperty('margin-left', `${d}px`, 'important');
+        }
+      };
+
+      alignChronoIcon();
+      requestAnimationFrame(alignChronoIcon);
+      setTimeout(alignChronoIcon, 100);
+      setTimeout(alignChronoIcon, 500);
     } else {
       wrapper.style.removeProperty('margin-left');
       wrapper.style.removeProperty('gap');
