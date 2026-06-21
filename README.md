@@ -1,8 +1,25 @@
-# NihongoAutoTracker
+<p align="center">
+  <img src="https://img.shields.io/badge/WXT-4B32C3?style=flat&logo=wxt&logoColor=white" alt="WXT" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/pnpm-F69220?style=flat&logo=pnpm&logoColor=white" alt="pnpm" />
+  <img src="https://img.shields.io/badge/Svelte-FF3E00?style=flat&logo=svelte&logoColor=white" alt="Svelte" />
+</p>
+
+***
+
+<h1 align="center">
+<sub>
+<img src="https://github.com/rotero08/NihongoAutoTracker/blob/main/public/NihongoAutoTracker.svg" height="38" width="38">
+</sub>
+NihongoAutoTracker
+</h1>
 
 An unofficial, customizable browser extension for **[NihongoTracker](https://nihongotracker.app/)** that automates and streamlines your Japanese immersion logging. 
 
-Built with [WXT](https://wxt.dev/) and TypeScript.
+<p align="center">
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/nihongoautotracker/"><img src="https://img.shields.io/badge/Firefox_Add--ons-FF7100?style=for-the-badge&logo=firefox-browser&logoColor=white" height="40" alt="Get it on Firefox Add-ons" /></a>&nbsp;&nbsp;
+  <img src="https://img.shields.io/badge/Chrome_Web_Store-Coming_Soon-555555?style=for-the-badge&logo=google-chrome&logoColor=white" height="40" alt="Chrome Web Store - Coming Soon" />
+</p>
 
 ## ✨ Features
 
@@ -23,8 +40,8 @@ Logs are stored in a local queue, giving you complete control over your data bef
       <td align="center"><b>Full Dashboard View</b></td>
     </tr>
     <tr>
-      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/c1f24f88-7e2c-4849-90a4-eb6a60d4cf99" /></td>
-      <td valign="top"><img width="450" alt="Full Settings and Queue Page" src="https://github.com/user-attachments/assets/ca3687e0-023f-4126-9bb0-200552b9361d" /></td>
+      <td valign="top"><img width="350" alt="Compact Extension Popup" src="https://github.com/user-attachments/assets/030e0219-9c1c-42ae-8d87-f5525540af23" /></td>
+      <td valign="top"><img width="450" alt="Full Settings and Queue Page" src="https://github.com/user-attachments/assets/16b5fce2-ac4a-4616-8e62-07b501bff880" /></td>
     </tr>
   </table>
 </p>
@@ -50,7 +67,7 @@ Never forget to log a video again. The extension integrates smoothly into your v
 Track your reading progress actively and seamlessly sync with popular web readers. 
 
 * **Reader Integrated Dashboard:** Seamlessly syncs your reading sessions from Ttu Reader, Yatsu Reader, and Yomiyasu Reader in the background.
-* **Fully Compatible with Jiten & Whispersync:** Integrates perfectly with Jiten dictionary and ttu/yatsu whispersync tools, maintaining layout styling and dynamic icon positioning.
+* **Fully Compatible with Jiten & Whisruns:** Integrates perfectly with Jiten dictionary and ttu/yatsu whispersync tools, maintaining layout styling and dynamic icon positioning.
 * **Cohesive Design:** Match the visual appearance of your dashboard and popup directly to your reader's design for a unified workspace.
 * **Compact Timer Overlay:** A sleek, draggable overlay tracks your active reading time on non-reader websites (e.g. Wikipedia, Asahi Shinbun). Can be customized.
 * **Integrated Matching Logic:** Match your reading material inside the reader before sending it to the queue, ensuring every send is correctly matched.
@@ -62,8 +79,8 @@ Track your reading progress actively and seamlessly sync with popular web reader
       <td align="center"><b>Session History & Tracking</b></td>
     </tr>
     <tr>
-      <td><img width="350" alt="Searching and matching a Light Novel" src="https://github.com/user-attachments/assets/f5a017ef-56da-4a0d-8ea7-cce247017211" /></td>
-      <td><img width="350" alt="Active reading session and history" src="https://github.com/user-attachments/assets/59a47ad3-3650-4b0b-863f-52f603792253" /></td>
+      <td><img width="350" alt="Searching and matching a Light Novel" src="https://github.com/user-attachments/assets/3b2147e4-e05d-4a8c-a3eb-e36504b1f99d" /></td>
+      <td><img width="350" alt="Active reading session and history" src="https://github.com/user-attachments/assets/9ece1942-5b20-4d24-a465-1e73b5e21b93" /></td>
     </tr>
   </table>
 </p>
@@ -71,7 +88,7 @@ Track your reading progress actively and seamlessly sync with popular web reader
 * **Text Context Menu:** Highlight Japanese text on any webpage, right-click, and log it instantly. The extension calculates character counts and reading time automatically.
 
 <p align="center">
-  <img width="600" alt="Context menu logging showing 'Log to NihongoTracker" src="https://github.com/user-attachments/assets/229c4c16-6fe4-4b70-8923-edb5da4342ee" />
+  <img width="600" alt="Context menu logging showing 'Log to NihongoTracker" src="https://github.com/user-attachments/assets/922896fc-2cb3-4599-acae-b1c09ce0ac4c" />
 </p>
 
 ### Configurable & Customizable
