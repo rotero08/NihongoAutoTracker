@@ -100,7 +100,7 @@ async function run() {
         }
 
         // Check if the release already has the .xpi file attached
-        const targetFileName = `NihongoAutoTracker-v${versionNum}.xpi`;
+        const targetFileName = `NihongoAutoTracker-v${versionNum}-firefox.xpi`;
         const hasXpi = release.assets.some(asset => asset.name === targetFileName);
         if (hasXpi) {
             log(`Release ${expectedTag} already has ${targetFileName} attached. Skipping.`);

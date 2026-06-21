@@ -64,6 +64,9 @@ jobs:
       - name: Build Extension (Firefox)
         run: pnpm wxt build --browser firefox
 
+      - name: Build and Zip Extension (Chrome)
+        run: pnpm wxt zip --browser chrome
+
       # Submit to Firefox AMO and sign/download
       - name: Submit to Firefox AMO
         id: web-ext-submit
@@ -85,72 +88,96 @@ jobs:
           path: web-ext-artifacts/*.xpi
           if-no-files-found: warn
 
-      # Create/Update GitHub Release and upload XPI matching user's selections
-      - name: Attach XPI to GitHub Release
+      # Create/Update GitHub Release and upload assets matching user's selections
+      - name: Attach Assets to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            VERSION=$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8')); console.log(pkg.version);")
+            TAG_NAME="v$VERSION"
+          fi
+          CLEAN_VERSION="${TAG_NAME#v}"
+          
+          UPLOAD_FILES=()
+
+          # --- Firefox XPI ---
           XPI_FILE=$(find web-ext-artifacts -name "*.xpi" | head -n 1)
           if [ -n "$XPI_FILE" ]; then
             echo "Signed XPI found: $XPI_FILE"
-
-            if [ "${{ github.ref_type }}" = "tag" ]; then
-              TAG_NAME="${{ github.ref_name }}"
-            else
-              VERSION=$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8')); console.log(pkg.version);")
-              TAG_NAME="v$VERSION"
-            fi
-            echo "Target Release Tag: $TAG_NAME"
-
-            # --- ADDED: Rename XPI to match the fallback script's expected format ---
-            CLEAN_VERSION="${TAG_NAME#v}"
             XPI_DIR=$(dirname "$XPI_FILE")
-            TARGET_NAME="NihongoAutoTracker-v${CLEAN_VERSION}.xpi"
-            mv "$XPI_FILE" "$XPI_DIR/$TARGET_NAME"
-            XPI_FILE="$XPI_DIR/$TARGET_NAME"
+            TARGET_XPI_NAME="NihongoAutoTracker-v${CLEAN_VERSION}-firefox.xpi"
+            mv "$XPI_FILE" "$XPI_DIR/$TARGET_XPI_NAME"
+            XPI_FILE="$XPI_DIR/$TARGET_XPI_NAME"
             echo "Renamed XPI file to: $XPI_FILE"
-            # -------------------------------------------------------------------------
-
-            # Force fetch tags to ensure annotated tag metadata is downloaded
-            git fetch --tags --force
-
-            # Retrieve tag annotation, stripping Git comments starting with '#'
-            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
-
-            echo "--- DEBUG START ---"
-            echo "Captured TAG_MSG value:"
-            echo "$TAG_MSG"
-            echo "--- DEBUG END ---"
-
-            # Extract clean notes by filtering out any line containing RELEASE_TYPE
-            CLEAN_NOTES=$(echo "$TAG_MSG" | grep -v "RELEASE_TYPE:")
-
-            # Check if release already exists (for robust re-runs)
-            if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-              echo "Release $TAG_NAME already exists. Uploading asset..."
-              gh release upload "$TAG_NAME" "$XPI_FILE" --clobber
-            else
-              if echo "$TAG_MSG" | grep -q "RELEASE_TYPE: PUBLIC"; then
-                echo "Detected PUBLIC release"
-                gh release create "$TAG_NAME" "$XPI_FILE" \
-                  --title "$TAG_NAME" \
-                  --notes "$CLEAN_NOTES"
-              elif echo "$TAG_MSG" | grep -q "RELEASE_TYPE: DRAFT"; then
-                echo "Detected DRAFT release"
-                gh release create "$TAG_NAME" "$XPI_FILE" \
-                  --title "$TAG_NAME" \
-                  --draft \
-                  --notes "$CLEAN_NOTES"
-              else
-                echo "⚠️ Untagged release type or manually pushed tag. Defaulting to DRAFT release for safety..."
-                gh release create "$TAG_NAME" "$XPI_FILE" \
-                  --title "$TAG_NAME" \
-                  --draft \
-                  --notes "$TAG_MSG"
-              fi
-            fi
+            UPLOAD_FILES+=("$XPI_FILE")
           else
-            echo "No signed XPI file found. Skipping release attachment."
+            echo "No signed XPI file found."
+          fi
+
+          # --- Chrome ZIP ---
+          CHROME_ZIP=$(find .output -name "*-${CLEAN_VERSION}-chrome.zip" | head -n 1)
+          if [ -n "$CHROME_ZIP" ]; then
+            echo "Chrome ZIP found: $CHROME_ZIP"
+            CHROME_DIR=$(dirname "$CHROME_ZIP")
+            TARGET_CHROME_NAME="NihongoAutoTracker-v${CLEAN_VERSION}-chrome.zip"
+            mv "$CHROME_ZIP" "$CHROME_DIR/$TARGET_CHROME_NAME"
+            CHROME_ZIP="$CHROME_DIR/$TARGET_CHROME_NAME"
+            echo "Renamed Chrome ZIP to: $CHROME_ZIP"
+            UPLOAD_FILES+=("$CHROME_ZIP")
+          else
+            echo "No Chrome ZIP found."
+          fi
+
+          if [ ${#UPLOAD_FILES[@]} -eq 0 ]; then
+            echo "No assets found to upload to release. Skipping release attachment."
+            exit 0
+          fi
+
+          echo "Target Release Tag: $TAG_NAME"
+          echo "Assets to upload: ${UPLOAD_FILES[*]}"
+
+          # Force fetch tags to ensure annotated tag metadata is downloaded
+          git fetch --tags --force
+
+          # Retrieve tag annotation, stripping Git comments starting with '#'
+          TAG_MSG=$(git tag -l --format='%(contents)' "$TAG_NAME" | sed '/^#/d')
+
+          echo "--- DEBUG START ---"
+          echo "Captured TAG_MSG value:"
+          echo "$TAG_MSG"
+          echo "--- DEBUG END ---"
+
+          # Extract clean notes by filtering out any line containing RELEASE_TYPE
+          CLEAN_NOTES=$(echo "$TAG_MSG" | grep -v "RELEASE_TYPE:")
+
+          # Check if release already exists (for robust re-runs)
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists. Uploading assets..."
+            for file in "${UPLOAD_FILES[@]}"; do
+              gh release upload "$TAG_NAME" "$file" --clobber
+            done
+          else
+            if echo "$TAG_MSG" | grep -q "RELEASE_TYPE: PUBLIC"; then
+              echo "Detected PUBLIC release"
+              gh release create "$TAG_NAME" "${UPLOAD_FILES[@]}" \
+                --title "$TAG_NAME" \
+                --notes "$CLEAN_NOTES"
+            elif echo "$TAG_MSG" | grep -q "RELEASE_TYPE: DRAFT"; then
+              echo "Detected DRAFT release"
+              gh release create "$TAG_NAME" "${UPLOAD_FILES[@]}" \
+                --title "$TAG_NAME" \
+                --draft \
+                --notes "$CLEAN_NOTES"
+            else
+              echo "⚠️ Untagged release type or manually pushed tag. Defaulting to DRAFT release for safety..."
+              gh release create "$TAG_NAME" "${UPLOAD_FILES[@]}" \
+                --title "$TAG_NAME" \
+                --draft \
+                --notes "$TAG_MSG"
+            fi
           fi
 
       # Sync listing description to Firefox AMO store page
