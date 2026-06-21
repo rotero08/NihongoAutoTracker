@@ -75,7 +75,7 @@ Never forget to log a video again. The extension integrates smoothly into your v
 * **Smart Auto-Logging:** Optionally set thresholds (e.g., 95% completion or 30 minutes watched) to log content automatically in the background without sending it to the queue.
 
 <p align="center">
- <img width="800" alt="YouTube Tracking Badge" src="https://github.com/user-attachments/assets/e58e8e0-f7c7-449e-ac5a-f0b197d2ccc9" />
+ <img width="800" alt="YouTube Tracking Badge" src="https://github.com/user-attachments/assets/e58e8de0-f7c7-449e-ac5a-f0b197d2ccc9" />
 </p>
 
 * **Playlist Logger:** Bulk-log entire playlists or select specific videos directly from the YouTube sidebar or playlist header. Includes smart filters to automatically hide non-Japanese content.
