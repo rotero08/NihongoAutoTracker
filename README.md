@@ -14,12 +14,33 @@
 NihongoAutoTracker
 </h1>
 
-An unofficial, customizable browser extension for **[NihongoTracker](https://nihongotracker.app/)** that automates and streamlines your Japanese immersion logging. 
+<p align="center">
+  An unofficial, customizable browser extension for <b><a href="https://nihongotracker.app/">NihongoTracker</a></b> that automates and streamlines your Japanese immersion logging.
+</p>
 
 <p align="center">
   <a href="https://addons.mozilla.org/en-US/firefox/addon/nihongoautotracker/"><img src="https://img.shields.io/badge/Firefox_Add--ons-FF7100?style=for-the-badge&logo=firefox-browser&logoColor=white" height="40" alt="Get it on Firefox Add-ons" /></a>&nbsp;&nbsp;
   <img src="https://img.shields.io/badge/Chrome_Web_Store-Coming_Soon-555555?style=for-the-badge&logo=google-chrome&logoColor=white" height="40" alt="Chrome Web Store - Coming Soon" />
 </p>
+
+---
+
+## Table of Contents
+* [Features](#-features)
+  * [Queue System](#queue-system)
+  * [Advanced Video Tracking](#advanced-video-tracking)
+  * [Reading & Context Menu Logging](#reading--context-menu-logging)
+  * [Configurable & Customizable](#configurable--customizable)
+* [Installation](#-installation)
+  * [Firefox](#firefox)
+  * [Chrome (Manual Installation)](#chrome-manual-installation)
+* [Development Setup](#️-development-setup)
+* [Building for Production](#-building-for-production)
+* [Automatic Deployment & Releases](#-automatic-deployment--releases)
+* [Privacy Policy](#-privacy-policy)
+* [Attribution & License](#️-attribution--license)
+
+---
 
 ## ✨ Features
 
@@ -27,7 +48,7 @@ An unofficial, customizable browser extension for **[NihongoTracker](https://nih
 Logs are stored in a local queue, giving you complete control over your data before it hits the server. There are various options to automate the process.
 
 * **Session Management:** Group multiple short sessions of the same media together.
-* **Manual Overrides:** Edit time, character counts, dates, volume and title before hitting "Send".
+* **Manual Overrides:** Edit time, character counts, dates, volume, and title before hitting "Send".
 * **Smart Matching:** Search and match your reading material (Light Novels) to ensure accurate logging to NihongoTracker. A green checkmark appears when matched.
 * **End-of-Day Sync:** Optionally set the extension to automatically flush your queue and send everything right before midnight.
 * **Stats Dashboard:** View a quick summary of your Japanese learning stats (the complete set of stats remains in the main NihongoTracker dashboard).
@@ -97,29 +118,82 @@ Track your reading progress actively and seamlessly sync with popular web reader
 * **Flexible Logic:** Toggle time tracking, switch between auto and manual modes, and set playlist-specific Japanese content filters.
 * **Togglable Options:** Various options to personalize your viewing and reading experience.
 * **Regex Engine:** Define custom regex rules for control over automatic title and volume detection.
-* And more
 
-## 🛠️ Installation for Development 
+---
 
-1. Clone this repository.
-2. Run `pnpm install`.
-3. Run `pnpm dev` to start the development server.
-4. WXT will automatically open a custom browser instance with the extension loaded.
+## 📦 Installation
 
-## 📦 Building for Production
+### Firefox
+Get the official extension directly from the [Firefox Add-ons Store](https://addons.mozilla.org/en-US/firefox/addon/nihongoautotracker/).
 
-Run `pnpm run zip:all` to build for both Chrome and Firefox simultaneously. Compiled files will be located in the `.output/` directory.
+### Chrome (Manual Installation)
+The Chrome Web Store version is **coming soon**. In the meantime, you can install the production build manually:
+
+1. Download the latest production build from the [Releases](../../releases) page (look for the Chrome `.zip` file).
+2. Extract the ZIP file somewhere safe on your computer.
+3. Open Chrome and navigate to `chrome://extensions/`.
+4. Enable **Developer mode** via the toggle in the top-right corner.
+5. Click the **Load unpacked** button in the top-left corner and select the extracted folder.
+
+---
+
+## 🛠️ Development Setup
+
+If you want to contribute or build the project from source, ensure you have [pnpm](https://pnpm.io/) installed.
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/rotero08/NihongoAutoTracker.git
+   cd NihongoAutoTracker
+   ```
+
+2. Install dependencies:
+   ```bash
+   pnpm install
+   ```
+
+3. Start the development server:
+   ```bash
+   pnpm dev
+   ```
+
+> **Note:** WXT will automatically open a custom browser instance with the extension pre-loaded for hot-reloading.
+
+---
+
+## 🚀 Building for Production
+
+To compile production-ready bundles for both major web stores simultaneously, run:
+
+```bash
+pnpm run zip:all
+```
+
+The compiled, ready-to-upload compression files will be located in the `.output/` directory.
+
+---
 
 ## 🤖 Automatic Deployment & Releases
 
-This repository is configured with GitHub Actions to automate building, publishing, and updating the extension. 
+This repository is configured with GitHub Actions to automate building, publishing, and updating the extension.
 
 To learn how to trigger a new deployment, automatically sync this description to the Firefox Add-ons Store, and retrieve the signed `.xpi` file, see the [Release Guide](RELEASE.md).
 
-## 🔒 Privacy
+---
 
-NihongoAutoTracker is designed with a strict focus on user privacy. No analytical tracking, ads, or telemetry software are bundled with this extension. Your logging history and API keys reside locally in your browser storage. For detailed information on data processing, please view the [Privacy Policy](PRIVACY.md).
+## 🔒 Privacy Policy
 
-## ⚖️ Attribution
+NihongoAutoTracker is designed with a strict focus on user privacy:
 
-This extension interacts with [NihongoTracker](https://nihongotracker.com). All data retrieved from the site is licensed under **CC BY-NC-SA 4.0**. This is an independent project and is not affiliated with or endorsed by NihongoTracker. Consistent with the source license, this extension is strictly NonCommercial.
+* No analytical tracking, ads, or telemetry software are bundled with this extension.
+* Your logging history, preferences, and API keys reside completely locally in your browser storage.
+
+For detailed information on data processing, please view the full [Privacy Policy](PRIVACY.md).
+
+---
+
+## ⚖️ Attribution & License
+
+This extension interacts with [NihongoTracker](https://nihongotracker.com). All data retrieved from the site is licensed under **CC BY-NC-SA 4.0**.
+
+This is an independent project and is not affiliated with or endorsed by NihongoTracker. Consistent with the source license, this extension is strictly **NonCommercial**.
