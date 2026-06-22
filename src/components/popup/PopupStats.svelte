@@ -2,7 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { storage } from "wxt/utils/storage";
   import { configStorage } from "@/lib/storage/config";
-  import { ACTIVE_SETTINGS_TAB_KEY } from "@/lib/constants";
+  import { ACTIVE_SETTINGS_TAB_KEY, LAST_LOG_SUBMITTED_AT_KEY } from "@/lib/constants";
   import { parsePopupSummary } from "@/lib/utils/stats-parser";
   import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
   import { browser } from "wxt/browser";
@@ -32,12 +32,12 @@
     }
   });
 
-  async function loadStats() {
+  async function loadStats(force = false) {
     statsData = await storage.getItem('local:userStats');
     const cfg = await configStorage.getValue() as any;
     if (cfg?.username) {
       try {
-        statsData = await fetchAndCacheUserStats(cfg.username);
+        statsData = await fetchAndCacheUserStats(cfg.username, force);
       } catch (e) {}
     }
   }
@@ -47,8 +47,15 @@
     const unwatch = storage.watch<any>('local:userStats', (newVal) => {
       statsData = newVal;
     });
+    // The API client stamps this key after every successful log submission. Force a
+    // fresh fetch (bypassing the 5-min cache) so the popup stats reflect the new log
+    // immediately instead of showing stale numbers. [FIX]
+    const unwatchInvalidation = storage.watch<number>(LAST_LOG_SUBMITTED_AT_KEY, () => {
+      loadStats(true);
+    });
     return () => {
       unwatch();
+      unwatchInvalidation();
     };
   });
 

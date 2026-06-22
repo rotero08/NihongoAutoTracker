@@ -499,33 +499,9 @@
   }
 
   function showStatus(msg: string, err = false) {
-    const isLogSuccess =
-      !err && (msg.toLowerCase().includes("log sent") || msg.includes("✓"));
-
-    if (isLogSuccess) {
-      const payload = {
-        action: "SHOW_TOAST",
-        title: "Success",
-        message: msg,
-        error: false,
-      };
-
-      if (browser?.runtime?.sendMessage) {
-        browser.runtime.sendMessage(payload).catch(() => {});
-      }
-      if (browser?.tabs?.query) {
-        browser.tabs
-          .query({ active: true, currentWindow: true })
-          .then((tabs: any) => {
-            if (tabs[0]?.id) {
-              browser.tabs.sendMessage(tabs[0].id, payload).catch(() => {});
-            }
-          })
-          .catch(() => {});
-      }
-      return;
-    }
-
+    // notify() routes popup toasts to the active web tab's bottom-right corner (and
+    // only falls back to showing inside the popup when the active tab is a restricted
+    // page). Keep every popup status message on that single path. [FIX]
     notify(err ? "Error" : "Success", msg);
   }
 

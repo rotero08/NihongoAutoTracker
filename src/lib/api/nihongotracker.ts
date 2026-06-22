@@ -74,9 +74,19 @@ export async function submitLog(
   const isContentScript = typeof window !== 'undefined' && typeof document !== 'undefined' && !window.location.protocol.startsWith('chrome-extension') && !window.location.protocol.startsWith('moz-extension');
   if (isContentScript) {
     try {
+      // The payload can carry Svelte 5 $state values (e.g. linkedMedia.mediaData from
+      // the reader's Direct Send button), which are reactive Proxies. structuredClone
+      // — used internally by runtime.sendMessage — rejects those with "Proxy object
+      // could not be cloned". Deep-clone to a plain, serializable object first. [FIX]
+      let safePayload: Record<string, unknown> = payload;
+      try {
+        safePayload = JSON.parse(JSON.stringify(payload));
+      } catch {
+        /* Fall back to the original payload; sendMessage will surface any error. */
+      }
       return await browser.runtime.sendMessage({
         action: 'SUBMIT_LOG',
-        payload,
+        payload: safePayload,
         silent
       });
     } catch (err: any) {

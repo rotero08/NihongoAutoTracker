@@ -581,19 +581,17 @@ async function liveSyncQueue(force = false) {
   }
 }
 
-async function saveSessionAndQueue() {
-  if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
-  const title = getTTUTitle();
-  const dateStr = new Date().toISOString();
-  const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
-
-  const history = await ttuHistoryStorage.getValue() || {};
-  if (!history[title]) history[title] = [];
-  history[title].push(sessionLog);
-  await ttuHistoryStorage.setValue(history);
-
-  await liveSyncQueue(true);
-
+// Fully reset the live reading session back to a fresh, paused state. Used after a
+// session is committed locally (manual Save & Queue) AND after the session's queue
+// entry is sent from the popup/settings — both must restart the next session from
+// zero, exactly like a brand-new session.
+//
+// CRITICAL: all UI sync goes through the reactive `nt-linker-refresh` event. NEVER
+// write the timer/char text (#nt-ttu-val-time / #nt-ttu-val-chars) directly — those
+// nodes are owned by Svelte 5's runtime. Overwriting their textContent detaches the
+// text node Svelte tracks, so every later reactive update lands on an orphaned node
+// and the on-screen value freezes until the component remounts.
+function resetReadingSession() {
   ttuState.id = crypto.randomUUID();
   ttuState.timeMs = 0;
   ttuState.chars = 0;
@@ -621,6 +619,25 @@ async function saveSessionAndQueue() {
   stateRefs.globalLastTick = Date.now();
   ttuState.running = false;
   hasSyncedThisSession = false;
+
+  const wrapper = document.getElementById('nt-ttu-chrono-wrapper');
+  if (wrapper) wrapper.dispatchEvent(new CustomEvent('nt-linker-refresh'));
+}
+
+async function saveSessionAndQueue() {
+  if (ttuState.timeMs === 0 && ttuState.chars === 0) return;
+  const title = getTTUTitle();
+  const dateStr = new Date().toISOString();
+  const sessionLog = { id: ttuState.id, date: dateStr, timeMs: ttuState.timeMs, chars: ttuState.chars };
+
+  const history = await ttuHistoryStorage.getValue() || {};
+  if (!history[title]) history[title] = [];
+  history[title].push(sessionLog);
+  await ttuHistoryStorage.setValue(history);
+
+  await liveSyncQueue(true);
+
+  resetReadingSession();
 
   showToast('Success', 'Session queued!');
 }
@@ -2188,24 +2205,14 @@ export default defineContentScript({
 
         if (!existing && ttuState.timeMs > 0) {
           if (hasSyncedThisSession) {
-            ttuState.timeMs = 0;
-            ttuState.chars = 0;
-            stateRefs.globalLastTick = Date.now();
-            const initCount = extractAdvancedCharCount(undefined, ttuState.running);
-            stateRefs.globalSessionStartChar = initCount !== null ? initCount.current : -1;
-            stateRefs.sectionStartChar = initCount !== null ? initCount.current : 0;
-            stateRefs.sessionStartSection = initCount !== null ? (initCount.sectionIndex ?? -1) : -1;
-            stateRefs.sessionStartCurrent = initCount !== null ? initCount.current : 0;
-            stateRefs.lastGoodChars = 0;
-            resetTtuDbSession(); _dbCarryChars = null; _dbEverActive = false; // [FIX:ttudb]
-            stateRefs.globalManualCharOffset = 0;
-
-            const timeVal = document.querySelector('#nt-ttu-val-time');
-            const charsVal = document.querySelector('#nt-ttu-val-chars');
-            if (timeVal && timeVal.tagName !== 'INPUT') timeVal.textContent = "0:00";
-            if (charsVal && charsVal.tagName !== 'INPUT') charsVal.textContent = "0";
-
-            hasSyncedThisSession = false;
+            // The live session's queue entry was just sent/removed from the popup
+            // or settings. Reset to a fresh paused session via the shared helper,
+            // which syncs the timer/chars through Svelte's reactive event. The old
+            // code reset only a subset of refs and wrote the timer/char text nodes
+            // directly — that detached Svelte's text nodes, so the next session's
+            // timer and char count never updated on screen ("frozen at 0") until a
+            // remount. [FIX]
+            resetReadingSession();
           }
         } else if (existing) {
           let updated = false;
