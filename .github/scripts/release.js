@@ -48,11 +48,9 @@ function selectMenu(title, choices) {
         const height = choices.length + 1; // 1 header line + N choice lines
 
         function render() {
-            if (process.stdout.isTTY) {
-                process.stdout.write('\r\x1B[K');
-                for (let i = 0; i < height; i++) {
-                    process.stdout.write('\x1B[1A\r\x1B[K');
-                }
+            process.stdout.write('\r\x1B[K');
+            for (let i = 0; i < height; i++) {
+                process.stdout.write('\x1B[1A\r\x1B[K');
             }
 
             console.log(title);
