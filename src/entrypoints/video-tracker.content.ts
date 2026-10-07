@@ -272,6 +272,10 @@ const attach = (vid: HTMLVideoElement) => {
   channelId = null;
   cachedChannelName = '';
   metadataResolved = false;
+  lastAnalyzedUrl = '';
+  lastAnalyzedTitle = '';
+  isJapaneseVideoCached = false;
+  isMusicVideoCached = false;
   document.getElementById(BADGE_ID)?.remove();
 
   engine.initSession(currentUrl, 0, vid);

@@ -598,10 +598,21 @@ async function toQueuedStremioLog(item: any, historyContext?: any[]): Promise<Qu
         baseMedia = await findNihongoMedia(title, 'anime');
       }
 
+      if (!baseMedia) {
+        baseMedia = await findNihongoMedia(searchTitle, 'tv_show');
+        if (!baseMedia) {
+          baseMedia = await findNihongoMedia(title, 'tv_show');
+        }
+      }
+
       if (baseMedia && baseMedia.contentId) {
-        const cascade = await resolveSequelCascadeRefined(Number(baseMedia.contentId), targetEpisode);
-        mediaData = await fetchAniListMedia(cascade.targetId);
-        targetEpisode = cascade.targetEpisode;
+        if (baseMedia.type === 'anime') {
+          const cascade = await resolveSequelCascadeRefined(Number(baseMedia.contentId), targetEpisode);
+          mediaData = await fetchAniListMedia(cascade.targetId);
+          targetEpisode = cascade.targetEpisode;
+        } else {
+          mediaData = baseMedia;
+        }
       }
     }
 
@@ -611,7 +622,7 @@ async function toQueuedStremioLog(item: any, historyContext?: any[]): Promise<Qu
     return {
       id: `stremio:${item.id}`,
       type: 'stremio',
-      logType: 'anime',
+      logType: (mediaData?.type as 'anime' | 'movie' | 'tv show') || 'anime',
       contentTitleNative: mediaData?.contentTitleNative || title,
       contentTitleEnglish: mediaData?.contentTitleEnglish || title,
       contentTitleRomaji: mediaData?.contentTitleRomaji || title,
@@ -659,7 +670,7 @@ async function toQueuedStremioLog(item: any, historyContext?: any[]): Promise<Qu
     return {
       id: `stremio:${item.id}`,
       type: 'stremio',
-      logType: 'movie',
+      logType: (mediaData?.type as 'anime' | 'movie' | 'tv show') || 'movie',
       contentTitleNative: mediaData?.contentTitleNative || title,
       contentTitleEnglish: mediaData?.contentTitleEnglish || title,
       contentTitleRomaji: mediaData?.contentTitleRomaji || title,
@@ -680,7 +691,7 @@ async function toQueuedStremioLog(item: any, historyContext?: any[]): Promise<Qu
   return null;
 }
 
-async function findNihongoMedia(title: string, type: 'anime' | 'movie'): Promise<AnimeMediaData | undefined> {
+async function findNihongoMedia(title: string, type: 'anime' | 'movie' | 'tv_show'): Promise<AnimeMediaData | undefined> {
   const results = await searchMedia({ search: title, type, perPage: 5 });
   const media = pickBestMediaMatch(results, title);
   if (!media) return undefined;

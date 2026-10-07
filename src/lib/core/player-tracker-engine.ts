@@ -321,7 +321,7 @@ export class PlayerTrackerEngine {
         }
         if (tType === 'percent') {
             if (!vid.duration || vid.duration <= 0) return false;
-            return (vid.currentTime / vid.duration) * 100 >= tValue;
+            return (liveSecs / vid.duration) * 100 >= tValue;
         }
         return (liveSecs / 60) >= tValue;
     }
@@ -364,7 +364,7 @@ export class PlayerTrackerEngine {
                     const triggered = isLive
                         ? (liveSecs / 60) >= (threshType === 'percent' ? 5 : threshValue)
                         : (threshType === 'percent'
-                            ? (vid.currentTime / vid.duration) * 100 >= threshValue
+                            ? (liveSecs / vid.duration) * 100 >= threshValue
                             : (liveSecs / 60) >= threshValue);
 
                     if (triggered) {

@@ -22,6 +22,11 @@ export default defineContentScript({
               channelId: response.videoDetails?.channelId,
               videoId: response.videoDetails?.videoId,
             },
+            microformat: response.microformat ? {
+              playerMicroformatRenderer: {
+                category: response.microformat.playerMicroformatRenderer?.category
+              }
+            } : undefined,
             captions: response.captions ? {
               playerCaptionsTracklistRenderer: {
                 captionTracks: response.captions.playerCaptionsTracklistRenderer?.captionTracks?.map((t: any) => ({
