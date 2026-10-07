@@ -70,7 +70,8 @@ export const youtubeAdapter: VideoSiteAdapter = {
       if (
         /\b(official music video|music video|lyric video|official mv|official audio)\b/i.test(docTitle) ||
         /【mv】|\[mv\]/i.test(docTitle) ||
-        /\bmv\b/i.test(docTitle)
+        /\bmv\b/i.test(docTitle) ||
+        /(ノンクレジット|アニメ)?(op|ed)(映像|ムービー)/i.test(docTitle)
       ) {
         return true;
       }
@@ -86,7 +87,9 @@ export const youtubeAdapter: VideoSiteAdapter = {
         const playerResponse = getValidPlayerResponse();
         const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
         if (tracks) {
-          for (const track of tracks) if (track.languageCode === 'ja') return true;
+          const hasJapaneseAsr = tracks.some((t: any) => t.languageCode === 'ja' && t.kind === 'asr');
+          const isOnlyJapanese = tracks.length === 1 && tracks[0].languageCode === 'ja';
+          if (hasJapaneseAsr || isOnlyJapanese) return true;
         }
       } catch (_e) { }
 

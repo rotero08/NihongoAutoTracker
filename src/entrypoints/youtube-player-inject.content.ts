@@ -30,7 +30,8 @@ export default defineContentScript({
             captions: response.captions ? {
               playerCaptionsTracklistRenderer: {
                 captionTracks: response.captions.playerCaptionsTracklistRenderer?.captionTracks?.map((t: any) => ({
-                  languageCode: t.languageCode
+                  languageCode: t.languageCode,
+                  kind: t.kind
                 }))
               }
             } : undefined
