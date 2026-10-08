@@ -72,8 +72,7 @@ export async function pollTraktDeviceAuth(deviceCode: string): Promise<'pending'
       auth: false,
       body: {
         code: deviceCode,
-        client_id: config.traktClientId,
-        client_secret: config.traktClientSecret,
+        ...clientCredentials(config),
       },
     });
 
@@ -158,8 +157,7 @@ async function refreshTraktToken(): Promise<TrackerConfig> {
       auth: false,
       body: {
         refresh_token: spentRefreshToken,
-        client_id: config.traktClientId,
-        client_secret: config.traktClientSecret,
+        ...clientCredentials(config),
         redirect_uri: 'urn:ietf:wg:oauth:2.0:oob',
         grant_type: 'refresh_token',
       },
@@ -520,9 +518,21 @@ async function traktFetch(config: TrackerConfig, path: string, options: any = {}
 }
 
 function requireTraktApp(config: TrackerConfig) {
-  if (!config.traktClientId || !config.traktClientSecret) {
-    throw new Error('Missing Trakt client ID or client secret.');
+  if (!config.traktClientId) {
+    throw new Error('Missing Trakt client ID.');
   }
+}
+
+/**
+ * Trakt apps created since October 2026 are issued no client secret, and the
+ * device-code sign-in works with the client id alone. Apps created earlier
+ * still have one, which is sent when the user provided it.
+ */
+function clientCredentials(config: TrackerConfig): { client_id?: string; client_secret?: string } {
+  return {
+    client_id: config.traktClientId,
+    ...(config.traktClientSecret ? { client_secret: config.traktClientSecret } : {}),
+  };
 }
 
 function isJapaneseTraktItem(item: TraktHistoryItem): boolean {

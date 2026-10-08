@@ -137,7 +137,7 @@
       {#if isConnected}
         Polling watched history every {Math.max(1, Number(pollMinutes || 5))}m
       {:else if enabled}
-        Enter credentials, save, and click Authorize Trakt
+        Enter your Client ID, save, and click Authorize Trakt
       {:else}
         Enable Stremio integration above to begin
       {/if}
@@ -158,7 +158,11 @@
     Create a Trakt API app at
     <a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noreferrer" style="color: var(--color-accent);">
       trakt.tv/oauth/applications/new
-    </a>. Use redirect URI <code style="color: var(--color-text);">urn:ietf:wg:oauth:2.0:oob</code>, then paste the credentials below.
+    </a>. Use redirect URI <code style="color: var(--color-text);">urn:ietf:wg:oauth:2.0:oob</code>, then paste the Client ID below.
+    <br /><br />
+    Trakt will show an "Insecure redirect URIs" warning for that value. It is safe to ignore: this extension signs in with a code you enter on trakt.tv and never uses a redirect.
+    <br /><br />
+    New Trakt apps show the client secret as "Not issued". That is expected: only the Client ID is needed.
   </div>
 
   <div class="field">
@@ -166,8 +170,8 @@
     <input id="trakt-client-id" class="input" bind:value={clientId} placeholder="Paste your Trakt client ID" />
   </div>
   <div class="field">
-    <label for="trakt-client-secret">Trakt Client Secret</label>
-    <input id="trakt-client-secret" class="input" type="password" bind:value={clientSecret} placeholder={tokenSet ? "Leave blank to keep saved secret" : "Paste your Trakt client secret"} />
+    <label for="trakt-client-secret">Trakt Client Secret (older apps only)</label>
+    <input id="trakt-client-secret" class="input" type="password" bind:value={clientSecret} placeholder={tokenSet ? "Leave blank to keep saved secret" : "Leave blank if Trakt shows \"Not issued\""} />
   </div>
 
   <div class="field">
