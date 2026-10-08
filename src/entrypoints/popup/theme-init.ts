@@ -22,5 +22,7 @@ import { CUSTOM_COLORS_CACHE_KEY, THEME_CACHE_KEY } from '@/lib/constants';
         }
         document.documentElement.style.backgroundColor = bg;
         document.documentElement.style.color = fg;
-    } catch (e) { }
+    } catch {
+        /* Pre-paint only: on any failure the stylesheet's default colours show until the app mounts. */
+    }
 })();

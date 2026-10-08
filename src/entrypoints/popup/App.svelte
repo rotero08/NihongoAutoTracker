@@ -20,11 +20,7 @@
   import ConfirmModal from "@/components/common/ConfirmModal.svelte";
   import CustomSelect from "@/components/common/CustomSelect.svelte";
   import { notify } from "@/lib/utils/toast";
-  import {
-    submitLog,
-    resolveVideoChannelMedia,
-  } from "@/lib/api/nihongotracker";
-  import { stripVideoTitle } from "@/lib/utils/text-parsing";
+  import { sendAllQueued } from "@/lib/utils/queue-actions";
   import {
     applyThemeToDocument,
     applyCustomThemeToDoc,
@@ -117,7 +113,9 @@
           });
           applyCustomThemeToDoc(cachedColors);
         }
-      } catch (e) {}
+      } catch {
+        /* Corrupt colour cache: the default theme stays until the real config loads. */
+      }
     }
   }
 
@@ -228,7 +226,9 @@
     let host = "";
     try {
       if (activeUrl) host = new URL(activeUrl).hostname;
-    } catch (e) {}
+    } catch {
+      /* Not a parseable URL (internal page): no host, so no reader theme to match. */
+    }
 
     let detectedColors = null;
     if (host) {
@@ -243,7 +243,9 @@
             localStore[`local:readerColors:${host}`] ||
             localStore[`readerColors:${host}`];
         }
-      } catch (e) {}
+      } catch {
+        /* Reader colours are a cosmetic extra; without them the configured theme applies. */
+      }
     }
 
     videoQueue = vQueue;
@@ -491,7 +493,9 @@
       try {
         await browser.runtime.openOptionsPage();
         return;
-      } catch (e) {}
+      } catch {
+        /* Not available here: fall through to asking the background to open settings. */
+      }
     }
     if (browser?.runtime?.sendMessage) {
       browser.runtime.sendMessage({ action: "OPEN_SETTINGS" }).catch(() => {});
@@ -513,7 +517,9 @@
     if (confirmModal) {
       try {
         return await confirmModal.confirm(title, msg, warnKey);
-      } catch (e) {}
+      } catch {
+        /* The modal could not be shown: fall back to the native prompt below. */
+      }
     }
     return window.confirm(msg);
   }
@@ -542,206 +548,22 @@
     }
 
     isSendingAll = true;
+    try {
+      const { sent, failed } = await sendAllQueued({
+        reading: readingQueue,
+        video: videoQueue,
+        stremio: stremioQueue,
+      });
 
-    function getItemPayloads(item: any, type: "reading" | "video" | "stremio") {
-      const isRead = type === "reading";
-      const isStremio = type === "stremio";
-      const sessions = item.sessions ?? [];
-      const displayMins = isRead
-        ? Math.max(1, Math.round((item.time || 0) / 60))
-        : item.time || 0;
-      const sumSecs = sessions.reduce(
-        (a: number, b: any) => a + (b.secs || 0),
-        0,
-      );
-      const sumMins = Math.max(1, Math.round(sumSecs / 60));
-      const sumChars = isRead
-        ? sessions.reduce((a: number, b: any) => a + (b.chars || 0), 0)
-        : 0;
-
-      const hasOverride = isRead
-        ? Number(item.chars || 0) > sumChars || displayMins > sumMins
-        : displayMins > Math.round(sumSecs / 60);
-
-      const defaultDateStr =
-        sessions.length > 0
-          ? sessions[0].date
-          : item.date || new Date().toISOString();
-      const desc = isStremio
-        ? item.mediaData?.contentTitleNative || item.contentTitleNative || item.description || "Unknown Title"
-        : item.description || item.contentTitleNative || "Unknown Title";
-
-      if (sessions.length > 1 && !hasOverride) {
-        return sessions.map((sess: any) => {
-          const sessMins = Math.max(1, Math.round((sess.secs || 0) / 60));
-          const payload: any = {
-            type: isStremio ? item.logType || "anime" : type,
-            description: type === "video" ? stripVideoTitle(desc) : desc,
-            time: sessMins,
-            date: new Date(sess.date).toISOString(),
-            chars: isRead ? sess.chars || 0 : 0,
-            episodes: isStremio ? 1 : 0,
-            pages: 0,
-            unknownDate: false,
-            mediaId: isRead
-              ? item.mediaId || "web-reading"
-              : isStremio
-                ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-                : item.mediaData?.channelId || item.channelId || "web-video",
-            mediaData: item.mediaData || {},
-          };
-          if (isRead) {
-            payload.volume = Math.max(1, Number(item.volume || 1));
-          }
-          return payload;
-        });
-      } else {
-        const payload: any = {
-          type: isStremio ? item.logType || "anime" : type,
-          description: type === "video" ? stripVideoTitle(desc) : desc,
-          time: displayMins,
-          date: new Date(defaultDateStr).toISOString(),
-          chars: isRead ? item.chars || 0 : 0,
-          episodes: isStremio ? item.episodes || 1 : 0,
-          pages: 0,
-          unknownDate: false,
-          mediaId: isRead
-            ? item.mediaId || "web-reading"
-            : isStremio
-              ? item.mediaId || item.mediaData?.contentId || `trakt:${item.traktHistoryId}`
-              : item.mediaData?.channelId || item.channelId || "web-video",
-          mediaData: item.mediaData || {},
-          volume: isRead ? Math.max(1, Number(item.volume || 1)) : undefined,
-        };
-        return [payload];
+      if (failed > 0) {
+        showStatus(sent > 0 ? `⚠ Sent ${sent} logs, but ${failed} failed` : "⚠ Failed to send logs", true);
+      } else if (sent > 0) {
+        showStatus(`✓ Successfully sent all ${sent} logs`);
       }
+    } finally {
+      isSendingAll = false;
+      await loadData();
     }
-
-    const rItems = [...readingQueue];
-    const vItems = [...videoQueue];
-    const sItems = [...stremioQueue];
-
-    const failedReadingIds = new Set<string>();
-    const failedVideoIds = new Set<string>();
-    const failedStremioIds = new Set<string>();
-    let totalSent = 0;
-    let totalFailed = 0;
-
-    for (const item of rItems) {
-      try {
-        const payloads = getItemPayloads(item, "reading");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
-        }
-        if (!itemSucceeded) {
-          failedReadingIds.add(item.id);
-        }
-      } catch {
-        failedReadingIds.add(item.id);
-        totalFailed++;
-      }
-    }
-
-    for (const item of vItems) {
-      try {
-        const channelId = item.channelId || item.mediaData?.channelId;
-        const channelTitle =
-          item.mediaData?.channelTitle ||
-          item.channelTitle ||
-          item.contentTitleNative;
-        if (channelId || channelTitle) {
-          try {
-            const media = await resolveVideoChannelMedia({
-              channelId,
-              channelTitle,
-            });
-            item.mediaData = {
-              ...(item.mediaData || {}),
-              channelId: media.channelId || channelId || "web-video",
-              channelTitle:
-                media.channelTitle || channelTitle || item.contentTitleNative,
-              ...(media.channelImage
-                ? { channelImage: media.channelImage }
-                : {}),
-              ...(media.channelDescription
-                ? { channelDescription: media.channelDescription }
-                : {}),
-            };
-          } catch (_e) {}
-        }
-
-        const payloads = getItemPayloads(item, "video");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
-        }
-        if (!itemSucceeded) {
-          failedVideoIds.add(item.id);
-        }
-      } catch {
-        failedVideoIds.add(item.id);
-        totalFailed++;
-      }
-    }
-
-    for (const item of sItems) {
-      try {
-        const payloads = getItemPayloads(item, "stremio");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
-        }
-        if (!itemSucceeded) {
-          failedStremioIds.add(item.id);
-        }
-      } catch {
-        failedStremioIds.add(item.id);
-        totalFailed++;
-      }
-    }
-
-    await updateReadingQueueAtomic((freshReadingQueue) => [
-      ...freshReadingQueue.filter(
-        (item: any) => !rItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...rItems.filter((item: any) => failedReadingIds.has(item.id)),
-    ]);
-
-    await updateVideoQueueAtomic((freshVideoQueue) => [
-      ...freshVideoQueue.filter(
-        (item: any) => !vItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
-    ]);
-
-    await updateStremioQueueAtomic((freshStremioQueue) => [
-      ...freshStremioQueue.filter(
-        (item: any) => !sItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...sItems.filter((item: any) => failedStremioIds.has(item.id)),
-    ]);
-
-    isSendingAll = false;
-    await loadData();
   }
 
   async function handleClearAll() {

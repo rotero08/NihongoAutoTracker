@@ -30,21 +30,21 @@ try {
 }
 
 const currentBrowser = process.env.WXT_BROWSER || 'chrome';
-const isFirefox = currentBrowser === 'firefox';
-const isChromium = ['chrome', 'edge', 'opera'].includes(currentBrowser);
 
+// Persistent dev profiles, one per browser family. Both are always configured:
+// the browser actually launched can come from the CLI (`wxt -b chrome`) rather
+// than from WXT_BROWSER, and a profile that is only set up for the env value
+// leaves the other browser on a throwaway profile that forgets pinned icons,
+// installed extensions and settings on every run.
 const firefoxProfilePath = path.resolve(process.cwd(), '.wxt/firefox-profile');
-const chromiumProfilePath = path.resolve(process.cwd(), `.wxt/${currentBrowser}-profile`);
+const chromiumProfilePath = path.resolve(process.cwd(), '.wxt/chromium-profile');
 
-try {
-  if (isFirefox && !fs.existsSync(firefoxProfilePath)) {
-    fs.mkdirSync(firefoxProfilePath, { recursive: true });
+for (const profilePath of [firefoxProfilePath, chromiumProfilePath]) {
+  try {
+    fs.mkdirSync(profilePath, { recursive: true });
+  } catch (error) {
+    console.warn(`[wxt.config] Could not create the dev profile at ${profilePath}; the browser will start with a temporary one.`, error);
   }
-  if (isChromium && !fs.existsSync(chromiumProfilePath)) {
-    fs.mkdirSync(chromiumProfilePath, { recursive: true });
-  }
-} catch (error) {
-  // Fall back silently
 }
 
 export default defineConfig({
@@ -66,8 +66,8 @@ export default defineConfig({
 
   webExt: {
     keepProfileChanges: true,
-    ...(isFirefox && { firefoxProfile: firefoxProfilePath }),
-    ...(isChromium && { chromiumProfile: chromiumProfilePath }),
+    firefoxProfile: firefoxProfilePath,
+    chromiumProfile: chromiumProfilePath,
     startUrls: [
       'https://www.youtube.com/watch?v=jNVxpEiJIR4',
       'https://www.youtube.com/watch?v=JPcsLaGA7fI&list=PLI76y3FWv18CrvaxtcS5QcAb7qaUQHtmB',

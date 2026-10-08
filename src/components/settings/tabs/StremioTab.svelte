@@ -102,7 +102,8 @@
     isImporting = true;
     try {
       await save({ silent: true });
-      const result = await importStremioFromTrakt();
+      // An explicit import always downloads the history, even if Trakt reports nothing new.
+      const result = await importStremioFromTrakt({ force: true });
       onStatus(`✓ Checked ${result.checked}, queued ${result.imported}, filtered ${result.filteredOut}`);
     } catch (error: any) {
       onStatus(error.message, true);

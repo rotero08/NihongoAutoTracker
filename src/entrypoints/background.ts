@@ -10,30 +10,42 @@ import { ACTIVE_SETTINGS_TAB_KEY, JP_ALL_RE, LAST_FLUSH_DATE_KEY, STREMIO_LAST_P
 import { configStorage } from '@/lib/storage/config';
 import { addDebugLog, clearRamLogs, getRamLogs, pushRamLog } from '@/lib/storage/debug';
 import { readingQueueStorage, stremioQueueStorage, videoQueueStorage } from '@/lib/storage/queues';
+import type { TrackerConfig } from '@/lib/types';
 import { THEMES, parseColorToRgb, rgbToHsl } from '@/lib/ui/themes';
+import { submitQueueItem, type QueueType } from '@/lib/utils/queue-actions';
 import { notify } from '@/lib/utils/toast';
 import { storage } from 'wxt/utils/storage';
+
+const STREMIO_POLL_ALARM = 'stremioTraktPoll';
 
 export default defineBackground(() => {
   const actionAPI = browser.action || (browser as any).browserAction;
   let stremioPollInFlight = false;
 
+  const reportError = (message: string, err: unknown) =>
+    addDebugLog('ERROR', 'Background', message, err);
+
   (globalThis as any).__NT_APPEND_RAM_LOG__ = (entry: any) => {
     pushRamLog(entry);
   };
 
-  browser.contextMenus.create({
-    id: 'log-text',
-    title: 'Log to NihongoTracker',
-    contexts: ['selection'],
-  });
+  // Menus outlive the worker in MV3 but not a persistent background page, so
+  // they are rebuilt on every start. Clearing first avoids the "duplicate id"
+  // error that creating them again would raise each time the worker wakes up.
+  browser.contextMenus.removeAll().then(() => {
+    browser.contextMenus.create({
+      id: 'log-text',
+      title: 'Log to NihongoTracker',
+      contexts: ['selection'],
+    });
 
-  browser.contextMenus.create({
-    id: 'log-yt-video',
-    title: 'Log this video to NihongoTracker',
-    documentUrlPatterns: ['*://*.youtube.com/*'],
-    contexts: ['link', 'page', 'video'],
-  });
+    browser.contextMenus.create({
+      id: 'log-yt-video',
+      title: 'Log this video to NihongoTracker',
+      documentUrlPatterns: ['*://*.youtube.com/*'],
+      contexts: ['link', 'page', 'video'],
+    });
+  }).catch((err) => reportError('Could not register context menus', err));
 
   browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
@@ -102,7 +114,9 @@ export default defineBackground(() => {
         ]).then(([video, reading, stremio]) => {
           try {
             sendResponse({ count: (video?.length || 0) + (reading?.length || 0) + (stremio?.length || 0) });
-          } catch { }
+          } catch {
+            /* The asking page closed before the count was ready. */
+          }
         }).catch(() => null);
         return true;
       }
@@ -139,7 +153,9 @@ export default defineBackground(() => {
             }
           }).catch(() => null);
       }
-    } catch (err) { }
+    } catch (err) {
+      void reportError(`Message handler failed for action "${msg?.action}"`, err);
+    }
   });
 
   browser.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -194,7 +210,9 @@ export default defineBackground(() => {
       try {
         const resp = await browser.tabs.sendMessage(tab.id, { action: 'GET_ACTIVE_TIME' });
         timeMinutes = resp?.minutes ?? 0;
-      } catch { }
+      } catch {
+        /* No reading tracker in that tab (restricted page): log the selection without a time. */
+      }
     }
 
     await submitLog({
@@ -233,14 +251,34 @@ export default defineBackground(() => {
     }).catch(() => null);
   }
 
+  /**
+   * The poll alarm only exists while the Stremio integration is connected, and
+   * fires at the configured cadence. An unconditional one-minute alarm would
+   * wake the worker for every user, forever, to find nothing to do.
+   */
+  async function syncStremioAlarm(cfg: TrackerConfig) {
+    if (!browser.alarms) return;
+    try {
+      const existing = await browser.alarms.get(STREMIO_POLL_ALARM);
+      if (cfg.stremioEnabled !== true || !cfg.traktAccessToken) {
+        if (existing) await browser.alarms.clear(STREMIO_POLL_ALARM);
+        return;
+      }
+      const periodInMinutes = Math.max(1, Number(cfg.stremioPollMinutes ?? 5));
+      if (existing?.periodInMinutes !== periodInMinutes) {
+        browser.alarms.create(STREMIO_POLL_ALARM, { periodInMinutes });
+      }
+    } catch (err) {
+      await reportError('Could not schedule the Trakt poll', err);
+    }
+  }
+
   if (browser.alarms) {
     scheduleFlushDailyAlarm();
-    browser.alarms.create('stremioTraktPoll', { periodInMinutes: 1 });
-    setTimeout(() => pollStremioTrakt(true), 1000);
 
     browser.alarms.onAlarm.addListener(async (alarm) => {
-      if (alarm.name === 'stremioTraktPoll') {
-        await pollStremioTrakt(false);
+      if (alarm.name === STREMIO_POLL_ALARM) {
+        await pollStremioTrakt(true);
         return;
       }
       if (alarm.name !== 'flushDaily') return;
@@ -266,44 +304,28 @@ export default defineBackground(() => {
     });
   }
 
-  async function flushTodayQueue(type: any, qStorage: any, targetDateStr: string) {
-    const q = await qStorage.getValue();
-    const remaining: any[] = [];
+  /**
+   * Send every queued item that was active on the given day. Each item is
+   * settled by `submitQueueItem` as it goes, so anything queued while the flush
+   * is running is left untouched instead of being overwritten by a stale copy.
+   */
+  async function flushTodayQueue(type: QueueType, qStorage: { getValue(): Promise<any[]> }, targetDateStr: string) {
+    const isTargetDay = (date: string) => new Date(date).toLocaleDateString() === targetDateStr;
 
-    for (const item of q) {
-      const itemDateStr = new Date(item.date).toLocaleDateString();
-      const sessionsToday = item.sessions?.filter((s: any) => new Date(s.date).toLocaleDateString() === targetDateStr) || [];
-      if (itemDateStr !== targetDateStr && sessionsToday.length === 0) {
-        remaining.push(item);
-        continue;
+    for (const item of await qStorage.getValue()) {
+      const activeToday = isTargetDay(item.date) || (item.sessions ?? []).some((s: any) => isTargetDay(s.date));
+      if (!activeToday) continue;
+
+      try {
+        await submitQueueItem(item, type);
+      } catch (err) {
+        await reportError(`End-of-day flush failed for a ${type} item`, err);
       }
-
-      const base: any = {
-        type: type === 'stremio' ? item.logType : type,
-        mediaId: item.mediaId || (type === 'reading' ? 'web-reading' : type === 'stremio' ? item.mediaData?.contentId || `trakt:${item.traktHistoryId}` : item.channelId || 'web-video'),
-        description: type === 'stremio' ? item.mediaData?.contentTitleNative || item.contentTitleNative || item.description : item.description || item.contentTitleNative,
-        episodes: type === 'stremio' ? 1 : 0,
-        pages: 0,
-        unknownDate: false,
-        volume: item.volume || 1,
-        mediaData: item.mediaData || (type === 'reading' ? { contentId: 'web-reading', contentTitleNative: item.contentTitleNative } : type === 'stremio' ? item.mediaData || {} : { channelId: item.channelId || 'web-video', channelTitle: item.contentTitleNative }),
-      };
-
-      let payloads: any[] = (!item.sessions || item.sessions.length === 0)
-        ? [{ ...base, time: type === 'reading' ? Math.max(1, Math.round((item.time || 0) / 60)) : item.time || 0, date: item.date, chars: item.chars || 0 }]
-        : item.sessions.map((s: any) => ({ ...base, time: Math.max(1, Math.round(s.secs / 60)), date: s.date, chars: s.chars || 0 }));
-
-      let success = true;
-      for (const p of payloads) {
-        const res = await submitLog(p);
-        if (!res || !res.success) success = false;
-      }
-      if (!success) remaining.push(item);
     }
-    await qStorage.setValue(remaining);
     refreshBadge();
   }
 
+  /** @param force - Skip the "polled recently" check (the alarm already is the schedule). */
   async function pollStremioTrakt(force: boolean) {
     if (stremioPollInFlight) return;
     stremioPollInFlight = true;
@@ -433,14 +455,19 @@ export default defineBackground(() => {
   }
 
   configStorage.getValue().then((val) => {
-    updateIconForConfig(val || {}).catch(() => { });
+    updateIconForConfig(val || {}).catch((err) => reportError('Could not update the toolbar icon', err));
     refreshBadge();
-  }).catch(() => { });
+    // Catch up on what was watched while the browser was closed. Unforced: the
+    // worker restarts many times an hour and must not poll Trakt on each start.
+    void syncStremioAlarm(val || {});
+    void pollStremioTrakt(false);
+  }).catch((err) => reportError('Could not read the configuration at startup', err));
 
   configStorage.watch(async (newVal) => {
     if (newVal) {
       await updateIconForConfig(newVal);
       refreshBadge();
+      await syncStremioAlarm(newVal);
     }
   });
 

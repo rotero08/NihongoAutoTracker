@@ -1,5 +1,6 @@
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
 import { READER_COLORS_PREFIX } from '@/lib/constants';
+import { addDebugLog } from '@/lib/storage/debug';
 import { injectThemeStyles } from '@/lib/ui/reader-overlay';
 import { applyCustomThemeToDoc, applyThemeToDocument, clearCustomThemeFromDoc, hslToRgb, parseColorToRgb, resolveThemeColors, rgbToHsl } from '@/lib/ui/themes';
 import { browser } from 'wxt/browser';
@@ -510,7 +511,10 @@ export async function applyActiveTheme(cfg: any): Promise<void> {
         applyThemeToDocument(themeName, cfg.font ?? 'sans', undefined, { useStaticInPageLogo });
         injectThemeStyles(themeName, cfg.font ?? 'sans');
       }
-    } catch (e) { }
+    } catch (err) {
+      // A failed re-theme leaves the previous colours in place; record why.
+      void addDebugLog('WARN', 'Theme', 'Could not apply the updated reader theme', err);
+    }
   });
 }
 

@@ -323,5 +323,69 @@ export const MOCK_STREMIO_QUEUE: QueuedStremioLog[] = [
     traktHistoryId: "trakt-frieren-s2-e1",
     traktHistoryIds: ["trakt-frieren-s2-e1", "trakt-frieren-s2-e2"],
     traktType: "episode"
+  },
+  {
+    id: "mock-stremio-alice-in-borderland",
+    type: "stremio",
+    logType: "tv show",
+    contentTitleNative: "今際の国のアリス",
+    contentTitleEnglish: "Alice in Borderland",
+    contentTitleRomaji: "Alice in Borderland",
+    description: "今際の国のアリス",
+    episodes: 1,
+    time: 49,
+    date: "2026-06-02T19:00:00.000Z",
+    private: false,
+    tags: [],
+    sessions: [
+      {
+        id: "sess-aib-s1-e1",
+        secs: 2940,
+        date: "2026-06-02T19:00:00.000Z",
+        season: 1,
+        episode: 1,
+        traktHistoryId: "trakt-aib-s1-e1",
+        episodeTitle: "Episode 1"
+      }
+    ],
+    mediaId: "s110316",
+    mediaData: {
+      contentId: "s110316",
+      contentTitleNative: "今際の国のアリス",
+      contentTitleEnglish: "Alice in Borderland",
+      contentImage: "https://image.tmdb.org/t/p/w600_and_h900_bestv2/20mOwAAPwZ1vLQkw0fvuQHiG7bO.jpg",
+      coverImage: "https://image.tmdb.org/t/p/w600_and_h900_bestv2/20mOwAAPwZ1vLQkw0fvuQHiG7bO.jpg",
+      type: "tv show",
+      episodeDuration: 56
+    },
+    traktHistoryId: "trakt-aib-s1-e1",
+    traktHistoryIds: ["trakt-aib-s1-e1"],
+    traktType: "episode",
+    season: 1,
+    episode: 1
+  },
+  {
+    // Deliberately unmatched: exercises the type selector and catalogue search.
+    id: "mock-stremio-drive-my-car",
+    type: "stremio",
+    logType: "movie",
+    contentTitleNative: "Drive My Car",
+    contentTitleEnglish: "Drive My Car",
+    contentTitleRomaji: "Drive My Car",
+    description: "Trakt: Drive My Car (2021)",
+    episodes: 0,
+    time: 179,
+    date: "2026-06-03T20:30:00.000Z",
+    private: false,
+    tags: [],
+    sessions: [
+      {
+        id: "sess-drive-my-car",
+        secs: 10740,
+        date: "2026-06-03T20:30:00.000Z"
+      }
+    ],
+    traktHistoryId: "trakt-drive-my-car",
+    traktType: "movie"
   }
 ];

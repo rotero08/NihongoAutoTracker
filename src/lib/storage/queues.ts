@@ -77,75 +77,51 @@ export async function executeQueueTransaction<T>(transaction: () => Promise<T>):
   return next;
 }
 
-/**
- * Atomically updates the video queue in local storage.
- *
- * @param modifier - Synchronous or asynchronous callback that modifies the queue state
- */
-export async function updateVideoQueueAtomic(
-  modifier: (currentQueue: QueuedVideoLog[]) => QueuedVideoLog[] | Promise<QueuedVideoLog[]>
-): Promise<QueuedVideoLog[]> {
-  return executeQueueTransaction(async () => {
-    try {
-      const current = await videoQueueStorage.getValue();
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Reading video queue for atomic update. Current size: ${current.length}`);
-      }
-      const updated = await modifier(current);
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Active write: Updating video queue. Next size: ${updated.length}`);
-      }
-      await videoQueueStorage.setValue(updated);
-      return updated;
-    } catch (err) {
-      await addDebugLog('ERROR', 'Queue', 'Failed to update video queue atomically', err);
-      throw err;
-    }
-  });
+type QueueModifier<T> = (currentQueue: T[]) => T[] | Promise<T[]>;
+
+interface QueueStorageItem<T> {
+  getValue(): Promise<T[]>;
+  setValue(value: T[]): Promise<void>;
 }
 
 /**
- * Atomically updates the reading queue in local storage.
+ * Build the read-modify-write updater for one queue.
  *
- * @param modifier - Synchronous or asynchronous callback that modifies the queue state
+ * The modifier may mutate the array it is given or return a new one. Either
+ * way the result is compared against what was read: an unchanged queue is not
+ * written back, which spares the storage write and the change event it would
+ * fan out to every open tab, the popup and the background worker.
  */
-export async function updateReadingQueueAtomic(
-  modifier: (currentQueue: QueuedReadingLog[]) => QueuedReadingLog[] | Promise<QueuedReadingLog[]>
-): Promise<QueuedReadingLog[]> {
-  return executeQueueTransaction(async () => {
-    try {
-      const current = await readingQueueStorage.getValue();
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Reading reading queue for atomic update. Current size: ${current.length}`);
+function createQueueUpdater<T>(item: QueueStorageItem<T>, label: string) {
+  return (modifier: QueueModifier<T>): Promise<T[]> =>
+    executeQueueTransaction(async () => {
+      try {
+        const current = await item.getValue();
+        const before = JSON.stringify(current);
+        const updated = await modifier(current);
+        const after = JSON.stringify(updated);
+        if (after === before) return updated;
+
+        if (import.meta.env.DEV) {
+          console.log(`[NAT DEV - Queue] Writing ${label} queue: ${current.length} -> ${updated.length} item(s)`);
+        }
+        // Persist the plain JSON form: callers may hand over reactive proxies,
+        // which the storage API cannot clone.
+        const plain: T[] = JSON.parse(after);
+        await item.setValue(plain);
+        return plain;
+      } catch (err) {
+        await addDebugLog('ERROR', 'Queue', `Failed to update ${label} queue atomically`, err);
+        throw err;
       }
-      const updated = await modifier(current);
-      if (import.meta.env.DEV) {
-        console.log(`[NAT DEV - Queue] Active write: Updating reading queue. Next size: ${updated.length}`);
-      }
-      await readingQueueStorage.setValue(updated);
-      return updated;
-    } catch (err) {
-      await addDebugLog('ERROR', 'Queue', 'Failed to update reading queue atomically', err);
-      throw err;
-    }
-  });
+    });
 }
 
-/**
- * Atomically updates the Stremio queue in local storage.
- */
-export async function updateStremioQueueAtomic(
-  modifier: (currentQueue: QueuedStremioLog[]) => QueuedStremioLog[] | Promise<QueuedStremioLog[]>
-): Promise<QueuedStremioLog[]> {
-  return executeQueueTransaction(async () => {
-    try {
-      const current = await stremioQueueStorage.getValue();
-      const updated = await modifier(current);
-      await stremioQueueStorage.setValue(updated);
-      return updated;
-    } catch (err) {
-      await addDebugLog('ERROR', 'Queue', 'Failed to update Stremio queue atomically', err);
-      throw err;
-    }
-  });
-}
+/** Atomically updates the video queue in local storage. */
+export const updateVideoQueueAtomic = createQueueUpdater(videoQueueStorage, 'video');
+
+/** Atomically updates the reading queue in local storage. */
+export const updateReadingQueueAtomic = createQueueUpdater(readingQueueStorage, 'reading');
+
+/** Atomically updates the Stremio queue in local storage. */
+export const updateStremioQueueAtomic = createQueueUpdater(stremioQueueStorage, 'Stremio');

@@ -9,12 +9,7 @@
   import { videoQueueStorage, readingQueueStorage, stremioQueueStorage } from "@/lib/storage/queues";
   import { configStorage } from "@/lib/storage/config";
   import SettingsQueueItem from "./SettingsQueueItem.svelte";
-  import {
-    submitLog,
-    resolveVideoChannelMedia,
-  } from "@/lib/api/nihongotracker";
-  import { stripVideoTitle } from "@/lib/utils/text-parsing";
-  import { getItemPayloads } from "@/lib/utils/queue-actions";
+  import { getUpdater, sendAllQueued, type QueueType } from "@/lib/utils/queue-actions";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -106,148 +101,26 @@
     }
 
     isSendingAll = true;
+    try {
+      const { sent, failed } = await sendAllQueued({
+        reading: readingQueue,
+        video: videoQueue,
+        stremio: stremioQueue,
+      });
 
-    const rItems = [...readingQueue];
-    const vItems = [...videoQueue];
-    const sItems = [...stremioQueue];
-
-    const failedReadingIds = new Set<string>();
-    const failedVideoIds = new Set<string>();
-    const failedStremioIds = new Set<string>();
-    let totalSent = 0;
-    let totalFailed = 0;
-
-    // Process reading logs
-    for (const item of rItems) {
-      try {
-        const payloads = getItemPayloads(item, "reading");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
+      if (failed > 0) {
+        if (sent > 0) {
+          onStatus(`⚠ Sent ${sent} logs, but ${failed} failed`, true);
+        } else {
+          onStatus(`⚠ Failed to send logs`, true);
         }
-        if (!itemSucceeded) {
-          failedReadingIds.add(item.id);
-        }
-      } catch {
-        failedReadingIds.add(item.id);
-        totalFailed++;
+      } else if (sent > 0) {
+        onStatus(`✓ Successfully sent all ${sent} logs`);
       }
+    } finally {
+      isSendingAll = false;
+      await load();
     }
-
-    // Process video logs
-    for (const item of vItems) {
-      try {
-        const channelId = item.channelId || item.mediaData?.channelId;
-        const channelTitle =
-          item.mediaData?.channelTitle ||
-          item.channelTitle ||
-          item.contentTitleNative;
-        if (channelId || channelTitle) {
-          try {
-            const media = await resolveVideoChannelMedia({
-              channelId,
-              channelTitle,
-            });
-            item.mediaData = {
-              ...(item.mediaData || {}),
-              channelId: media.channelId || channelId || "web-video",
-              channelTitle:
-                media.channelTitle || channelTitle || item.contentTitleNative,
-              ...(media.channelImage
-                ? { channelImage: media.channelImage }
-                : {}),
-              ...(media.channelDescription
-                ? { channelDescription: media.channelDescription }
-                : {}),
-            };
-          } catch (_e) {}
-        }
-
-        const payloads = getItemPayloads(item, "video");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
-        }
-        if (!itemSucceeded) {
-          failedVideoIds.add(item.id);
-        }
-      } catch {
-        failedVideoIds.add(item.id);
-        totalFailed++;
-      }
-    }
-
-    for (const item of sItems) {
-      try {
-        const payloads = getItemPayloads(item, "stremio");
-        let itemSucceeded = true;
-        for (const p of payloads) {
-          const res = await submitLog(p, true);
-          if (res?.success) {
-            totalSent++;
-          } else {
-            itemSucceeded = false;
-            totalFailed++;
-          }
-        }
-        if (!itemSucceeded) {
-          failedStremioIds.add(item.id);
-        }
-      } catch {
-        failedStremioIds.add(item.id);
-        totalFailed++;
-      }
-    }
-
-    const freshReadingQueue = await readingQueueStorage.getValue();
-    const freshVideoQueue = await videoQueueStorage.getValue();
-
-    const nextReadingQueue = [
-      ...freshReadingQueue.filter(
-        (item: any) => !rItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...rItems.filter((item: any) => failedReadingIds.has(item.id)),
-    ];
-    const nextVideoQueue = [
-      ...freshVideoQueue.filter(
-        (item: any) => !vItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...vItems.filter((item: any) => failedVideoIds.has(item.id)),
-    ];
-
-    await readingQueueStorage.setValue(nextReadingQueue);
-    await videoQueueStorage.setValue(nextVideoQueue);
-    await stremioQueueStorage.setValue([
-      ...(await stremioQueueStorage.getValue()).filter(
-        (item: any) => !sItems.some((sent: any) => sent.id === item.id),
-      ),
-      ...sItems.filter((item: any) => failedStremioIds.has(item.id)),
-    ]);
-
-    if (totalFailed > 0) {
-      if (totalSent > 0) {
-        onStatus(`⚠ Sent ${totalSent} logs, but ${totalFailed} failed`, true);
-      } else {
-        onStatus(`⚠ Failed to send logs`, true);
-      }
-    } else if (totalSent > 0) {
-      onStatus(`✓ Successfully sent all ${totalSent} logs`);
-    }
-
-    isSendingAll = false;
-    await load();
   }
 
   async function clearAll() {
@@ -256,12 +129,11 @@
       "Are you sure you want to clear all pending logs?",
     );
     if (!ok) return;
-    if (currentFilter === "all" || currentFilter === "video")
-      await videoQueueStorage.setValue([]);
-    if (currentFilter === "all" || currentFilter === "reading")
-      await readingQueueStorage.setValue([]);
-    if (currentFilter === "all" || currentFilter === "stremio")
-      await stremioQueueStorage.setValue([]);
+    for (const type of ["video", "reading", "stremio"] as QueueType[]) {
+      if (currentFilter === "all" || currentFilter === type) {
+        await getUpdater(type)(() => []);
+      }
+    }
     onStatus("✓ Pending logs cleared successfully");
     await load();
   }
@@ -283,23 +155,15 @@
       isGuideOpen = saved === "true";
     }
 
-    unwatches = [
-      readingQueueStorage.watch(() => {
-        const focusedTag = document.activeElement?.tagName;
-        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-        load();
-      }),
-      videoQueueStorage.watch(() => {
-        const focusedTag = document.activeElement?.tagName;
-        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-        load();
-      }),
-      stremioQueueStorage.watch(() => {
-        const focusedTag = document.activeElement?.tagName;
-        if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
-        load();
-      })
-    ];
+    // Reload on outside changes, but never under the user's cursor mid-edit.
+    const reloadUnlessEditing = () => {
+      const focusedTag = document.activeElement?.tagName;
+      if (focusedTag === "INPUT" || focusedTag === "SELECT") return;
+      load();
+    };
+    unwatches = [readingQueueStorage, videoQueueStorage, stremioQueueStorage].map((queue) =>
+      queue.watch(reloadUnlessEditing),
+    );
   });
 
   onDestroy(() => {

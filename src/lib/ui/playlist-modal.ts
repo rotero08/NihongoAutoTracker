@@ -168,7 +168,9 @@ export function cleanupPlaylistModal() {
     if (typeof el.__unmount === 'function') {
       try {
         el.__unmount();
-      } catch (e) { }
+      } catch {
+        /* Already unmounted; the node is removed either way. */
+      }
     }
     el.remove();
   });
@@ -334,7 +336,9 @@ export async function showPlaylistSelectorModal(btn: HTMLElement, isInline: bool
   (modalContainer as any).__unmount = () => {
     try {
       unmount(instance);
-    } catch (e) { }
+    } catch {
+      /* Already unmounted. */
+    }
   };
 
   activePlaylistModalInstance = instance;
@@ -450,7 +454,9 @@ async function executeBulkLogging(checkedVideos: any[]) {
           channelImage = data.channel.contentImage ?? '';
           channelDesc = data.channel.description?.[0]?.description ?? '';
         }
-      } catch (e) { }
+      } catch {
+        /* Keep the duration and channel the playlist itself listed for this video. */
+      }
 
       const mediaId = (channelId && channelId !== "web-video") ? channelId : "web-video";
       const ok = await submitLog({

@@ -14,7 +14,7 @@
     computeRecentReadingSpeed,
     formatMinutesToHuman
   } from "@/lib/utils/stats-parser";
-  import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
+  import { fetchAndCacheUserStats, resolveUsername } from "@/lib/api/nihongotracker";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -211,24 +211,32 @@
     heatmapYear = currentYear;
     overviewYear = currentYear;
 
-    if (config?.username) {
-      try {
-        statsData = await fetchAndCacheUserStats(config.username);
+    try {
+      const username = await resolveUsername();
+      if (username) {
+        config = { ...config, username };
+        statsData = await fetchAndCacheUserStats(username);
         lastUpdatedAt = Date.now();
         lastUpdatedLabel = formatRelativeTime(lastUpdatedAt);
-      } catch (e) {}
+      }
+    } catch {
+      /* Offline or API down: the dashboard keeps whatever stats it already shows. */
     }
   }
 
   /** Force a fresh fetch from the server, bypassing the 5-min cache. */
   async function forceRefresh() {
-    if (isRefreshing || !config?.username) return;
+    if (isRefreshing) return;
     isRefreshing = true;
     try {
-      statsData = await fetchAndCacheUserStats(config.username, true);
+      const username = await resolveUsername();
+      if (!username) return;
+      config = { ...config, username };
+      statsData = await fetchAndCacheUserStats(username, true);
       lastUpdatedAt = Date.now();
       lastUpdatedLabel = formatRelativeTime(lastUpdatedAt);
-    } catch (e) {
+    } catch {
+      /* Refresh failed: the previous stats and their "last updated" label stay as they are. */
     } finally {
       isRefreshing = false;
     }
@@ -356,7 +364,7 @@
           class="btn-refresh font-mono"
           class:spinning={isRefreshing}
           onclick={forceRefresh}
-          disabled={isRefreshing || !config?.username}
+          disabled={isRefreshing || !config?.apiKey}
           aria-label="Refresh stats"
           title="Fetch latest stats from NihongoTracker"
         >

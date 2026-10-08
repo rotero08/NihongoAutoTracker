@@ -1,16 +1,20 @@
 <!--
   ── SearchDropdown.svelte ────────────────────────────────────────────────────
-  AniList search dropdown for reading queue items.
+  Catalogue search dropdown for queue items: AniList novels/manga for reading
+  items, and anime, TV shows or movies for watched ones.
   Shows search results when the user types in the title field.
 -->
 <script lang="ts">
-  import { searchAniList, type AniListSearchResult } from "@/lib/api/anilist";
-  import { searchMedia } from "@/lib/api/nihongotracker";
+  import { searchAniList } from "@/lib/api/anilist";
+  import { searchMedia, type MediaSearchResult } from "@/lib/api/nihongotracker";
+  import type { WatchSearchType } from "@/lib/utils/media-type";
+
+  type SearchType = "reading" | WatchSearchType;
 
   /** Whether the dropdown is open */
   let open = $state(false);
   /** Search results */
-  let results: AniListSearchResult[] = $state([]);
+  let results: MediaSearchResult[] = $state([]);
   /** Loading state */
   let loading = $state(false);
   /** Error state */
@@ -25,8 +29,8 @@
 
   /** Callback when a result is selected */
   interface Props {
-    onSelect: (result: AniListSearchResult) => void;
-    searchType?: "reading" | "anime" | "movie" | "tv_show";
+    onSelect: (result: MediaSearchResult) => void;
+    searchType?: SearchType;
     onMouseDown?: () => void;
   }
   let { onSelect, searchType = "reading", onMouseDown }: Props = $props();
@@ -44,8 +48,13 @@
     }
   });
 
-  /** Execute a search query */
-  export async function search(query: string) {
+  /**
+   * Execute a search query.
+   *
+   * @param type - Catalogue to search. Defaults to the `searchType` prop; pass it
+   *   explicitly right after changing an item's type, before the prop has caught up.
+   */
+  export async function search(query: string, type: SearchType = searchType) {
     if (query.length < 2) {
       open = false;
       return;
@@ -60,8 +69,8 @@
 
     try {
       const searchResults =
-        searchType !== "reading"
-          ? normalizeMediaResults(await searchMedia({ search: query, type: searchType, perPage: 5 }))
+        type !== "reading"
+          ? await searchMedia({ search: query, type, perPage: 5 })
           : await searchAniList(query, 5);
 
       // Guard clause: Discard if a newer search query has already been executed
@@ -69,8 +78,8 @@
 
       results = searchResults;
       loading = false;
-      if (results.length === 0) results = [];
     } catch {
+      // Shown to the user as "Failed" in the dropdown itself.
       if (currentToken !== activeQueryToken) return;
       error = true;
       loading = false;
@@ -88,40 +97,18 @@
     if (results.length > 0) open = true;
   }
 
-  function handleSelect(r: AniListSearchResult, e: MouseEvent) {
+  function handleSelect(r: MediaSearchResult, e: MouseEvent) {
     e.preventDefault();
     onSelect(r);
     close();
   }
 
-  function normalizeMediaResults(results: any[]): AniListSearchResult[] {
-    return results.map((media) => ({
-      contentId: media.contentId ?? media.id ?? media._id,
-      title: {
-        contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
-        contentTitleEnglish:
-          media.title?.contentTitleEnglish ??
-          media.contentTitleEnglish ??
-          (typeof media.title === "string" ? media.title : undefined),
-        contentTitleRomaji:
-          media.title?.contentTitleRomaji ??
-          media.contentTitleRomaji ??
-          (typeof media.title === "string" ? media.title : undefined),
-      },
-      contentTitleNative: media.title?.contentTitleNative ?? media.contentTitleNative,
-      contentTitleEnglish:
-        media.title?.contentTitleEnglish ??
-        media.contentTitleEnglish ??
-        (typeof media.title === "string" ? media.title : undefined),
-      contentTitleRomaji:
-        media.title?.contentTitleRomaji ??
-        media.contentTitleRomaji ??
-        (typeof media.title === "string" ? media.title : undefined),
-      coverImage: media.coverImage ?? media.contentImage ?? media.poster,
-      contentImage: media.contentImage ?? media.coverImage ?? media.poster,
-      chapters: media.chapters,
-      volumes: media.volumes,
-    }));
+  /** Second line of a result: tells apart entries that share a native title. */
+  function getSubtitle(r: MediaSearchResult): string {
+    const primary = r.contentTitleNative;
+    const alternate = [r.contentTitleEnglish, r.contentTitleRomaji].find((t) => t && t !== primary) ?? "";
+    const episodes = r.episodes ? `${r.episodes} ep` : "";
+    return [alternate, episodes].filter(Boolean).join(" \u2022 ");
   }
 </script>
 
@@ -147,8 +134,11 @@
           {/if}
           <div class="info">
             <div class="title">
-              {r.title?.contentTitleNative || r.contentTitleNative || "Unknown"}
+              {r.contentTitleNative || r.contentTitleEnglish || r.contentTitleRomaji || "Unknown"}
             </div>
+            {#if getSubtitle(r)}
+              <div class="subtitle">{getSubtitle(r)}</div>
+            {/if}
           </div>
         </div>
       {/each}
@@ -217,6 +207,13 @@
     font-size: 11px;
     font-weight: bold;
     color: var(--color-text, #dde4f0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .subtitle {
+    font-size: 10px;
+    color: var(--color-text-muted, #7a8ca5);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -484,7 +484,9 @@ function safelySetAdapterName(adapter: any, name: string | null) {
   } catch (e) {
     try {
       adapter.name = name;
-    } catch (err) { }
+    } catch {
+      /* Frozen adapter object: the name is only a display label, tracking is unaffected. */
+    }
   }
 }
 
@@ -2025,7 +2027,11 @@ if (isRelevantFrame) {
 
 function startTimeTracker() {
   if ((window as any).__nt_timer_instance__) {
-    try { (window as any).__nt_timer_instance__.destroy(); } catch (e) { }
+    try {
+      (window as any).__nt_timer_instance__.destroy();
+    } catch {
+      /* Left over from an invalidated script context; it is replaced right below. */
+    }
   }
   const timer = new TimerEngine();
   (window as any).__nt_timer_instance__ = timer;

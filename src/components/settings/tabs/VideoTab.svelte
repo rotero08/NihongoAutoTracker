@@ -8,6 +8,15 @@
   import { configStorage } from "@/lib/storage/config";
   import CustomSelect from "@/components/common/CustomSelect.svelte";
   import { stepValue } from "@/lib/utils/math";
+  import {
+    clampThresholdValue,
+    getAutoSendThreshold,
+    getQueueThreshold,
+    isAutoSendEnabled,
+    QUEUE_THRESHOLD_DEFAULTS,
+    SEND_THRESHOLD_DEFAULTS,
+    THRESHOLD_LIMITS,
+  } from "@/lib/utils/video-thresholds";
 
   interface Props {
     onStatus: (msg: string, err?: boolean) => void;
@@ -37,13 +46,17 @@
 
   export async function load() {
     const cfg = (await configStorage.getValue()) as any;
-    autoSend = cfg.autoSend ?? cfg.logMode === "auto";
-    threshType = cfg.thresholdType ?? "time";
-    threshPct = cfg.thresholdType === "percent" ? (cfg.thresholdValue ?? cfg.threshold ?? 95) : 95;
-    threshMin = cfg.thresholdType === "time" ? (cfg.thresholdValue ?? cfg.threshold ?? 30) : 30;
-    queueThreshType = cfg.queueThresholdType ?? "time";
-    queueThreshPct = cfg.queueThresholdType === "percent" ? (cfg.queueThresholdValue ?? 5) : 5;
-    queueThreshMin = cfg.queueThresholdType === "time" ? (cfg.queueThresholdValue ?? 1) : 1;
+    // Resolved by the same helpers the tracker enforces, so this tab can never
+    // show a threshold other than the one in effect.
+    const send = getAutoSendThreshold(cfg);
+    const queue = getQueueThreshold(cfg);
+    autoSend = isAutoSendEnabled(cfg);
+    threshType = send.type;
+    threshPct = send.type === "percent" ? send.value : SEND_THRESHOLD_DEFAULTS.percent;
+    threshMin = send.type === "time" ? send.value : SEND_THRESHOLD_DEFAULTS.time;
+    queueThreshType = queue.type;
+    queueThreshPct = queue.type === "percent" ? queue.value : QUEUE_THRESHOLD_DEFAULTS.percent;
+    queueThreshMin = queue.type === "time" ? queue.value : QUEUE_THRESHOLD_DEFAULTS.time;
     hideButtons = cfg.hideButtons ?? false;
     hideIfNotJp = cfg.hideIfNotJapanese ?? false;
     hideMusic = cfg.hideMusic ?? false;
@@ -56,6 +69,12 @@
 
   async function persist() {
     const cfg = (await configStorage.getValue()) as any;
+    // Bring typed values back into range (a cleared field or a 0 would otherwise
+    // be stored as "queue everything immediately").
+    threshPct = clampThresholdValue("percent", threshPct, SEND_THRESHOLD_DEFAULTS.percent);
+    threshMin = clampThresholdValue("time", threshMin, SEND_THRESHOLD_DEFAULTS.time);
+    queueThreshPct = clampThresholdValue("percent", queueThreshPct, QUEUE_THRESHOLD_DEFAULTS.percent);
+    queueThreshMin = clampThresholdValue("time", queueThreshMin, QUEUE_THRESHOLD_DEFAULTS.time);
     const tVal = threshType === "percent" ? threshPct : threshMin;
     const qtVal = queueThreshType === "percent" ? queueThreshPct : queueThreshMin;
     await configStorage.setValue({
@@ -85,9 +104,9 @@
       autoSend: false,
       logMode: "manual",
       thresholdType: "time",
-      thresholdValue: 30,
+      thresholdValue: SEND_THRESHOLD_DEFAULTS.time,
       queueThresholdType: "time",
-      queueThresholdValue: 1,
+      queueThresholdValue: QUEUE_THRESHOLD_DEFAULTS.time,
       hideButtons: false,
       hideIfNotJapanese: false,
       hideMusic: false,
@@ -124,11 +143,11 @@
     <span class="label-val">{queueThreshType === "percent" ? queueThreshPct + "%" : queueThreshMin + " min"}</span>
   </label>
   {#if queueThreshType === "percent"}
-    <input type="range" id="queue-thresh-pct-range" class="slider" min="0" max="100" step="1" bind:value={queueThreshPct} onchange={persist} aria-label="Queue threshold percentage" />
-    <div class="slider-ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+    <input type="range" id="queue-thresh-pct-range" class="slider" min={THRESHOLD_LIMITS.percent.min} max={THRESHOLD_LIMITS.percent.max} step="1" bind:value={queueThreshPct} onchange={persist} aria-label="Queue threshold percentage" />
+    <div class="slider-ticks"><span>{THRESHOLD_LIMITS.percent.min}%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
   {:else}
     <div class="thresh-spinner">
-      <input type="number" id="queue-thresh-min" class="input" min="1" bind:value={queueThreshMin} onchange={persist} />
+      <input type="number" id="queue-thresh-min" class="input" min={THRESHOLD_LIMITS.time.min} bind:value={queueThreshMin} onchange={persist} />
       <div class="thresh-spin-btns">
         <button type="button" class="thresh-spin-up" onclick={() => { queueThreshMin = stepValue(queueThreshMin, 'up'); persist(); }} aria-label="Increment queue threshold" title="Increment">
           <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg>
@@ -167,11 +186,11 @@
       <span class="label-val">{threshType === "percent" ? threshPct + "%" : threshMin + " min"}</span>
     </label>
     {#if threshType === "percent"}
-      <input type="range" id="thresh-pct-range" class="slider" min="0" max="100" step="1" bind:value={threshPct} onchange={persist} aria-label="Auto send threshold percentage" />
-      <div class="slider-ticks"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+      <input type="range" id="thresh-pct-range" class="slider" min={THRESHOLD_LIMITS.percent.min} max={THRESHOLD_LIMITS.percent.max} step="1" bind:value={threshPct} onchange={persist} aria-label="Auto send threshold percentage" />
+      <div class="slider-ticks"><span>{THRESHOLD_LIMITS.percent.min}%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
     {:else}
       <div class="thresh-spinner">
-        <input type="number" id="thresh-min" class="input" min="1" bind:value={threshMin} onchange={persist} />
+        <input type="number" id="thresh-min" class="input" min={THRESHOLD_LIMITS.time.min} bind:value={threshMin} onchange={persist} />
         <div class="thresh-spin-btns">
           <button type="button" class="thresh-spin-up" onclick={() => { threshMin = stepValue(threshMin, 'up'); persist(); }} aria-label="Increment send threshold" title="Increment">
             <svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg>

@@ -11,38 +11,42 @@
     videoQueueStorage,
     readingQueueStorage,
     stremioQueueStorage,
-    updateVideoQueueAtomic,
-    updateReadingQueueAtomic,
-    updateStremioQueueAtomic,
   } from "@/lib/storage/queues";
-  import {
-    resolveVideoChannelMedia,
-    submitLog,
-  } from "@/lib/api/nihongotracker";
-  import { type AniListSearchResult } from "@/lib/api/anilist";
-  import { stripVideoTitle, parseTitleForUI } from "@/lib/utils/text-parsing";
+  import type { MediaSearchResult } from "@/lib/api/nihongotracker";
+  import { parseTitleForUI } from "@/lib/utils/text-parsing";
   import { toLocalDT } from "@/lib/utils/time";
   import SearchDropdown from "@/components/popup/SearchDropdown.svelte";
+  import MediaTypeSelect from "@/components/common/MediaTypeSelect.svelte";
   import { storage } from "wxt/utils/storage";
   import { onMount, onDestroy } from "svelte";
   import { configStorage } from "@/lib/storage/config";
   import { addDebugLog } from "@/lib/storage/debug";
   import { SESS_CLOSED_PREFIX } from "@/lib/constants";
+  import type { WatchLogType } from "@/lib/types";
+  import { getLogTypeLabel, normalizeLogType, toSearchType } from "@/lib/utils/media-type";
   import {
+    buildMatchFields,
+    changeStremioLogType,
+    editQueueSession,
+    ensureVideoMediaData,
+    getQueueItemSource,
+    getQueueItemTitle,
+    handleUnlink as unlinkQueueMedia,
+    isQueueItemLinked,
+    markStremioProcessed,
     persistField,
     persistFields,
-    getUpdater,
-    handleUnlink as unlinkQueueMedia,
-    ensureVideoMediaData as resolveVideoMetaData,
-    markStremioProcessed as flagStremioProcessed,
-    getItemPayloads,
+    removeQueueItem,
     removeSessionFromQueue,
     sendSessionFromQueue,
+    submitQueueItem,
+    toIsoDate,
+    type QueueType,
   } from "@/lib/utils/queue-actions";
 
   interface Props {
     item: any;
-    type: "video" | "reading" | "stremio";
+    type: QueueType;
     onStatus: (msg: string, err?: boolean) => void;
     onConfirm: (
       title: string,
@@ -56,6 +60,7 @@
 
   const isRead = $derived(type === "reading");
   const isStremio = $derived(type === "stremio");
+  const isSearchable = $derived(isRead || isStremio);
   let sending = $state(false);
   let isUnlinkHovered = $state(false);
   let searchDropdown = $state<SearchDropdown | undefined>(undefined);
@@ -64,11 +69,7 @@
   /* ── State for Title & Inline Volume Input ────────────────────── */
   let titleValue = $state("");
   $effect(() => {
-    const rawTitle =
-      item.description || item.contentTitleNative || "Unknown Title";
-    titleValue = isStremio
-      ? item.contentTitleNative || item.contentTitleRomaji || item.contentTitleEnglish || rawTitle.replace(/^(Trakt|Stremio):\s*/, "")
-      : type === "video" ? stripVideoTitle(rawTitle) : rawTitle.replace(/^(Trakt|Stremio):\s*/, "");
+    titleValue = getQueueItemTitle(item, type);
   });
 
   let volumeVal = $derived(Math.max(1, Number(item.volume || 1)));
@@ -82,8 +83,10 @@
   );
 
   const sessions = $derived(item.sessions ?? []);
-  const stremioSearchType = $derived(
-    item.logType === "movie" ? "movie" : item.logType === "tv show" ? "tv_show" : "anime",
+  const logType = $derived(normalizeLogType(item.logType));
+  const searchType = $derived(isStremio ? toSearchType(item.logType) : "reading");
+  const searchPlaceholder = $derived(
+    isRead ? "Search AniList..." : isStremio ? `Search ${getLogTypeLabel(logType)}...` : "Video Title",
   );
   const defaultDateStr = $derived(
     sessions.length > 0
@@ -98,34 +101,8 @@
     Math.max(1, Number(item.episode || (sessions[0]?.episode) || 1))
   );
 
-  let isLinked = $derived(
-    isRead
-      ? !!(item.mediaId && item.mediaId !== "web-reading")
-      : isStremio
-        ? !!(item.mediaId || item.mediaData?.contentId)
-        : true,
-  );
-
-  const capLogType = $derived(
-    item.logType
-      ? item.logType
-          .split(" ")
-          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(" ")
-      : "Trakt"
-  );
-
-  let channelName = $derived(
-    isStremio
-      ? `Stremio • ${capLogType}`
-      : isRead
-      ? `${item.readerName || "Reader"} \u2022 ${item.originalTitle || item.description || item.contentTitleNative || ""}`
-      : item.channelTitle || item.contentTitleNative || "YouTube",
-  );
-
-  let urlDisplay = $derived(
-    isRead ? "" : `\u2022 ${item.contentTitleEnglish || item.channelId || item.traktType || ""}`,
-  );
+  const isLinked = $derived(isQueueItemLinked(item, type));
+  const source = $derived(getQueueItemSource(item, type));
 
   let isSessionsOpen = $state(true);
 
@@ -160,7 +137,7 @@
     const val = (e.target as HTMLInputElement).value;
     titleValue = val;
 
-    if (isRead || isStremio) {
+    if (isSearchable) {
       clearTimeout(debounceTimer);
       if (val.trim().length < 2) {
         searchDropdown?.close();
@@ -179,7 +156,7 @@
 
   function handleFocus() {
     clearTimeout(blurTimeout);
-    if ((isRead || isStremio) && titleValue.trim().length >= 2) {
+    if (isSearchable && titleValue.trim().length >= 2) {
       searchDropdown?.search(titleValue.trim());
     }
   }
@@ -233,60 +210,32 @@
     }
 
     if (input.dataset.committed === "true") {
-      if (field === "description" || field === "contentTitleNative") {
-        const changed = input.value !== input.dataset.editStart;
-        if (changed && isLinked && input.dataset.isMatching !== "true") {
-          persistFields(item.id, type, { mediaId: isRead ? "web-reading" : undefined, mediaData: undefined }, onRefresh);
-        }
-      }
       saveFn(input.value);
     } else {
       revertInput(input);
     }
   }
 
-  async function handleSearchSelect(result: AniListSearchResult) {
-    const native =
-      result.title?.contentTitleNative ||
-      result.contentTitleNative ||
-      "Unknown";
-    titleValue = native;
+  async function handleSearchSelect(result: MediaSearchResult) {
+    const fields = buildMatchFields(item, type, result);
+    titleValue = fields.description;
 
-    const { volume: parsedVolume } = parseTitleForUI(native);
-    const finalVolume = Math.max(1, item.volume || parsedVolume || 1);
+    if (isRead) {
+      const { volume: parsedVolume } = parseTitleForUI(fields.description);
+      fields.volume = Math.max(1, item.volume || parsedVolume || 1);
+    }
 
-    await persistFields(item.id, type, {
-      description: native,
-      contentTitleNative: native,
-      contentTitleEnglish:
-        result.title?.contentTitleEnglish ||
-        result.contentTitleEnglish ||
-        item.contentTitleEnglish,
-      contentTitleRomaji:
-        result.title?.contentTitleRomaji ||
-        result.contentTitleRomaji ||
-        item.contentTitleRomaji,
-      mediaId: String(result.contentId),
-      mediaData: {
-        contentId: result.contentId,
-        contentTitleNative: native,
-        contentTitleEnglish:
-          result.title?.contentTitleEnglish ||
-          result.contentTitleEnglish ||
-          undefined,
-        contentTitleRomaji:
-          result.title?.contentTitleRomaji ||
-          result.contentTitleRomaji ||
-          undefined,
-        contentImage: result.coverImage || result.contentImage || undefined,
-        coverImage: result.coverImage || result.contentImage || undefined,
-        chapters: result.chapters || undefined,
-        volumes: result.volumes || undefined,
-        type: isStremio ? item.logType || "anime" : undefined,
-      },
-      ...(isRead ? { volume: finalVolume } : {}),
-    }, onRefresh);
+    await persistFields(item.id, type, fields, onRefresh);
     searchDropdown?.close();
+  }
+
+  /** Switch what a Stremio item is logged as, then search the matching catalogue. */
+  async function handleLogTypeChange(next: WatchLogType) {
+    await changeStremioLogType(item, next, onRefresh);
+    titleInputEl?.focus();
+    if (titleValue.trim().length >= 2) {
+      searchDropdown?.search(titleValue.trim(), toSearchType(next));
+    }
   }
 
   async function handleUnlink(e: Event) {
@@ -343,135 +292,19 @@
     await persistField(item.id, type, "time", isRead ? nextVal * 60 : nextVal, onRefresh);
   }
 
+  function adjustEpisodes(delta: number) {
+    return persistField(item.id, type, "episodes", Math.max(1, Number(item.episodes || 1) + delta), onRefresh);
+  }
+
   /* Date editing */
   async function handleDateChange(e: Event) {
-    const val = (e.target as HTMLInputElement).value;
-    try {
-      const iso = new Date(val).toISOString();
-      await persistField(item.id, type, "date", iso, onRefresh);
-    } catch {}
+    const iso = toIsoDate((e.target as HTMLInputElement).value);
+    if (iso) await persistField(item.id, type, "date", iso, onRefresh);
   }
 
   /* Session editing */
-  async function handleSessionChange(
-    sessionIdx: number,
-    field: string,
-    val: any,
-  ) {
-    if (isRead) {
-      await updateReadingQueueAtomic((currentQueue: any[]) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
-
-        const session = entry.sessions[sessionIdx];
-        if (field === "chars") {
-          session.chars = Math.max(0, Number(val) || 0);
-        } else if (field === "mins") {
-          session.secs = Math.max(1, Number(val) || 1) * 60;
-        } else if (field === "date") {
-          try {
-            session.date = new Date(val).toISOString();
-          } catch {}
-        }
-
-        const sumSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        const sumMins = Math.max(1, Math.round(sumSecs / 60));
-        const sumChars = entry.sessions.reduce(
-          (a: number, b: any) => a + (b.chars || 0),
-          0,
-        );
-
-        const previousSumSecs = item.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
-        const previousSumChars = item.sessions.reduce(
-          (a: number, b: any) => a + (b.chars || 0),
-          0,
-        );
-
-        const isTimeOverridden = displayMins > previousSumMins;
-        const areCharsOverridden = Number(item.chars || 0) > previousSumChars;
-
-        entry.time = isTimeOverridden ? item.time * 60 : sumSecs;
-        entry.chars = areCharsOverridden ? item.chars : sumChars;
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    } else if (isStremio) {
-      await updateStremioQueueAtomic((currentQueue: any[]) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
-
-        const session = entry.sessions[sessionIdx];
-        if (field === "mins") {
-          session.secs = Math.max(1, Number(val) || 1) * 60;
-        } else if (field === "season") {
-          session.season = Math.max(1, Number(val) || 1);
-        } else if (field === "date") {
-          try {
-            session.date = new Date(val).toISOString();
-          } catch {}
-        }
-
-        const sumSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        entry.time = Math.max(1, Math.round(sumSecs / 60));
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    } else {
-      await updateVideoQueueAtomic((currentQueue: any[]) => {
-        const idx = currentQueue.findIndex((x) => x.id === item.id);
-        if (idx === -1) return currentQueue;
-
-        const entry = JSON.parse(JSON.stringify(currentQueue[idx]));
-        if (!entry.sessions || !entry.sessions[sessionIdx]) return currentQueue;
-
-        const session = entry.sessions[sessionIdx];
-        if (field === "mins") {
-          session.secs = Math.max(1, Number(val) || 1) * 60;
-        } else if (field === "date") {
-          try {
-            session.date = new Date(val).toISOString();
-          } catch {}
-        }
-
-        const sumSecs = entry.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        const previousSumSecs = item.sessions.reduce(
-          (a: number, b: any) => a + b.secs,
-          0,
-        );
-        const previousSumMins = Math.max(1, Math.round(previousSumSecs / 60));
-
-        const isTimeOverridden = displayMins > previousSumMins;
-        entry.time = isTimeOverridden ? item.time : Math.round(sumSecs / 60);
-
-        const newQueue = [...currentQueue];
-        newQueue[idx] = entry;
-        return newQueue;
-      });
-    }
-    onRefresh();
+  function handleSessionChange(sessionIdx: number, field: "chars" | "mins" | "date", val: any) {
+    return editQueueSession(item.id, type, sessionIdx, field, val, onRefresh);
   }
 
   async function handleRemoveSession(sessionId: string) {
@@ -487,11 +320,14 @@
 
   async function handleSendSession(sessionIdx: number) {
     sending = true;
-    await sendSessionFromQueue(item, sessionIdx, type, onRefresh, onStatus);
-    sending = false;
+    try {
+      await sendSessionFromQueue(item, sessionIdx, type, onRefresh, onStatus);
+    } finally {
+      sending = false;
+    }
   }
 
-  function handleSessionLocalBlur(e: FocusEvent, sessionIdx: number, field: string) {
+  function handleSessionLocalBlur(e: FocusEvent, sessionIdx: number, field: "chars" | "mins") {
     const input = e.currentTarget as HTMLInputElement;
     if (input.dataset.committed === "true") {
       handleSessionChange(sessionIdx, field, input.value);
@@ -503,67 +339,51 @@
   /* ── Log Send / Delete Actions ──────────────────────────────── */
   async function handleSend() {
     sending = true;
-    const qStorage = isRead ? readingQueueStorage : isStremio ? stremioQueueStorage : videoQueueStorage;
-    const q = await qStorage.getValue();
-    const current = q.find((x: any) => x.id === item.id) as any;
-    if (!current) {
-      sending = false;
-      return;
-    }
-
-    if (isRead && (!current.mediaId || current.mediaId === "web-reading")) {
-      const cfg = (await configStorage.getValue()) as any;
-      if (cfg.warnUnmatched !== false) {
-        const ok = await onConfirm(
-          "Unmatched Media Warning",
-          "This reading log is not linked to any AniList entry and will be logged as unmatched. Are you sure you want to proceed?",
-          "warnUnmatched",
-        );
-        if (!ok) {
-          sending = false;
-          return;
-        }
-      }
-    }
-
-    if (type === "video") {
-      try {
-        current.mediaData = await resolveVideoMetaData(current);
-      } catch {}
-    }
-
     try {
-      const payloads = getItemPayloads(current, type);
-      for (const payload of payloads) {
-        const result = await submitLog(payload);
-        if (!result?.success) {
-          const errText = result?.status
-            ? `⚠ Failed [${result.status}]: ${result.error}`
-            : `⚠ Failed: ${result?.error}`;
-          onStatus(errText, true);
-          sending = false;
-          await addDebugLog(
-            "ERROR",
-            "SettingsQueueItem",
-            `Manual queue log submission failed: ${payload.description}`,
-            result?.error,
+      // Send what is stored, not the copy this card was rendered from.
+      const qStorage = isRead ? readingQueueStorage : isStremio ? stremioQueueStorage : videoQueueStorage;
+      let current = (await qStorage.getValue()).find((x: any) => x.id === item.id) as any;
+      if (!current) return;
+
+      if (isRead && !isQueueItemLinked(current, type)) {
+        const cfg = (await configStorage.getValue()) as any;
+        if (cfg.warnUnmatched !== false) {
+          const ok = await onConfirm(
+            "Unmatched Media Warning",
+            "This reading log is not linked to any AniList entry and will be logged as unmatched. Are you sure you want to proceed?",
+            "warnUnmatched",
           );
-          return;
+          if (!ok) return;
         }
       }
 
-      const updater = getUpdater(type);
-      await updater((currentQ) => currentQ.filter((x) => x.id !== item.id));
+      if (type === "video") {
+        try {
+          current = { ...current, mediaData: await ensureVideoMediaData(current) };
+        } catch (err) {
+          // Channel artwork is optional; the log is still valid without it.
+          await addDebugLog("WARN", "SettingsQueueItem", "Could not resolve channel metadata before sending", err);
+        }
+      }
+
+      const result = await submitQueueItem(current, type);
       onRefresh();
+      if (!result.ok) {
+        onStatus(
+          result.status ? `⚠ Failed [${result.status}]: ${result.error}` : `⚠ Failed: ${result.error}`,
+          true,
+        );
+      }
     } catch (e: any) {
       onStatus(`⚠ Error: ${e.message || e}`, true);
-      sending = false;
       await addDebugLog(
         "ERROR",
         "SettingsQueueItem",
-        `Exception during manual send for ${current.description}`,
+        `Exception during manual send for ${item.description}`,
         e,
       );
+    } finally {
+      sending = false;
     }
   }
 
@@ -574,10 +394,9 @@
     );
     if (!ok) return;
 
-    const updater = getUpdater(type);
-    await updater((currentQ) => currentQ.filter((x) => x.id !== item.id));
+    await removeQueueItem(type, item.id);
     if (isStremio) {
-      await flagStremioProcessed(item);
+      await markStremioProcessed(item);
     }
     onStatus("✓ Log removed");
     onRefresh();
@@ -596,7 +415,7 @@
   <!-- Top row (title + spinners/volume) -->
   <div class="qi-row top-row">
     <div class="qi-search-wrap">
-      {#if isRead || isStremio}
+      {#if isSearchable}
         <svg class="qi-search-icon" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
@@ -605,10 +424,10 @@
       <input
         bind:this={titleInputEl}
         class="qi-desc"
-        class:searchable={isRead || isStremio}
+        class:searchable={isSearchable}
         type="text"
         value={titleValue}
-        placeholder={isRead || isStremio ? "Search AniList..." : "Video Title"}
+        placeholder={searchPlaceholder}
         oninput={handleTitleInput}
         onblur={(e) => {
           handleBlur();
@@ -622,11 +441,11 @@
         aria-label="Item title"
       />
       {#if isLinked}
-        {#if isRead || isStremio}
+        {#if isSearchable}
           <button
             type="button"
             class="qi-link-status"
-            title="Unlink AniList match"
+            title="Unlink match"
             onclick={handleUnlink}
             onmouseenter={() => (isUnlinkHovered = true)}
             onmouseleave={() => (isUnlinkHovered = false)}
@@ -662,10 +481,10 @@
         {/if}
       {/if}
 
-      {#if isRead || isStremio}
+      {#if isSearchable}
         <SearchDropdown
           bind:this={searchDropdown}
-          searchType={isStremio ? stremioSearchType : "reading"}
+          {searchType}
           onSelect={handleSearchSelect}
           onMouseDown={() => {
             if (titleInputEl) {
@@ -791,10 +610,10 @@
   <div class="qi-row mid-row">
     <span
       class="qi-meta"
-      title={channelName + (urlDisplay ? " " + urlDisplay : "")}
+      title={source.label + (source.detail ? " " + source.detail : "")}
     >
-      {channelName}
-      {urlDisplay}
+      {source.label}
+      {source.detail}
     </span>
     <input
       type="datetime-local"
@@ -809,6 +628,9 @@
 
   {#if isStremio}
     <div class="stremio-ep-meta">
+      <MediaTypeSelect value={logType} onChange={handleLogTypeChange} disabled={sending} />
+      {#if logType !== "movie"}
+      <span class="unit-lbl-sep">·</span>
       <span class="unit-lbl">Season {displaySeason}</span>
       {#if !((item.episodes > 1) || (sessions.length > 1))}
         <span class="unit-lbl-sep">·</span>
@@ -828,10 +650,11 @@
         />
         <span class="unit-lbl">episodes watched</span>
         <div class="stepper-buttons">
-          <button type="button" class="step-btn" onclick={() => persistField(item.id, type, "episodes", Math.max(1, Number(item.episodes || 1) + 1), onRefresh)} aria-label="Increment episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg></button>
-          <button type="button" class="step-btn" onclick={() => persistField(item.id, type, "episodes", Math.max(1, Number(item.episodes || 1) - 1), onRefresh)} aria-label="Decrement episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg></button>
+          <button type="button" class="step-btn" onclick={() => adjustEpisodes(1)} aria-label="Increment episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,5 5,1 9,5" /></svg></button>
+          <button type="button" class="step-btn" onclick={() => adjustEpisodes(-1)} aria-label="Decrement episodes"><svg viewBox="0 0 10 6" aria-hidden="true"><polyline points="1,1 5,5 9,1" /></svg></button>
         </div>
       </div>
+      {/if}
     </div>
   {/if}
 

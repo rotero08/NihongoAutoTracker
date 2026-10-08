@@ -27,6 +27,26 @@ export function clearRamLogs(): void {
 }
 
 /**
+ * Text form of whatever was attached to a log entry. Errors are the usual
+ * attachment and have no enumerable fields, so `JSON.stringify` alone would
+ * record every failure as "{}".
+ */
+function serializeLogData(data: unknown): string | undefined {
+  if (!data) return undefined;
+  if (typeof data === 'string') return data;
+  if (data instanceof Error) {
+    const status = (data as { status?: unknown }).status;
+    return status ? `${data.message} (status ${status})` : data.message || data.name;
+  }
+  try {
+    return JSON.stringify(data);
+  } catch {
+    /* Circular or otherwise unserialisable: fall back to its string form. */
+    return String(data);
+  }
+}
+
+/**
  * Add a debug log entry.
  * Redirects content script and panel logs to the background script's RAM buffer.
  *
@@ -45,7 +65,7 @@ export async function addDebugLog(
     level,
     source,
     message,
-    data: data ? (typeof data === 'string' ? data : JSON.stringify(data)) : undefined,
+    data: serializeLogData(data),
     timestamp: new Date().toISOString(),
   };
 

@@ -7,56 +7,108 @@ import { defineContentScript } from '#imports';
 import '@/assets/video-tracker.css';
 import { getActiveVideoAdapter } from '@/lib/adapters/video';
 import { submitLog } from '@/lib/api/nihongotracker';
-import { PlayerTrackerEngine } from '@/lib/core/player-tracker-engine';
+import { PlayerTrackerEngine, type VideoClassification } from '@/lib/core/player-tracker-engine';
 import { configStorage } from '@/lib/storage/config';
+import { addDebugLog } from '@/lib/storage/debug';
 import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
 import { getActiveReaderAdapter } from '@/lib/adapters/readers';
-import { DEFAULT_THEME } from '@/lib/types';
+import { DEFAULT_THEME, type VideoSiteAdapter } from '@/lib/types';
 import { cleanupPlaylistModal, clearPlaylistCache, showPlaylistSelectorModal } from '@/lib/ui/playlist-modal';
 import { applyThemeToDocument, getTheme, resolveThemeColors } from '@/lib/ui/themes';
 import { BADGE_ID, BADGE_TIME_CLASS, shouldHideBadge } from '@/lib/ui/video-badge';
 import { injectModalStyles, showNTEditModal, cleanupActiveModal } from '@/lib/ui/video-modal';
 import { BadgeRenderer } from '@/lib/utils/badge-renderer';
+import { setSafeHTML } from '@/lib/utils/dom';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
 import { showToast } from '@/lib/utils/toast';
 import {
   clearExtractionCaches,
   fetchYouTubeVideoData,
-  getChannelMediaData
+  getChannelMediaData,
+  pickChannelId,
 } from '@/lib/utils/youtube-extraction';
 
 let cachedConfig: any = {};
-let isMusicVideoCached = false;
-let isJapaneseVideoCached = false;
-let metadataResolved = false;
-let lastAnalyzedUrl = '';
-let lastAnalyzedTitle = '';
 let channelPollInterval: any = null;
 
 let lastRenderedCurrentSecs = -1;
 let lastRenderedTotalSecs = -1;
 let lastRenderedUrl = '';
 
+let trackedVideo: HTMLVideoElement | null = null;
+/** Session key of the tracked video; empty while nothing is tracked. */
+let currentUrl = '';
+let channelId: string | null = null;
+let cachedChannelName = '';
+let lastTickTime = 0;
+const state = { hasTriggered: false, isManualLogging: false };
+
 function isYouTubeShorts(): boolean {
   return typeof window !== 'undefined' && window.location.pathname.startsWith('/shorts/');
 }
 
-function resolvePageLanguageAndType() {
-  const currentUrl = window.location.href;
-  const currentTitle = document.title;
-  const adapter = getActiveVideoAdapter();
-  if (!adapter) return;
+/** Session key for the video playing in `vid`, or null when it must not be tracked. */
+function resolveTrackingUrl(adapter: VideoSiteAdapter, vid: HTMLVideoElement): string | null {
+  return adapter.getTrackingUrl ? adapter.getTrackingUrl(vid) : cleanUrl(window.location.href);
+}
 
-  if (currentUrl === lastAnalyzedUrl && currentTitle === lastAnalyzedTitle && metadataResolved && isJapaneseVideoCached) {
-    return;
+/** The page's primary player element, as opposed to a hover-preview player. */
+function findMainVideo(): HTMLVideoElement | null {
+  return document.querySelector<HTMLVideoElement>('#movie_player video')
+    ?? document.querySelector<HTMLVideoElement>('video');
+}
+
+function getVideoTitle(): string {
+  return getActiveVideoAdapter()?.getVideoTitle?.() || stripVideoTitle(document.title);
+}
+
+function reportError(message: string, err: unknown) {
+  void addDebugLog('ERROR', 'VideoTracker', message, err);
+  if (import.meta.env.DEV) {
+    console.error(`[NAT DEV - VideoTracker] ${message}`, err);
+  }
+}
+
+/* ── Language / music classification ── */
+
+const CLASSIFICATION_TTL_MS = 1000;
+const UNKNOWN_CLASSIFICATION: VideoClassification = { isJapanese: false, isMusic: false, isLive: false };
+
+let classification = UNKNOWN_CLASSIFICATION;
+let classificationUrl = '';
+let classificationAt = 0;
+
+function invalidateClassification() {
+  classification = UNKNOWN_CLASSIFICATION;
+  classificationUrl = '';
+  classificationAt = 0;
+}
+
+/**
+ * Verdict for the tracked video. It is only ever cached for a moment: right
+ * after an SPA navigation the page still describes the previous video, so a
+ * verdict pinned to a URL would stick a wrong answer to the new one.
+ *
+ * @param fresh - Re-evaluate now; used right before a queue/send decision.
+ */
+function classifyVideo(fresh = false): VideoClassification {
+  const adapter = getActiveVideoAdapter();
+  if (!adapter || !currentUrl) return UNKNOWN_CLASSIFICATION;
+
+  const now = performance.now();
+  if (!fresh && classificationUrl === currentUrl && now - classificationAt < CLASSIFICATION_TTL_MS) {
+    return classification;
   }
 
-  isMusicVideoCached = adapter.isMusic();
-  isJapaneseVideoCached = adapter.isLikelyJapanese();
-  lastAnalyzedUrl = currentUrl;
-  lastAnalyzedTitle = currentTitle;
-  metadataResolved = currentTitle !== 'YouTube' && currentTitle !== '';
+  classification = {
+    isJapanese: adapter.isLikelyJapanese(),
+    isMusic: adapter.isMusic(),
+    isLive: adapter.isLive?.() ?? false,
+  };
+  classificationUrl = currentUrl;
+  classificationAt = now;
+  return classification;
 }
 
 let _adPlayingCached = false;
@@ -86,50 +138,43 @@ const engine = new PlayerTrackerEngine(
     lastRenderedTotalSecs = roundedTotal;
     lastRenderedUrl = currentUrl;
 
-    badgeRenderer.ensureCounter(
-      currentSecs,
-      totalSecs,
-      currentUrl,
-      channelId,
-      cachedChannelName,
-      cachedConfig,
-      trackedVideo,
-      state,
-      handleBadgeClick
-    );
+    paintBadge(currentSecs, totalSecs);
   },
   () => resetSession(),
-  () => {
-    resolvePageLanguageAndType();
-    return { isJapanese: isJapaneseVideoCached, isMusic: isMusicVideoCached };
-  }
+  classifyVideo
 );
 
 const badgeRenderer = new BadgeRenderer(
-  (vid) => {
-    const adapter = getActiveVideoAdapter();
-    return adapter ? adapter.getTimestampContainer?.(vid) || null : null;
-  },
+  (vid) => getActiveVideoAdapter()?.getTimestampContainer?.(vid) || null,
   isAdPlaying,
-  () => {
-    resolvePageLanguageAndType();
-    return { isJapanese: isJapaneseVideoCached, isMusic: isMusicVideoCached };
-  }
+  () => classifyVideo()
 );
 
-let trackedVideo: HTMLVideoElement | null = null;
-let currentUrl = '';
-let channelId: string | null = null;
-let cachedChannelName = '';
-let lastTickTime = 0;
-const state = { hasTriggered: false, isManualLogging: false };
+function paintBadge(currentSecs: number, totalSecs: number, cfg: any = cachedConfig) {
+  if (!trackedVideo) return;
+  badgeRenderer.ensureCounter(
+    currentSecs,
+    totalSecs,
+    currentUrl,
+    channelId,
+    cachedChannelName,
+    cfg,
+    trackedVideo,
+    state,
+    handleBadgeClick
+  );
+}
 
-const resetSession = () => {
-  engine.reset();
-  currentUrl = cleanUrl(window.location.href);
+function resetRenderState() {
   lastRenderedCurrentSecs = -1;
   lastRenderedTotalSecs = -1;
   lastRenderedUrl = '';
+}
+
+/** Start a new session for the video that is already being tracked. */
+const resetSession = () => {
+  engine.reset();
+  resetRenderState();
   const badgeLabel = document.querySelector(`#${BADGE_ID} .${BADGE_TIME_CLASS}`);
   if (badgeLabel) badgeLabel.textContent = "0:00";
 };
@@ -155,12 +200,15 @@ async function handleBadgeClick() {
   }
 
   const channelName = cachedChannelName || await adapter.getChannelName();
-  let finalTitle = stripVideoTitle(document.title);
+  let finalTitle = adapter.getVideoTitle?.() || '';
 
-  if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
-    const data = await fetchYouTubeVideoData(window.location.href);
-    if (data?.video?.title) {
-      finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
+  if (!finalTitle) {
+    finalTitle = stripVideoTitle(document.title);
+    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+      const data = await fetchYouTubeVideoData(window.location.href);
+      if (data?.video?.title) {
+        finalTitle = data.video.title.contentTitleNative || data.video.title.contentTitleEnglish || finalTitle;
+      }
     }
   }
 
@@ -170,27 +218,32 @@ async function handleBadgeClick() {
     return;
   }
 
+  // The modal can stay open across a navigation; act on the video it was opened for.
+  const loggedUrl = currentUrl;
+  const loggedChannelId = channelId;
+
   showNTEditModal(badgeEl, cachedConfig.theme, {
     channelName,
     videoTitle: finalTitle,
-    url: currentUrl,
+    url: loggedUrl,
     totalSecs: engine.getTotal(),
     videoDurationSecs: trackedVideo.duration && !isNaN(trackedVideo.duration) && trackedVideo.duration > 0 && Number.isFinite(trackedVideo.duration)
       ? trackedVideo.duration
       : engine.getTotal(),
     showTotal: liveShowTotal,
-    channelId,
+    channelId: loggedChannelId,
     onToggleShowTotal: async (v: boolean) => {
       const c = await configStorage.getValue() as any;
       await configStorage.setValue({ ...c, showTotalInBadge: v });
     }
   }, async (final: any) => {
+    const sameVideo = () => currentUrl === loggedUrl;
     try {
-      engine.setHasTriggered(true);
-      const mediaData = await getChannelMediaData(channelId, final.title);
+      if (sameVideo()) engine.setHasTriggered(true);
+      const mediaData = await getChannelMediaData(loggedChannelId, final.title);
       const ok = await submitLog({
         type: "video",
-        mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
+        mediaId: pickChannelId(mediaData.channelId, loggedChannelId),
         description: final.desc,
         mediaData,
         episodes: 0,
@@ -199,22 +252,20 @@ async function handleBadgeClick() {
         date: final.date || new Date().toISOString(),
         unknownDate: false
       });
-      if (ok) {
-        if (final.clearSessions) {
-          await updateVideoQueueAtomic(async (queue) => queue.filter(q => q.contentTitleEnglish !== currentUrl));
-          resetSession();
-        } else {
-          engine.setHasTriggered(false);
-        }
-      } else {
+      // submitLog always resolves to an object; only `success` says the log was accepted.
+      if (ok?.success && final.clearSessions) {
+        await updateVideoQueueAtomic((queue) => queue.filter(q => q.contentTitleEnglish !== loggedUrl));
+        if (sameVideo()) resetSession();
+      } else if (sameVideo()) {
         engine.setHasTriggered(false);
       }
     } catch (err) {
-      engine.setHasTriggered(false);
+      if (sameVideo()) engine.setHasTriggered(false);
+      reportError('Manual log submission failed', err);
     }
   }, (submitted: boolean) => {
     state.isManualLogging = false;
-    if (!submitted) engine.setHasTriggered(false);
+    if (!submitted && currentUrl === loggedUrl) engine.setHasTriggered(false);
   });
 }
 
@@ -236,19 +287,31 @@ function unbindActiveVideoListeners() {
   }
 }
 
+/** Stop tracking altogether; the next attach() starts a fresh session. */
+function detachTracking() {
+  unbindActiveVideoListeners();
+  trackedVideo = null;
+  currentUrl = '';
+  invalidateClassification();
+}
+
 const attach = (vid: HTMLVideoElement) => {
-  if (isYouTubeShorts()) {
-    engine.flushPlayClock();
-    document.getElementById(BADGE_ID)?.remove();
-    unbindActiveVideoListeners();
-    trackedVideo = null;
-    return;
-  }
-  const cleanedHref = cleanUrl(window.location.href);
   const adapter = getActiveVideoAdapter();
   if (!adapter) return;
 
-  if (currentUrl === cleanedHref && trackedVideo === vid) {
+  const trackingUrl = resolveTrackingUrl(adapter, vid);
+  if (!trackingUrl) {
+    // Shorts, hover previews and pages that are not a video are never tracked.
+    // Only tear down when the element we track is the one that stopped qualifying.
+    if (isYouTubeShorts() || vid === trackedVideo) {
+      void engine.finalizeSession();
+      detachTracking();
+      document.getElementById(BADGE_ID)?.remove();
+    }
+    return;
+  }
+
+  if (currentUrl === trackingUrl && trackedVideo === vid) {
     return;
   }
 
@@ -256,29 +319,25 @@ const attach = (vid: HTMLVideoElement) => {
   document.getElementById('nt-playlist-modal')?.remove();
   document.getElementById('nt-modal-popup')?.remove();
 
-  engine.flushPlayClock();
-  if (trackedVideo && engine.getWatchedSecs() >= 60 && currentUrl && !engine.getHasTriggered()) {
-    engine.finalizeSession(currentUrl);
+  // Close the previous session before the engine is re-initialised for this one.
+  if (trackedVideo && !engine.getHasTriggered()) {
+    void engine.finalizeSession();
+  } else {
+    engine.flushPlayClock();
   }
 
   unbindActiveVideoListeners();
 
   trackedVideo = vid;
   activeVideoElement = vid;
-  currentUrl = cleanedHref;
-  lastRenderedCurrentSecs = -1;
-  lastRenderedTotalSecs = -1;
-  lastRenderedUrl = '';
+  currentUrl = trackingUrl;
+  resetRenderState();
   channelId = null;
   cachedChannelName = '';
-  metadataResolved = false;
-  lastAnalyzedUrl = '';
-  lastAnalyzedTitle = '';
-  isJapaneseVideoCached = false;
-  isMusicVideoCached = false;
+  invalidateClassification();
   document.getElementById(BADGE_ID)?.remove();
 
-  engine.initSession(currentUrl, 0, vid);
+  engine.initSession(trackingUrl, 0, vid);
 
   const onPlaying = () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
@@ -297,45 +356,49 @@ const attach = (vid: HTMLVideoElement) => {
     if (vid.currentTime < 5) engine.setHasTriggered(false);
     engine.handleSeeked(vid);
   };
-  const onTimeUpdate = async () => {
+  const onTimeUpdate = () => {
     if (isYouTubeShorts()) return;
+
+    // Checked before the clock is touched: an ad plays in this same element,
+    // and none of its positions may be measured against the video's.
+    if (isAdPlaying()) {
+      engine.interruptPlayback();
+      document.getElementById(BADGE_ID)?.remove();
+      return;
+    }
+
     engine.updateBadgeLive(vid);
 
     const now = performance.now();
     if (now - lastTickTime < 1000) return;
     lastTickTime = now;
 
-    if (isAdPlaying()) {
-      engine.flushPlayClock(true);
-      document.getElementById(BADGE_ID)?.remove();
-      return;
-    }
-    await engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, document.title);
+    void engine.handleTimeUpdate(vid, cachedConfig, channelId, cachedChannelName, getVideoTitle());
   };
   const onEnded = async () => {
     if (isAdPlaying() || isYouTubeShorts()) return;
     engine.flushPlayClock();
     if (engine.getHasTriggered()) return;
 
-    resolvePageLanguageAndType();
-    const skipMusic = isMusicVideoCached && !cachedConfig.logMusicVideos;
-
-    if (isJapaneseVideoCached && !skipMusic && engine.reachedQueueThreshold(cachedConfig, vid)) {
-      await engine.finalizeSession(currentUrl);
-      resetSession();
+    // Last sync of the session; a threshold close to 100% is only met here.
+    if (!engine.passesQueueRules(cachedConfig, vid)) return;
+    try {
+      await engine.upsertQueueLive(getVideoTitle(), cachedChannelName, channelId);
+    } catch (err) {
+      reportError('Failed to queue finished video', err);
+      return;
     }
+    if (trackedVideo === vid && currentUrl === trackingUrl) resetSession();
   };
-  const onEmptied = async () => {
-    engine.flushPlayClock();
-    const urlNow = cleanUrl(window.location.href);
-    if (urlNow !== currentUrl) {
-      resolvePageLanguageAndType();
-      if (!engine.getHasTriggered() && engine.getWatchedSecs() >= 1 && isJapaneseVideoCached && !isMusicVideoCached && !isYouTubeShorts()) {
-        await engine.finalizeSession(currentUrl);
-      }
-      resetSession();
-      document.getElementById(BADGE_ID)?.remove();
-    }
+  const onEmptied = () => {
+    // The element was handed a new source: an ad break, or the next video
+    // loaded into it before any navigation event reached this script.
+    engine.interruptPlayback();
+    if (resolveTrackingUrl(adapter, vid) === trackingUrl) return;
+
+    void engine.finalizeSession();
+    detachTracking();
+    document.getElementById(BADGE_ID)?.remove();
   };
 
   boundVideoListeners = {
@@ -355,6 +418,9 @@ const attach = (vid: HTMLVideoElement) => {
     const foundId = await adapter.getChannelId();
     const foundName = await adapter.getChannelName();
 
+    // The lookups are async; drop results that arrive after a navigation.
+    if (trackedVideo !== vid || currentUrl !== trackingUrl) return;
+
     let updated = false;
     if (foundId && foundId !== channelId) {
       channelId = foundId;
@@ -364,57 +430,34 @@ const attach = (vid: HTMLVideoElement) => {
       cachedChannelName = foundName;
       updated = true;
     }
-    if (updated && trackedVideo) {
-      badgeRenderer.ensureCounter(
-        engine.getLiveWatched(),
-        engine.getTotal(),
-        currentUrl,
-        channelId,
-        cachedChannelName,
-        cachedConfig,
-        trackedVideo,
-        state,
-        handleBadgeClick
-      );
+    if (updated) {
+      paintBadge(engine.getLiveWatched(), engine.getTotal());
     }
   };
 
-  if (channelPollInterval) {
-    clearInterval(channelPollInterval);
-    channelPollInterval = null;
-  }
+  const pollChannel = () => tryChannel().catch((err) => reportError('Channel lookup failed', err));
 
-  tryChannel();
+  pollChannel();
   let pollCount = 0;
-  channelPollInterval = setInterval(async () => {
-    await tryChannel();
-    if ((channelId && cachedChannelName) || pollCount++ > 20) {
-      clearInterval(channelPollInterval);
-      channelPollInterval = null;
+  const poll = setInterval(async () => {
+    await pollChannel();
+    // Compare against this timer, not the shared handle: by the time the lookup
+    // resolves the handle may already belong to the next video's poll.
+    if ((channelId && cachedChannelName) || pollCount++ > 20 || trackedVideo !== vid || currentUrl !== trackingUrl) {
+      clearInterval(poll);
+      if (channelPollInterval === poll) channelPollInterval = null;
     }
   }, 500);
+  channelPollInterval = poll;
 
-  (async () => {
-    const queue = await videoQueueStorage.getValue();
-    const existing = queue.find(q => q.contentTitleEnglish === currentUrl) as any;
-    const completedSessionSecs = existing
-      ? (existing.sessions || []).reduce((a: number, s: any) => a + s.secs, 0)
-      : 0;
+  // Time already queued for this video by earlier sessions, for the badge total.
+  videoQueueStorage.getValue().then((queue) => {
+    if (trackedVideo !== vid || currentUrl !== trackingUrl) return;
 
-    engine.initSession(currentUrl, completedSessionSecs, vid);
-
-    badgeRenderer.ensureCounter(
-      engine.getLiveWatched(),
-      engine.getTotal(),
-      currentUrl,
-      channelId,
-      cachedChannelName,
-      cachedConfig,
-      vid,
-      state,
-      handleBadgeClick
-    );
-  })();
+    const existing = queue.find(q => q.contentTitleEnglish === trackingUrl);
+    engine.setCompletedSessionSecs((existing?.sessions || []).reduce((total, s) => total + s.secs, 0));
+    paintBadge(engine.getLiveWatched(), engine.getTotal());
+  }).catch((err) => reportError('Failed to read queued sessions', err));
 };
 
 function isPlaylistOrPodcastPage(): boolean {
@@ -474,11 +517,11 @@ function runPlaylistInjection(): boolean {
     try {
       const btn = document.createElement('button');
       btn.className = 'nt-playlist-logger style-scope ytd-menu-renderer';
-      btn.innerHTML = `
+      setSafeHTML(btn, `
         <svg style="filter:none !important; box-shadow:none !important;" width="24" height="24" viewBox="0 0 24 24">
           <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 5.5v9l6-4.5-6-4.5z" style="fill: currentColor !important;" />
         </svg>
-      `;
+      `);
 
       Object.assign(btn.style, {
         background: 'transparent',
@@ -518,6 +561,7 @@ function runPlaylistInjection(): boolean {
       adapter.injectPlaylistButton(targetContainer, btn);
       injectedAny = true;
     } catch (err) {
+      reportError('Failed to inject playlist button', err);
     }
   }
   return injectedAny;
@@ -528,9 +572,13 @@ function runVideoInjection() {
     document.getElementById(BADGE_ID)?.remove();
     return;
   }
-  const vid = document.querySelector<HTMLVideoElement>('video');
+  const vid = findMainVideo();
   if (vid) {
-    try { attach(vid); } catch (err) { }
+    try {
+      attach(vid);
+    } catch (err) {
+      reportError('Failed to attach to video element', err);
+    }
   }
 }
 
@@ -597,6 +645,7 @@ function injectThemeVariables(theme: any) {
       });
     });
   } catch (err) {
+    reportError('Failed to apply theme variables', err);
   }
 }
 
@@ -642,21 +691,23 @@ export default defineContentScript({
     const startHealingLoop = (intervalTime = 1000) => {
       if (healingLoopTimer) clearInterval(healingLoopTimer);
       healingLoopTimer = setInterval(() => {
-        const currentHref = cleanUrl(window.location.href);
-        if (!isYouTubeShorts() && (currentHref.includes('watch') || !window.location.hostname.includes('youtube.com'))) {
-          const vid = document.querySelector<HTMLVideoElement>('video');
+        if (!isYouTubeShorts()) {
+          const vid = findMainVideo();
           if (vid) {
-            if (trackedVideo !== vid || currentUrl !== currentHref) {
-              attach(vid);
-            } else {
-              if (!vid.paused && !vid.ended && !isAdPlaying()) engine.updateBadgeLive(vid);
-            }
+            // No-op while already attached to this element for this video;
+            // otherwise (re)attaches, or detaches once the page stops qualifying.
+            attach(vid);
+            if (vid === trackedVideo && !vid.paused && !vid.ended && !isAdPlaying()) engine.updateBadgeLive(vid);
           }
         }
-        if (trackedVideo && !trackedVideo.paused && !trackedVideo.ended && !isAdPlaying() && !isYouTubeShorts()) {
-          if (engine.getPlayClockStart() < 0 && !engine.getIsUserSeeking()) engine.startPlayClock(trackedVideo);
-        } else if (trackedVideo && (trackedVideo.paused || trackedVideo.ended || isAdPlaying() || isYouTubeShorts())) {
+
+        if (!trackedVideo) return;
+        if (isAdPlaying()) {
+          engine.interruptPlayback();
+        } else if (trackedVideo.paused || trackedVideo.ended || isYouTubeShorts()) {
           if (engine.getPlayClockStart() >= 0) engine.flushPlayClock();
+        } else if (engine.getPlayClockStart() < 0 && !engine.getIsUserSeeking()) {
+          engine.startPlayClock(trackedVideo);
         }
       }, intervalTime);
     };
@@ -745,7 +796,6 @@ export default defineContentScript({
     window.addEventListener('yt-navigate-finish', handleYtNavigateFinish);
 
     const handleYtNavigateStart = () => {
-      window.removeEventListener('yt-navigate-finish', startTargetedObserver);
       clearExtractionCaches();
       if (typeof cleanupPlaylistModal === 'function') {
         cleanupPlaylistModal();
@@ -754,10 +804,9 @@ export default defineContentScript({
         if (modal) modal.remove();
       }
       document.getElementById('nt-modal-popup')?.remove();
-      engine.flushPlayClock();
-      unbindActiveVideoListeners();
-      trackedVideo = null;
-      window.addEventListener('yt-navigate-finish', startTargetedObserver);
+      // The element still holds the outgoing video here, so its final position is valid.
+      void engine.finalizeSession();
+      detachTracking();
     };
     window.addEventListener('yt-navigate-start', handleYtNavigateStart);
 
@@ -820,22 +869,10 @@ export default defineContentScript({
 
           const badge = document.getElementById(BADGE_ID);
           if (badge && trackedVideo) {
-            resolvePageLanguageAndType();
-            const shouldHide = shouldHideBadge(newCfg, isJapaneseVideoCached, isMusicVideoCached) || isAdPlaying() || isYouTubeShorts();
+            const { isJapanese, isMusic } = classifyVideo();
+            const shouldHide = shouldHideBadge(newCfg, isJapanese, isMusic) || isAdPlaying() || isYouTubeShorts();
             if (shouldHide) badge.remove();
-            else {
-              badgeRenderer.ensureCounter(
-                engine.getLiveWatched(),
-                engine.getTotal(),
-                currentUrl,
-                channelId,
-                cachedChannelName,
-                newCfg,
-                trackedVideo,
-                state,
-                handleBadgeClick
-              );
-            }
+            else paintBadge(engine.getLiveWatched(), engine.getTotal(), newCfg);
           }
 
           if (newCfg.enablePlaylistLogger === false || newCfg.hidePlaylistBadgeIcon === true) {
@@ -847,9 +884,9 @@ export default defineContentScript({
 
     unwatches.push(
       videoQueueStorage.watch((queue) => {
-        if (isYouTubeShorts()) return;
-        const clean = cleanUrl(window.location.href);
-        if (!queue || !queue.some((q: any) => q.contentTitleEnglish === clean)) {
+        if (isYouTubeShorts() || !trackedVideo || !currentUrl) return;
+        // Our entry was sent or deleted elsewhere: what follows is a new session.
+        if (!queue || !queue.some((q) => q.contentTitleEnglish === currentUrl)) {
           if (engine.getLastSyncSecs() > 0) resetSession();
         }
       })

@@ -7,30 +7,61 @@
 
 import { submitLog } from '@/lib/api/nihongotracker';
 import { addDebugLog } from '@/lib/storage/debug';
-import { updateVideoQueueAtomic, videoQueueStorage } from '@/lib/storage/queues';
+import { updateVideoQueueAtomic } from '@/lib/storage/queues';
+import type { QueuedVideoLog, TrackerConfig } from '@/lib/types';
 import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
-import { getChannelMediaData } from '@/lib/utils/youtube-extraction';
+import {
+    getAutoSendThreshold,
+    getQueueThreshold,
+    hasReachedThreshold,
+    isAutoSendEnabled,
+} from '@/lib/utils/video-thresholds';
+import { getChannelMediaData, pickChannelId, WEB_VIDEO_ID } from '@/lib/utils/youtube-extraction';
 import { browser } from 'wxt/browser';
+
+export interface VideoClassification {
+    isJapanese: boolean;
+    isMusic: boolean;
+    isLive: boolean;
+}
+
+/** Seconds of new watch time between two writes of a queued session. */
+const QUEUE_SYNC_INTERVAL_SECS = 10;
+/** Seconds of new watch time between two direct-send threshold checks. */
+const AUTO_SEND_CHECK_INTERVAL_SECS = 5;
+/** Longest uninterrupted stretch accepted from the wall clock (it keeps running through system sleep). */
+const MAX_WALL_CLOCK_SEGMENT_SECS = 7200;
+
+const sessionMinutes = (secs: number) => Math.max(1, Math.round(secs / 60));
+const sumSessionSecs = (item: QueuedVideoLog) => (item.sessions || []).reduce((total, s) => total + s.secs, 0);
 
 export class PlayerTrackerEngine {
     private watchedSecs = 0;
     private completedSessionSecs = 0;
     private lastSyncSecs = 0;
     private lastAutoCheckSecs = 0;
-    private playClockStart = -1;
     private currentSessionId = crypto.randomUUID();
     private currentUrl = "";
     private hasTriggered = false;
     private activeVid: HTMLVideoElement | null = null;
+    private isUserSeeking = false;
+
+    /*
+     * The play clock measures the stretch being watched right now.
+     * `playClockStart` is -1 while stopped. While running it is either a video
+     * position (`isUsingVideoTime`) or a `performance.now()` timestamp — never
+     * compare one against the other: the two bases differ by the age of the tab.
+     */
+    private playClockStart = -1;
     private isUsingVideoTime = false;
     private lastKnownVideoTime = -1;
-    private isUserSeeking = false;
 
     constructor(
         private onUpdateBadge: (currentSecs: number, totalSecs: number) => void,
         private onResetSession: () => void,
-        private getJapaneseClassification: () => { isJapanese: boolean; isMusic: boolean }
+        /** `fresh` bypasses any caching: used right before a queue/send decision. */
+        private classify: (fresh: boolean) => VideoClassification
     ) { }
 
     public getPlayClockStart(): number {
@@ -45,35 +76,66 @@ export class PlayerTrackerEngine {
         return this.completedSessionSecs;
     }
 
+    public setCompletedSessionSecs(secs: number): void {
+        this.completedSessionSecs = secs;
+    }
+
     public getIsUserSeeking(): boolean {
         return this.isUserSeeking;
     }
 
     public clearVideoElement(): void {
+        this.flushPlayClock();
         this.activeVid = null;
+    }
+
+    private readVideoTime(): number {
+        const time = this.activeVid?.currentTime;
+        return typeof time === 'number' && Number.isFinite(time) ? time : NaN;
+    }
+
+    private anchorToVideoTime(start: number, current: number = start): void {
+        this.isUsingVideoTime = true;
+        this.playClockStart = start;
+        this.lastKnownVideoTime = current;
+    }
+
+    private stopClock(): void {
+        this.playClockStart = -1;
+        this.isUsingVideoTime = false;
+    }
+
+    /** End of the running stretch, in the clock's own base (video mode only). */
+    private resolveVideoEnd(preferred: number): number {
+        // While seeking, or once the element was handed another source (ad
+        // break, next video), the live position is not part of this stretch.
+        if (this.isUserSeeking || Number.isNaN(preferred) || preferred < this.playClockStart) {
+            return this.lastKnownVideoTime;
+        }
+        return preferred;
+    }
+
+    /** Seconds on the running clock, measured up to `videoEnd` in video mode. */
+    private measureElapsed(videoEnd: number = this.readVideoTime()): number {
+        if (this.playClockStart < 0) return 0;
+        if (this.isUsingVideoTime) {
+            const elapsed = this.resolveVideoEnd(videoEnd) - this.playClockStart;
+            return elapsed > 0 ? elapsed : 0;
+        }
+        const elapsed = (performance.now() - this.playClockStart) / 1000;
+        return elapsed > 0 && elapsed < MAX_WALL_CLOCK_SEGMENT_SECS ? elapsed : 0;
     }
 
     public getLiveWatched(currentVidTime?: number): number {
         if (this.playClockStart < 0) {
             return Math.floor(this.watchedSecs);
         }
-        const vidTime = currentVidTime !== undefined ? currentVidTime : (this.activeVid && !isNaN(this.activeVid.currentTime) ? this.activeVid.currentTime : NaN);
-        if (this.isUsingVideoTime && !isNaN(vidTime)) {
-            let referenceVidTime = vidTime;
-            if (this.isUserSeeking) {
-                referenceVidTime = this.lastKnownVideoTime;
-            }
-
-            const baseWatched = Math.floor(this.watchedSecs);
-            const currentInt = Math.floor(referenceVidTime);
-            const startInt = Math.floor(this.playClockStart);
-            const elapsed = currentInt - startInt;
-
-            return baseWatched + (elapsed > 0 ? elapsed : 0);
-        } else {
-            const elapsed = (performance.now() - this.playClockStart) / 1000;
-            return Math.floor(this.watchedSecs + (elapsed > 0 ? elapsed : 0));
+        if (this.isUsingVideoTime) {
+            const reference = this.resolveVideoEnd(currentVidTime ?? this.readVideoTime());
+            const elapsed = Math.floor(reference) - Math.floor(this.playClockStart);
+            return Math.floor(this.watchedSecs) + (elapsed > 0 ? elapsed : 0);
         }
+        return Math.floor(this.watchedSecs + this.measureElapsed());
     }
 
     public getTotal(precomputedLiveSecs?: number): number {
@@ -95,36 +157,36 @@ export class PlayerTrackerEngine {
 
     public flushPlayClock(discard = false): void {
         if (this.playClockStart < 0) return;
-        let elapsed = 0;
-        if (this.isUsingVideoTime && this.activeVid && !isNaN(this.activeVid.currentTime)) {
-            const currentVidTime = this.activeVid.currentTime;
-            if (this.isUserSeeking) {
-                elapsed = this.lastKnownVideoTime - this.playClockStart;
-            } else {
-                elapsed = currentVidTime - this.playClockStart;
-            }
-        } else {
-            elapsed = (performance.now() - this.playClockStart) / 1000;
-        }
-        this.playClockStart = -1;
-        this.isUsingVideoTime = false;
-        if (!discard && elapsed > 0 && elapsed < 7200) {
+        const elapsed = this.measureElapsed();
+        this.stopClock();
+        if (!discard) {
             this.watchedSecs += elapsed;
         }
+    }
+
+    /**
+     * Something else took over the element (an ad break, a new source): bank the
+     * content watched up to the last position seen and stop counting. Positions
+     * reported from here on belong to different media, so the last known one is
+     * forgotten rather than compared against.
+     */
+    public interruptPlayback(): void {
+        if (this.playClockStart >= 0) {
+            this.watchedSecs += this.measureElapsed(this.lastKnownVideoTime);
+            this.stopClock();
+        }
+        this.lastKnownVideoTime = -1;
+        this.isUserSeeking = false;
     }
 
     public startPlayClock(vid?: HTMLVideoElement | null): void {
         if (vid) {
             this.activeVid = vid;
         }
-        if (this.activeVid && !isNaN(this.activeVid.currentTime)) {
-            this.isUsingVideoTime = true;
-            if (this.watchedSecs === 0 && this.activeVid.currentTime < 5.0) {
-                this.playClockStart = 0.0;
-            } else {
-                this.playClockStart = this.activeVid.currentTime;
-            }
-            this.lastKnownVideoTime = this.activeVid.currentTime;
+        const now = this.readVideoTime();
+        if (!Number.isNaN(now)) {
+            // A session that starts within the opening seconds counts from zero.
+            this.anchorToVideoTime(this.watchedSecs === 0 && now < 5.0 ? 0.0 : now, now);
         } else {
             this.isUsingVideoTime = false;
             this.playClockStart = performance.now();
@@ -139,21 +201,16 @@ export class PlayerTrackerEngine {
             this.startPlayClock(vid);
         }
 
-        let currentVidTime = NaN;
-        if (this.activeVid && !isNaN(this.activeVid.currentTime)) {
-            currentVidTime = this.activeVid.currentTime;
-
-            // Delta progression guard to handle out-of-order timeupdate events or micro-seeks
-            if (this.lastKnownVideoTime !== -1 && !this.isUserSeeking) {
+        const currentVidTime = this.readVideoTime();
+        if (!Number.isNaN(currentVidTime)) {
+            // Jump without seek events (micro-seek, out-of-order timeupdate): bank
+            // what was watched up to the jump and re-anchor. Only a running clock
+            // is re-anchored — a stopped one stays stopped until playback resumes.
+            if (this.isUsingVideoTime && this.playClockStart >= 0 && this.lastKnownVideoTime >= 0) {
                 const delta = currentVidTime - this.lastKnownVideoTime;
                 if (delta > 10 || delta < -3) {
-                    if (this.playClockStart >= 0) {
-                        const elapsedBeforeSkip = this.lastKnownVideoTime - this.playClockStart;
-                        if (elapsedBeforeSkip > 0 && elapsedBeforeSkip < 7200) {
-                            this.watchedSecs += elapsedBeforeSkip;
-                        }
-                    }
-                    this.playClockStart = currentVidTime;
+                    this.watchedSecs += this.measureElapsed(this.lastKnownVideoTime);
+                    this.anchorToVideoTime(currentVidTime);
                 }
             }
             this.lastKnownVideoTime = currentVidTime;
@@ -164,23 +221,25 @@ export class PlayerTrackerEngine {
     }
 
     public handleSeeking(): void {
-        this.isUserSeeking = true;
-        if (this.playClockStart >= 0 && this.activeVid && !isNaN(this.activeVid.currentTime)) {
-            const elapsedBeforeSkip = this.lastKnownVideoTime - this.playClockStart;
-            if (elapsedBeforeSkip > 0 && elapsedBeforeSkip < 7200) {
-                this.watchedSecs += elapsedBeforeSkip;
-            }
+        if (this.playClockStart >= 0) {
+            this.watchedSecs += this.measureElapsed(this.lastKnownVideoTime);
         }
-        this.playClockStart = -1;
+        this.stopClock();
+        this.isUserSeeking = true;
     }
 
     public handleSeeked(vid: HTMLVideoElement): void {
         this.isUserSeeking = false;
         this.activeVid = vid;
-        if (!isNaN(vid.currentTime)) {
-            this.playClockStart = vid.currentTime;
-            this.lastKnownVideoTime = vid.currentTime;
-            this.isUsingVideoTime = true;
+        const now = this.readVideoTime();
+        if (Number.isNaN(now)) return;
+
+        if (vid.paused || vid.ended) {
+            // Scrubbing while paused moves the position without resuming playback.
+            this.stopClock();
+            this.lastKnownVideoTime = now;
+        } else {
+            this.anchorToVideoTime(now);
         }
     }
 
@@ -188,7 +247,7 @@ export class PlayerTrackerEngine {
         this.currentUrl = cleanUrl(url);
         this.completedSessionSecs = completedSecs;
         this.watchedSecs = 0;
-        this.playClockStart = -1;
+        this.stopClock();
         this.lastSyncSecs = 0;
         this.lastAutoCheckSecs = 0;
         this.hasTriggered = false;
@@ -200,6 +259,7 @@ export class PlayerTrackerEngine {
         }
     }
 
+    /** Start a new session for the same video (after a send, or once its queue entry is gone). */
     public reset(): void {
         this.flushPlayClock();
         this.watchedSecs = 0;
@@ -209,126 +269,143 @@ export class PlayerTrackerEngine {
         this.currentSessionId = crypto.randomUUID();
         this.hasTriggered = false;
         this.activeVid = null;
-        this.isUsingVideoTime = false;
         this.lastKnownVideoTime = -1;
         this.isUserSeeking = false;
     }
 
+    private notifyQueueUpdated(): void {
+        browser.runtime.sendMessage({ action: 'QUEUE_UPDATED' }).catch(() => {
+            /* Background asleep or context invalidated: it refreshes from the storage event anyway. */
+        });
+    }
+
+    /**
+     * Write the current session into the pending queue, creating the entry on
+     * first call. Callers must have checked `passesQueueRules` first.
+     */
     public async upsertQueueLive(
         videoTitle: string,
         channelName: string,
         channelId: string | null
     ): Promise<void> {
-        const clean = this.currentUrl;
-        const finalTitle = stripVideoTitle(videoTitle);
+        // Capture the session before the first await: by the time the channel
+        // lookup and the storage transaction resolve, the engine may already be
+        // tracking the next video.
+        const sessionId = this.currentSessionId;
+        const url = this.currentUrl;
         const secs = this.getLiveWatched();
+        if (!url || secs < 1) return;
 
+        const finalTitle = stripVideoTitle(videoTitle);
         const mediaData = await getChannelMediaData(channelId, channelName);
+        const now = new Date().toISOString();
+        let inserted = false;
 
-        await updateVideoQueueAtomic(async (queue) => {
-            const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
+        await updateVideoQueueAtomic((queue) => {
+            const item = queue.find(q => q.contentTitleEnglish === url);
 
-            if (idx !== -1) {
-                const item = queue[idx] as any;
+            if (item) {
                 item.sessions = item.sessions || [];
 
-                const sIdx = item.sessions.findIndex((s: any) => s.id === this.currentSessionId);
-                if (sIdx >= 0) {
-                    item.sessions[sIdx].secs = secs;
-                    item.sessions[sIdx].date = new Date().toISOString();
+                const session = item.sessions.find(s => s.id === sessionId);
+                if (session) {
+                    session.secs = secs;
+                    session.date = now;
                 } else {
-                    item.sessions.push({ id: this.currentSessionId, secs, date: new Date().toISOString() });
+                    item.sessions.push({ id: sessionId, secs, date: now });
                 }
 
-                const completedSecs = item.sessions.reduce((a: number, s: any) => a + s.secs, 0);
-                item.time = Math.max(1, Math.round(completedSecs / 60));
-                item.description = finalTitle;
-                item.contentTitleNative = channelName;
-                item.channelTitle = channelName;
-                if (channelId && channelId !== "web-video" && (!item.channelId || item.channelId === "web-video")) {
+                item.time = sessionMinutes(sumSessionSecs(item));
+                if (finalTitle) item.description = finalTitle;
+                if (channelName) {
+                    item.contentTitleNative = channelName;
+                    item.channelTitle = channelName;
+                }
+                if (channelId && channelId !== WEB_VIDEO_ID && (!item.channelId || item.channelId === WEB_VIDEO_ID)) {
                     item.channelId = channelId;
                 }
                 item.mediaData = { ...(item.mediaData || {}), ...mediaData };
-                const possibleMediaId = item.mediaData?.channelId || channelId || item.mediaId;
-                item.mediaId = (possibleMediaId && possibleMediaId !== "web-video") ? possibleMediaId : "web-video";
+                item.mediaId = pickChannelId(item.mediaData.channelId, channelId, item.mediaId);
             } else {
-                // First automatic queue addition boundary - log persistently in RAM
-                await addDebugLog('INFO', 'VideoTracker', `Automatically queued video: ${finalTitle}`);
+                inserted = true;
                 queue.push({
                     id: crypto.randomUUID(),
                     contentTitleNative: channelName,
-                    contentTitleEnglish: clean,
-                    time: Math.max(1, Math.round(secs / 60)),
-                    date: new Date().toISOString(),
+                    contentTitleEnglish: url,
+                    time: sessionMinutes(secs),
+                    date: now,
                     private: false,
                     tags: [],
                     description: finalTitle,
-                    sessions: [{ id: this.currentSessionId, secs, date: new Date().toISOString() }],
-                    channelId: (channelId && channelId !== "web-video") ? channelId : null,
+                    sessions: [{ id: sessionId, secs, date: now }],
+                    channelId: channelId && channelId !== WEB_VIDEO_ID ? channelId : undefined,
                     channelTitle: channelName,
-                    mediaId: (mediaData?.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
+                    mediaId: pickChannelId(mediaData.channelId, channelId),
                     mediaData,
-                } as any);
+                });
             }
             return queue;
         });
 
-        try {
-            const queue = await videoQueueStorage.getValue();
-            browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length });
-        } catch { }
+        if (inserted) {
+            void addDebugLog('INFO', 'VideoTracker', `Automatically queued video: ${finalTitle}`);
+        }
+        this.notifyQueueUpdated();
     }
 
-    public async finalizeSession(url: string): Promise<void> {
+    /**
+     * Record the final duration of the current session. Only updates a session
+     * that is already queued (i.e. one that passed the queue rules while it was
+     * playing) — it never adds a video or a session to the queue.
+     */
+    public async finalizeSession(): Promise<void> {
         this.flushPlayClock();
-        const secs = this.watchedSecs;
-        if (secs < 1) return;
-        const clean = cleanUrl(url);
+        const sessionId = this.currentSessionId;
+        const url = this.currentUrl;
+        const secs = Math.floor(this.watchedSecs);
+        if (!url || secs < 1) return;
 
-        await updateVideoQueueAtomic(async (queue) => {
-            const idx = queue.findIndex(q => q.contentTitleEnglish === clean);
-            if (idx === -1) return queue;
+        let updated = false;
+        await updateVideoQueueAtomic((queue) => {
+            const item = queue.find(q => q.contentTitleEnglish === url);
+            const session = item?.sessions?.find(s => s.id === sessionId);
+            if (!item || !session || session.secs === secs) return queue;
 
-            const item = queue[idx] as any;
-            item.sessions = item.sessions || [];
-
-            const sIdx = item.sessions.findIndex((s: any) => s.id === this.currentSessionId);
-            if (sIdx >= 0) {
-                item.sessions[sIdx].secs = secs;
-            } else {
-                item.sessions.push({ id: this.currentSessionId, secs, date: new Date().toISOString() });
-            }
-
-            item.time = Math.max(1, Math.round(item.sessions.reduce((a: number, s: any) => a + s.secs, 0) / 60));
+            session.secs = secs;
+            item.time = sessionMinutes(sumSessionSecs(item));
+            updated = true;
             return queue;
         });
 
-        try {
-            const queue = await videoQueueStorage.getValue();
-            browser.runtime.sendMessage({ action: 'QUEUE_UPDATED', count: queue.length });
-        } catch { }
+        if (updated) this.notifyQueueUpdated();
     }
 
-    public reachedQueueThreshold(cfg: any, vid: HTMLVideoElement): boolean {
-        const tType = cfg.queueThresholdType ?? 'time';
-        const tValue = cfg.queueThresholdValue ?? 1;
-        const liveSecs = this.getLiveWatched();
-        if (vid.duration === Infinity) {
-            // For live video streams, percentage-based thresholds are mathematically meaningless.
-            // If the threshold type is percent, we fall back to a sensible time-based default (1 minute).
-            const thresholdMins = tType === 'percent' ? 1 : tValue;
-            return (liveSecs / 60) >= thresholdMins;
-        }
-        if (tType === 'percent') {
-            if (!vid.duration || vid.duration <= 0) return false;
-            return (liveSecs / vid.duration) * 100 >= tValue;
-        }
-        return (liveSecs / 60) >= tValue;
+    public reachedQueueThreshold(cfg: TrackerConfig, vid: HTMLVideoElement): boolean {
+        return hasReachedThreshold(getQueueThreshold(cfg), this.getLiveWatched(), vid.duration, {
+            isLive: this.classify(false).isLive,
+            minutes: 1,
+        });
+    }
+
+    /** Japanese content, and not a music video unless the user opted in. */
+    private isLoggableContent(cfg: TrackerConfig): boolean {
+        const { isJapanese, isMusic } = this.classify(true);
+        return isJapanese && (!isMusic || !!cfg.logMusicVideos);
+    }
+
+    /**
+     * The single gate in front of the pending queue: queue mode is active, the
+     * watch threshold is met, the video is Japanese and it is not excluded music.
+     */
+    public passesQueueRules(cfg: TrackerConfig, vid: HTMLVideoElement): boolean {
+        return !isAutoSendEnabled(cfg)
+            && this.reachedQueueThreshold(cfg, vid)
+            && this.isLoggableContent(cfg);
     }
 
     public async handleTimeUpdate(
         vid: HTMLVideoElement,
-        cfg: any,
+        cfg: TrackerConfig,
         channelId: string | null,
         channelName: string,
         videoTitle: string
@@ -340,66 +417,61 @@ export class PlayerTrackerEngine {
 
             if (this.hasTriggered || vid.duration <= 0) return;
 
-            const autoOn = cfg.autoSend ?? (cfg.logMode === 'auto');
+            if (!isAutoSendEnabled(cfg)) {
+                if ((liveSecs - this.lastSyncSecs) < QUEUE_SYNC_INTERVAL_SECS) return;
+                if (!this.reachedQueueThreshold(cfg, vid)) return;
 
-            if (!autoOn && this.reachedQueueThreshold(cfg, vid) && (liveSecs - this.lastSyncSecs) >= 10) {
                 this.lastSyncSecs = liveSecs;
-                const { isJapanese, isMusic } = this.getJapaneseClassification();
-                const skipMusic = isMusic && !cfg.logMusicVideos;
-
-                if (isJapanese && !skipMusic) {
+                if (this.isLoggableContent(cfg)) {
                     await this.upsertQueueLive(videoTitle, channelName, channelId);
                 }
+                return;
             }
 
-            if (autoOn && (liveSecs - this.lastAutoCheckSecs) >= 5) {
-                this.lastAutoCheckSecs = liveSecs;
-                const { isJapanese, isMusic } = this.getJapaneseClassification();
-                const skipMusic = isMusic && !cfg.logMusicVideos;
+            if ((liveSecs - this.lastAutoCheckSecs) < AUTO_SEND_CHECK_INTERVAL_SECS) return;
+            this.lastAutoCheckSecs = liveSecs;
 
-                if (isJapanese && !skipMusic) {
-                    const threshType = cfg.thresholdType ?? 'percent';
-                    const threshValue = cfg.thresholdValue ?? cfg.threshold ?? 95;
-                    const isLive = vid.duration === Infinity;
-                    const triggered = isLive
-                        ? (liveSecs / 60) >= (threshType === 'percent' ? 5 : threshValue)
-                        : (threshType === 'percent'
-                            ? (liveSecs / vid.duration) * 100 >= threshValue
-                            : (liveSecs / 60) >= threshValue);
+            if (!this.isLoggableContent(cfg)) return;
 
-                    if (triggered) {
-                        this.hasTriggered = true;
-                        const sessionMins = Math.max(1, Math.round(liveSecs / 60));
-                        const mediaData = await getChannelMediaData(channelId, channelName);
-                        const finalTitle = stripVideoTitle(videoTitle);
+            const triggered = hasReachedThreshold(getAutoSendThreshold(cfg), liveSecs, vid.duration, {
+                isLive: this.classify(false).isLive,
+                minutes: 5,
+            });
+            if (!triggered) return;
 
-                        if (import.meta.env.DEV) {
-                            console.log(`[NAT DEV - VideoTracker] Auto-logging threshold reached for: ${finalTitle}`);
-                        }
+            this.hasTriggered = true;
+            const sessionId = this.currentSessionId;
+            const url = this.currentUrl;
+            const mediaData = await getChannelMediaData(channelId, channelName);
+            const finalTitle = stripVideoTitle(videoTitle);
 
-                        const ok = await submitLog({
-                            type: 'video',
-                            mediaId: (mediaData.channelId && mediaData.channelId !== "web-video") ? mediaData.channelId : (channelId && channelId !== "web-video") ? channelId : "web-video",
-                            description: finalTitle,
-                            mediaData,
-                            time: sessionMins,
-                            date: new Date().toISOString(),
-                            private: false,
-                            episodes: 0,
-                            pages: 0,
-                            unknownDate: false
-                        });
+            if (import.meta.env.DEV) {
+                console.log(`[NAT DEV - VideoTracker] Auto-logging threshold reached for: ${finalTitle}`);
+            }
 
-                        if (ok?.success) {
-                            await addDebugLog('INFO', 'VideoTracker', `Auto-logged video successfully: ${finalTitle}`);
-                            await updateVideoQueueAtomic(async (queue) => queue.filter(q => q.contentTitleEnglish !== this.currentUrl));
-                            this.onResetSession();
-                        } else {
-                            this.hasTriggered = false;
-                            await addDebugLog('ERROR', 'VideoTracker', `Auto-log failed for: ${finalTitle}`, ok?.error);
-                        }
-                    }
-                }
+            const ok = await submitLog({
+                type: 'video',
+                mediaId: pickChannelId(mediaData.channelId, channelId),
+                description: finalTitle,
+                mediaData,
+                time: sessionMinutes(liveSecs),
+                date: new Date().toISOString(),
+                private: false,
+                episodes: 0,
+                pages: 0,
+                unknownDate: false
+            });
+
+            // The request can outlive the session; only touch engine state that is still ours.
+            const sameSession = this.currentSessionId === sessionId;
+
+            if (ok?.success) {
+                await addDebugLog('INFO', 'VideoTracker', `Auto-logged video successfully: ${finalTitle}`);
+                await updateVideoQueueAtomic((queue) => queue.filter(q => q.contentTitleEnglish !== url));
+                if (sameSession) this.onResetSession();
+            } else {
+                if (sameSession) this.hasTriggered = false;
+                await addDebugLog('ERROR', 'VideoTracker', `Auto-log failed for: ${finalTitle}`, ok?.error);
             }
         } catch (err) {
             await addDebugLog('ERROR', 'VideoTracker', 'Exception encountered inside timeupdate tick', err);

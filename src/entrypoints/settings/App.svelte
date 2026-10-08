@@ -73,7 +73,9 @@
             useStaticInPageLogo: false,
           });
         }
-      } catch (e) {}
+      } catch {
+        /* Corrupt colour cache: the default theme stays until the real config loads. */
+      }
     }
   }
 

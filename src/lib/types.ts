@@ -6,6 +6,8 @@
 /* ── Base Configuration ── */
 export interface TrackerConfig {
   apiKey?: string;
+  /** NihongoTracker account the API key belongs to; resolved from the key. */
+  username?: string;
   autoSend?: boolean;
   logMode?: 'auto' | 'manual';
   thresholdType?: 'percent' | 'time';
@@ -150,10 +152,13 @@ export interface QueuedReadingLog {
   readerName?: string;
 }
 
+/** Log types NihongoTracker files watched (non-YouTube) media under. */
+export type WatchLogType = 'anime' | 'movie' | 'tv show';
+
 export interface QueuedStremioLog {
   id: string;
   type: 'stremio';
-  logType: 'anime' | 'movie' | 'tv show';
+  logType: WatchLogType;
   contentTitleNative: string;
   contentTitleEnglish?: string;
   contentTitleRomaji?: string;
@@ -309,6 +314,16 @@ export interface VideoSiteAdapter {
   getChannelName(): Promise<string>;
   isLikelyJapanese(): boolean;
   isMusic(): boolean;
+  /** Whether the current video is a broadcast that is live right now. */
+  isLive?(): boolean;
+  /** Title of the current video from a source tied to its id; empty when unknown. */
+  getVideoTitle?(): string;
+  /**
+   * Canonical URL of the video playing in `vid`, used as the session/queue key.
+   * Returns null when the element must not be tracked (hover previews, Shorts,
+   * pages that are not a video). Defaults to the cleaned page URL when omitted.
+   */
+  getTrackingUrl?(vid: HTMLVideoElement): string | null;
   getTimestampContainer?(vid: HTMLVideoElement): HTMLElement | null;
 
   // Category 7 Interface Abstract Queries

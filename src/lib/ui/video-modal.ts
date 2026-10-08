@@ -97,7 +97,9 @@ export function cleanupActiveModal() {
     if (activeModalInstance) {
       try {
         unmount(activeModalInstance);
-      } catch (e) { }
+      } catch {
+        /* Already unmounted; the container is removed either way. */
+      }
       activeModalInstance = null;
     }
     existing.remove();

@@ -10,13 +10,19 @@
  */
 
 import { browser } from 'wxt/browser';
+import { storage } from 'wxt/utils/storage';
 import { configStorage } from '../storage/config';
 import { addDebugLog } from '../storage/debug';
+import type { WatchLogType } from '../types';
+import { fetchWithTimeout } from '../utils/net';
 import { notify } from '../utils/toast';
 import { LAST_LOG_SUBMITTED_AT_KEY } from '../constants';
 
 /** Base URL for the NihongoTracker API */
 const API_BASE = 'https://nihongotracker.app/api';
+
+/** Catalogue searches and lookups are interactive or run inside a poll; neither may hang. */
+const SEARCH_TIMEOUT_MS = 20_000;
 
 /**
  * Centralized fetch helper for NihongoTracker API calls.
@@ -25,7 +31,8 @@ const API_BASE = 'https://nihongotracker.app/api';
  */
 export async function fetchNHTApi(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  timeoutMs?: number,
 ): Promise<Response> {
   const config = await configStorage.getValue();
   const apiKey = config?.apiKey ?? '';
@@ -38,10 +45,8 @@ export async function fetchNHTApi(
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
-  return fetch(url, {
-    ...options,
-    headers,
-  });
+  const init = { ...options, headers };
+  return timeoutMs ? fetchWithTimeout(url, init, timeoutMs) : fetch(url, init);
 }
 
 /**
@@ -131,7 +136,9 @@ export async function submitLog(
       let createdLog: any = null;
       try {
         createdLog = await response.clone().json();
-      } catch { }
+      } catch {
+        /* A 2xx without a JSON body is still a created log; there is just no id to attach media to. */
+      }
 
       if (createdLog?._id && !createdLog.mediaId && hasAssignableMediaData(payload.mediaData)) {
         await assignMediaToLog(createdLog._id, payload.mediaData as any, apiKey);
@@ -145,7 +152,12 @@ export async function submitLog(
       // Signal to the dashboard that stats are now stale and should be re-fetched.
       // Only stamp from the authoritative context (background/popup) — content scripts
       // relay through background which handles the actual submission.
-      try { await storage.setItem(LAST_LOG_SUBMITTED_AT_KEY, Date.now()); } catch { }
+      try {
+        await storage.setItem(LAST_LOG_SUBMITTED_AT_KEY, Date.now());
+      } catch (err) {
+        // The log itself went through; only the dashboard refresh hint was lost.
+        await addDebugLog('WARN', 'API', 'Could not flag stats as stale after logging', err);
+      }
 
       return { success: true, status: response.status };
     } else {
@@ -381,11 +393,62 @@ async function fetchChannelExtrasFromYouTube(channelId: string): Promise<{
   }
 }
 
+/** A media entry from NihongoTracker's catalogue, in one consistent shape. */
+export interface MediaSearchResult {
+  contentId: string | number;
+  title: {
+    contentTitleNative?: string;
+    contentTitleEnglish?: string;
+    contentTitleRomaji?: string;
+  };
+  contentTitleNative?: string;
+  contentTitleEnglish?: string;
+  contentTitleRomaji?: string;
+  synonyms?: string[];
+  coverImage?: string;
+  contentImage?: string;
+  /** Catalogue type as NihongoTracker spells it: "anime", "movie", "tv show", "manga"… */
+  type?: string;
+  chapters?: number;
+  volumes?: number;
+  episodes?: number;
+  episodeDuration?: number;
+  runtime?: number;
+  isAdult?: boolean;
+}
+
+/**
+ * Normalise a catalogue entry. The search and lookup endpoints do not agree on
+ * where titles and images live, so every consumer reads them through here.
+ */
+export function normalizeMediaResult(raw: any): MediaSearchResult {
+  const plainTitle = typeof raw?.title === 'string' ? raw.title : undefined;
+  const nestedTitle = raw?.title && typeof raw.title === 'object' ? raw.title : {};
+
+  const contentTitleNative = nestedTitle.contentTitleNative ?? raw?.contentTitleNative ?? undefined;
+  const contentTitleEnglish = nestedTitle.contentTitleEnglish ?? raw?.contentTitleEnglish ?? plainTitle;
+  const contentTitleRomaji = nestedTitle.contentTitleRomaji ?? raw?.contentTitleRomaji ?? plainTitle;
+
+  // Prefer the portrait artwork; the landscape banner is only a fallback.
+  const image = raw?.contentImage || raw?.coverImage || raw?.poster || undefined;
+
+  return {
+    ...raw,
+    contentId: raw?.contentId ?? raw?.id ?? raw?._id,
+    title: { contentTitleNative, contentTitleEnglish, contentTitleRomaji },
+    contentTitleNative,
+    contentTitleEnglish,
+    contentTitleRomaji,
+    contentImage: image,
+    coverImage: image,
+  };
+}
+
 export async function searchMedia(input: {
   search: string;
   type: 'anime' | 'movie' | 'tv_show' | 'manga' | 'reading' | 'vn' | 'game' | 'novel';
   perPage?: number;
-}): Promise<any[]> {
+}): Promise<MediaSearchResult[]> {
   const typeLower = input.type.toLowerCase();
   const isAnilistType = ['anime', 'manga', 'novel'].includes(typeLower);
 
@@ -412,7 +475,7 @@ export async function searchMedia(input: {
     endpoint = `/media/search?${params}`;
   }
 
-  const response = await fetchNHTApi(endpoint);
+  const response = await fetchNHTApi(endpoint, {}, SEARCH_TIMEOUT_MS);
   if (!response.ok) return [];
   const data = await response.json();
 
@@ -427,46 +490,75 @@ export async function searchMedia(input: {
     rawResults = data.media;
   }
 
-  return rawResults.map((item: any) => {
-    if (!item) return item;
+  return rawResults.filter(Boolean).map(normalizeMediaResult);
+}
 
-    // Prioritize the portrait contentImage as primary cover art, falling back to coverImage landscape banner
-    const portraitImage = item.contentImage || item.coverImage;
-    const fallbackImage = item.coverImage || item.contentImage;
-
-    return {
-      ...item,
-      contentImage: portraitImage || undefined,
-      coverImage: portraitImage || fallbackImage || undefined,
-    };
-  });
+/**
+ * Look a catalogue entry up by its id: an AniList id for anime, `s<tmdb id>`
+ * for TV shows, `m<tmdb id>` for movies.
+ *
+ * @returns the entry, or null when NihongoTracker has no such media
+ * @throws when the lookup itself failed, so "not found" stays distinguishable
+ */
+export async function fetchMediaById(
+  type: WatchLogType,
+  contentId: string | number,
+): Promise<MediaSearchResult | null> {
+  const response = await fetchNHTApi(
+    `/media/${encodeURIComponent(type)}/${encodeURIComponent(String(contentId))}`,
+    {},
+    SEARCH_TIMEOUT_MS,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Media lookup failed (${response.status})`);
+  return normalizeMediaResult(await response.json());
 }
 
 /* ── Stats & Verification Helpers ── */
-import { storage } from 'wxt/utils/storage';
 
+/**
+ * Check an API key and learn whose it is.
+ *
+ * `/users/me` is the endpoint that accepts API keys; `/auth/verify` is for
+ * browser sessions only and answers 403 "API keys cannot access this endpoint".
+ */
 export async function verifyApiKey(key: string): Promise<{ success: boolean; username?: string; error?: string; stats?: any }> {
   try {
-    const response = await fetchNHTApi('/auth/verify', {
-      method: 'GET',
-      headers: {
-        'X-API-Key': key,
-      },
-    });
+    const response = await fetchNHTApi('/users/me', { headers: { 'X-API-Key': key } }, SEARCH_TIMEOUT_MS);
     if (response.ok) {
-      const data = await response.json();
-      if (data.valid && data.user) {
-        return {
-          success: true,
-          username: data.user.username,
-          stats: data.user.stats,
-        };
+      const user = await response.json();
+      if (user?.username) {
+        return { success: true, username: user.username, stats: user.stats };
       }
     }
-    return { success: false, error: 'Invalid API Key' };
+    if (response.status === 401 || response.status === 403) {
+      return { success: false, error: 'Invalid API Key' };
+    }
+    return { success: false, error: `Could not verify the API key (${response.status})` };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
+}
+
+/**
+ * Username the stored API key belongs to. Stats are fetched per username, and
+ * a key that was saved without one (pre-filled from `.env`, or saved while
+ * verification was failing) would otherwise leave the dashboard empty for good.
+ */
+export async function resolveUsername(): Promise<string | undefined> {
+  const config = await configStorage.getValue();
+  if (config.username) return config.username;
+  if (!config.apiKey) return undefined;
+
+  const result = await verifyApiKey(config.apiKey);
+  if (!result.success || !result.username) {
+    await addDebugLog('WARN', 'API', 'Could not resolve the username for the stored API key', result.error);
+    return undefined;
+  }
+
+  // Merge into the latest config rather than the copy read before the request.
+  await configStorage.setValue({ ...(await configStorage.getValue()), username: result.username });
+  return result.username;
 }
 
 export async function fetchUserStats(username: string): Promise<any> {
@@ -534,7 +626,11 @@ export async function fetchAndCacheUserStats(username: string, force = false): P
   } catch (err) {
     console.error('Failed to fetch and cache user stats:', err);
     // Ensure lock is released even on unexpected errors
-    try { await storage.removeItem(lockKey); } catch { }
+    try {
+      await storage.removeItem(lockKey);
+    } catch {
+      /* Storage itself is failing; the lock expires on its own after LOCK_TIMEOUT. */
+    }
     return await storage.getItem(statsKey);
   }
 }

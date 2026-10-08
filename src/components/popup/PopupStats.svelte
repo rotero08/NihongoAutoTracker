@@ -4,7 +4,7 @@
   import { configStorage } from "@/lib/storage/config";
   import { ACTIVE_SETTINGS_TAB_KEY, LAST_LOG_SUBMITTED_AT_KEY } from "@/lib/constants";
   import { parsePopupSummary } from "@/lib/utils/stats-parser";
-  import { fetchAndCacheUserStats } from "@/lib/api/nihongotracker";
+  import { fetchAndCacheUserStats, resolveUsername } from "@/lib/api/nihongotracker";
   import { browser } from "wxt/browser";
 
   interface Props {
@@ -34,11 +34,11 @@
 
   async function loadStats(force = false) {
     statsData = await storage.getItem('local:userStats');
-    const cfg = await configStorage.getValue() as any;
-    if (cfg?.username) {
-      try {
-        statsData = await fetchAndCacheUserStats(cfg.username, force);
-      } catch (e) {}
+    try {
+      const username = await resolveUsername();
+      if (username) statsData = await fetchAndCacheUserStats(username, force);
+    } catch {
+      /* Offline or API down: keep showing the cached stats loaded above. */
     }
   }
 
