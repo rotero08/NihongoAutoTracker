@@ -27,11 +27,11 @@
   let videoQueue: any[] = $state([]);
   let readingQueue: any[] = $state([]);
   let stremioQueue: any[] = $state([]);
-  let currentFilter = $state("all");
+  type QueueFilter = "all" | QueueType;
+  let currentFilter = $state<QueueFilter>("all");
   let autoSendEOD = $state(false);
   let showTotalInBadge = $state(true); // Control setting for combined dynamic toolbar badge count
   let isSendingAll = $state(false);
-  let isGuideOpen = $state(true); // Default to uncollapsed (open) on first load
 
   const filteredReading = $derived(
     currentFilter === "all" || currentFilter === "reading" ? readingQueue : [],
@@ -43,6 +43,29 @@
     currentFilter === "all" || currentFilter === "stremio" ? stremioQueue : [],
   );
   const total = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
+
+  /** A tab per queue that has something in it; "All" only earns its place next to two of them. */
+  const tabs = $derived.by(() => {
+    const perType: Array<{ id: QueueFilter; label: string; count: number }> = [
+      { id: "reading", label: "Reading", count: readingQueue.length },
+      { id: "video", label: "Video", count: videoQueue.length },
+      { id: "stremio", label: "Stremio", count: stremioQueue.length },
+    ];
+    const nonEmpty = perType.filter((tab) => tab.count > 0);
+    return nonEmpty.length > 1
+      ? [{ id: "all" as QueueFilter, label: "All", count: total }, ...nonEmpty]
+      : [];
+  });
+
+  // The filtered queue can empty out (sent, cleared) while its tab is selected.
+  $effect(() => {
+    if (currentFilter !== "all" && !tabs.some((tab) => tab.id === currentFilter)) {
+      currentFilter = "all";
+    }
+  });
+
+  const filterLabel = $derived(tabs.find((tab) => tab.id === currentFilter)?.label.toLowerCase() ?? "all");
+  const scopeText = $derived(currentFilter === "all" ? "all pending logs" : `all pending ${filterLabel} logs`);
 
   export async function load() {
     const [video, reading, stremio, cfg] = await Promise.all([
@@ -64,7 +87,7 @@
     const cfg = (await configStorage.getValue()) as any;
     await configStorage.setValue({ ...cfg, autoSendEndOfDay: autoSendEOD });
     onStatus(
-      autoSendEOD ? "✓ EOD auto-send enabled" : "✓ EOD auto-send disabled",
+      autoSendEOD ? "✓ End-of-day sending on" : "✓ End-of-day sending off",
     );
   }
 
@@ -72,23 +95,27 @@
     const cfg = (await configStorage.getValue()) as any;
     await configStorage.setValue({ ...cfg, showTotalInBadge });
     onStatus(
-      showTotalInBadge ? "✓ Badge count enabled" : "✓ Badge count disabled",
+      showTotalInBadge ? "✓ Icon count on" : "✓ Icon count off",
     );
   }
 
   async function sendAll() {
     const cfg = (await configStorage.getValue()) as any;
+    // Captured up front: the selected tab falls back to "All" as soon as its
+    // queue empties, which must not widen what is being sent.
+    const inScope = (type: QueueType) => currentFilter === "all" || currentFilter === type;
+    const queues = {
+      reading: inScope("reading") ? readingQueue : [],
+      video: inScope("video") ? videoQueue : [],
+      stremio: inScope("stremio") ? stremioQueue : [],
+    };
+
     if (cfg.warnSendAll !== false) {
-      const ok = await onConfirm(
-        "Send All",
-        "Are you sure you want to send all pending logs?",
-        "warnSendAll",
-      );
+      const ok = await onConfirm("Send all", `Send ${scopeText} to NihongoTracker?`, "warnSendAll");
       if (!ok) return;
     }
 
-    // Unmatched logs warning logic during Send All
-    const hasUnmatched = readingQueue.some(
+    const hasUnmatched = queues.reading.some(
       (item) => !item.mediaId || item.mediaId === "web-reading",
     );
     if (hasUnmatched && cfg.warnUnmatched !== false) {
@@ -102,20 +129,12 @@
 
     isSendingAll = true;
     try {
-      const { sent, failed } = await sendAllQueued({
-        reading: readingQueue,
-        video: videoQueue,
-        stremio: stremioQueue,
-      });
+      const { sent, failed } = await sendAllQueued(queues);
 
       if (failed > 0) {
-        if (sent > 0) {
-          onStatus(`⚠ Sent ${sent} logs, but ${failed} failed`, true);
-        } else {
-          onStatus(`⚠ Failed to send logs`, true);
-        }
+        onStatus(sent > 0 ? `⚠ Sent ${sent} logs, but ${failed} failed` : "⚠ Failed to send logs", true);
       } else if (sent > 0) {
-        onStatus(`✓ Successfully sent all ${sent} logs`);
+        onStatus(`✓ Sent ${sent} ${sent === 1 ? "log" : "logs"}`);
       }
     } finally {
       isSendingAll = false;
@@ -124,36 +143,25 @@
   }
 
   async function clearAll() {
+    const filter = currentFilter;
     const ok = await onConfirm(
-      "Clear All",
-      "Are you sure you want to clear all pending logs?",
+      filter === "all" ? "Clear queue" : `Clear ${filterLabel} queue`,
+      `Delete ${scopeText} without sending them? This cannot be undone.`,
     );
     if (!ok) return;
     for (const type of ["video", "reading", "stremio"] as QueueType[]) {
-      if (currentFilter === "all" || currentFilter === type) {
+      if (filter === "all" || filter === type) {
         await getUpdater(type)(() => []);
       }
     }
-    onStatus("✓ Pending logs cleared successfully");
+    onStatus("✓ Queue cleared");
     await load();
-  }
-
-  function handleGuideToggle(e: Event) {
-    const isOpen = (e.target as HTMLDetailsElement).open;
-    isGuideOpen = isOpen;
-    localStorage.setItem("nt-queue-guide-open", String(isOpen));
   }
 
   let unwatches: (() => void)[] = [];
 
   onMount(() => {
     load();
-
-    // Recover guide collapsed preference state
-    const saved = localStorage.getItem("nt-queue-guide-open");
-    if (saved !== null) {
-      isGuideOpen = saved === "true";
-    }
 
     // Reload on outside changes, but never under the user's cursor mid-edit.
     const reloadUnlessEditing = () => {
@@ -172,52 +180,49 @@
 </script>
 
 <div class="tab-head">
-  <h2>Pending Logs</h2>
+  <h2>Queue</h2>
   {#if total > 0}
     <div class="tab-actions" id="queue-actions">
-      <button
-        id="send-all-btn"
-        class="btn btn-amber btn-sm"
-        onclick={sendAll}
-        disabled={isSendingAll}>{isSendingAll ? "..." : "Send All"}</button
-      >
       <button
         id="clear-all-btn"
         class="btn btn-ghost btn-sm"
         onclick={clearAll}
-        disabled={isSendingAll}>Clear All</button
+        disabled={isSendingAll}>{currentFilter === "all" ? "Clear" : `Clear ${filterLabel}`}</button
+      >
+      <button
+        id="send-all-btn"
+        class="btn btn-amber btn-sm"
+        onclick={sendAll}
+        disabled={isSendingAll}>{isSendingAll ? "Sending…" : currentFilter === "all" ? "Send all" : `Send all ${filterLabel}`}</button
       >
     </div>
   {/if}
 </div>
+<p class="hint">
+  Logs wait here until you send them, so you can fix a title, a duration or a match first.
+  A total follows its sessions unless you type a higher one yourself.
+</p>
 
-<!-- Auto-send EOD toggle box -->
-<div
-  class="field"
-  style="margin-bottom: 8px; background: color-mix(in srgb, var(--color-accent) 5%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 6px; padding: 12px 16px;"
->
-  <div class="tooltip-wrap" style="display:flex; width:100%;">
-    <label class="toggle" style="flex:1;">
-      <input
-        type="checkbox"
-        id="auto-send-end-of-day"
-        class="toggle-chk"
-        bind:checked={autoSendEOD}
-        onchange={toggleEOD}
-      />
-      <span class="toggle-track"><span class="toggle-thumb"></span></span>
-      Automatically send today's queued logs at end of day (23:59)
-    </label>
-    <span class="tooltip">This will also submit unmatched media</span>
-  </div>
+<div class="field">
+  <label class="toggle">
+    <input
+      type="checkbox"
+      id="auto-send-end-of-day"
+      class="toggle-chk"
+      bind:checked={autoSendEOD}
+      onchange={toggleEOD}
+    />
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    <span class="toggle-text">Send the queue automatically at the end of each day
+      <span class="toggle-desc">
+        Runs at 23:59. If the browser is closed then, earlier days are sent the next time it starts.
+        Reading logs without a match are sent unmatched.
+      </span>
+    </span>
+  </label>
 </div>
-
-<!-- Discrete Badge toggle option -->
-<div class="field" style="margin-bottom: 20px; padding-left: 4px;">
-  <label
-    class="toggle"
-    style="font-size: 11.5px; color: var(--color-text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; user-select: none;"
-  >
+<div class="field">
+  <label class="toggle">
     <input
       type="checkbox"
       id="show-total-in-badge"
@@ -225,97 +230,51 @@
       bind:checked={showTotalInBadge}
       onchange={toggleBadgeOption}
     />
-    <span
-      class="toggle-track"
-      style="transform: scale(0.85); margin-right: 4px;"
-      ><span class="toggle-thumb"></span></span
-    >
-    Show total pending queue items as a badge on the extension icon
+    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    <span class="toggle-text">Show the number of queued logs on the toolbar icon</span>
   </label>
 </div>
 
-<!-- Filter tabs -->
-<div class="queue-tabs">
-  {#each ["all", "video", "reading", "stremio"] as filter}
-    <button
-      class="q-tab"
-      class:active={currentFilter === filter}
-      onclick={() => (currentFilter = filter)}
-    >
-      {filter.charAt(0).toUpperCase() + filter.slice(1)}
-    </button>
-  {/each}
-</div>
-
-<!-- Compact, borderless, backgroundless collapsible Guide -->
-<details
-  class="info-guide"
-  open={isGuideOpen}
-  ontoggle={handleGuideToggle}
-  style="background: none; border: none; margin-bottom: 12px; font-family: var(--font-sans);"
->
-  <summary
-    style="padding: 2px 0; font-size: 11px; font-weight: bold; cursor: pointer; color: var(--color-accent); list-style: none; display: flex; align-items: center; gap: 4px; user-select: none; width: max-content;"
-  >
-    <span>ⓘ Click to show/hide Guide & Queue Rules</span>
-  </summary>
-  <div
-    style="padding-top: 8px; font-size: 11px; line-height: 1.45; display: flex; flex-direction: column; gap: 6px; color: var(--color-text-muted);"
-  >
-    <div>
-      <strong style="color: var(--color-text);">Auto-Sum:</strong> Editing session
-      values updates the totals automatically. Manually typing a higher total overrides
-      the sum.
-    </div>
-    <div>
-      <strong style="color: var(--color-text);">Music Videos:</strong> Excluded
-      by default to preserve log quality. Enable them in
-      <a
-        href="#video"
-        onclick={(e) => {
-          e.preventDefault();
-          if (onTabChange) onTabChange("video");
-        }}
-        style="color: var(--color-accent); text-decoration: underline;"
-        >Video Settings</a
-      >.
-    </div>
+{#if tabs.length > 0}
+  <div class="queue-tabs" role="tablist">
+    {#each tabs as tab (tab.id)}
+      <button
+        class="q-tab"
+        class:active={currentFilter === tab.id}
+        role="tab"
+        aria-selected={currentFilter === tab.id}
+        onclick={() => (currentFilter = tab.id)}
+      >
+        {tab.label}<span class="q-count">{tab.count}</span>
+      </button>
+    {/each}
   </div>
-</details>
+{/if}
 
-<!-- Queue items -->
 <div id="queue-list">
   {#if total === 0}
-    <div class="empty-state">Queue is empty</div>
+    <div class="empty-state">
+      <strong>Nothing waiting to be sent</strong>
+      <span>
+        Japanese videos you watch and pages you read are collected here. What counts is set under
+        <a
+          href="#video"
+          onclick={(e) => {
+            e.preventDefault();
+            onTabChange?.("video");
+          }}>Video</a
+        >.
+      </span>
+    </div>
   {:else}
     {#each filteredReading as item (item.id)}
-      <SettingsQueueItem
-        {item}
-        type="reading"
-        {onStatus}
-        {onConfirm}
-        onRefresh={load}
-      />
+      <SettingsQueueItem {item} type="reading" {onStatus} {onConfirm} onRefresh={load} />
     {/each}
-
     {#each filteredVideo as item (item.id)}
-      <SettingsQueueItem
-        {item}
-        type="video"
-        {onStatus}
-        {onConfirm}
-        onRefresh={load}
-      />
+      <SettingsQueueItem {item} type="video" {onStatus} {onConfirm} onRefresh={load} />
     {/each}
-
     {#each filteredStremio as item (item.id)}
-      <SettingsQueueItem
-        {item}
-        type="stremio"
-        {onStatus}
-        {onConfirm}
-        onRefresh={load}
-      />
+      <SettingsQueueItem {item} type="stremio" {onStatus} {onConfirm} onRefresh={load} />
     {/each}
   {/if}
 </div>

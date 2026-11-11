@@ -68,6 +68,8 @@ export interface TrackerConfig {
   useStaticInPageLogo?: boolean;
   syncPopupWithReaderTheme?: boolean;
   logMusicVideos?: boolean;
+  /** Also log Japanese videos that are subtitled in another language. Off by default. */
+  logSubtitledVideos?: boolean;
 
   /* ── Optional Stremio via Trakt integration ── */
   stremioEnabled?: boolean;
@@ -314,6 +316,8 @@ export interface VideoSiteAdapter {
   getChannelName(): Promise<string>;
   isLikelyJapanese(): boolean;
   isMusic(): boolean;
+  /** Whether the current video is Japanese audio subtitled in another language (translated clips). */
+  isForeignSubtitled?(): boolean;
   /** Whether the current video is a broadcast that is live right now. */
   isLive?(): boolean;
   /** Title of the current video from a source tied to its id; empty when unknown. */

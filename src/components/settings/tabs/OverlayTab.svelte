@@ -45,7 +45,7 @@
       allowListOnly,
       overlayPosition: overlayPos,
     });
-    onStatus("✓ Settings Auto-Saved");
+    onStatus("✓ Saved");
   }
 
   async function reset() {
@@ -59,7 +59,7 @@
       skipSites: [...BUILT_IN_SKIP],
     });
     await load();
-    onStatus("✓ Overlay Defaults Restored");
+    onStatus("✓ Overlay settings reset");
   }
 
   async function addSite(list: "allow" | "skip") {
@@ -76,7 +76,7 @@
       if (list === "allow") allowInput = "";
       else skipInput = "";
       await load();
-      onStatus(`✓ Added to ${list === "allow" ? "Whitelist" : "Blacklist"}`);
+      onStatus(`✓ Added to the "${list === "allow" ? "always" : "never"}" list`);
     }
   }
 
@@ -90,7 +90,7 @@
       [key]: sites.filter((d) => d !== domain),
     });
     await load();
-    onStatus(`✓ Removed from ${list === "allow" ? "Whitelist" : "Blacklist"}`);
+    onStatus(`✓ Removed from the "${list === "allow" ? "always" : "never"}" list`);
   }
 
   /* Inline edit triggers */
@@ -150,10 +150,9 @@
   load();
 </script>
 
-<div class="tab-head"><h2>Active Text Overlay</h2></div>
+<div class="tab-head"><h2>Reading overlay</h2></div>
 <p class="hint">
-  Configure the behavior, positioning, and target websites for the floating,
-  draggable reading timer.
+  The floating timer that counts reading time and characters on Japanese pages.
 </p>
 
 <div class="field">
@@ -166,12 +165,12 @@
       onchange={persist}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Track and attach active reading time on manual context-menu logs
+    Add the time spent reading to logs made from the right-click menu
   </label>
 </div>
 
 <div class="field">
-  <span class="label">Default Screen Position</span>
+  <span class="label">Position</span>
   <div class="pos-grid">
     <label class="pos-opt"
       ><input
@@ -216,29 +215,16 @@
         value="hidden"
         bind:group={overlayPos}
         onchange={persist}
-      /> Hidden (Disable floating overlay completely)</label
+      /> Hidden (no overlay)</label
     >
   </div>
 </div>
 
 <!-- Sites sub-section -->
-<div class="sub-head"><h3>Domain Whitelists & Blacklists</h3></div>
-<p class="hint" style="margin-top:0; line-height: 1.5;">
-  NihongoAutoTracker automatically detects Japanese characters on any website to
-  dynamically mount the tracking overlay.
-  <br /><br />
-  •
-  <strong style="color:var(--color-success)">Whitelist (Force Overlay):</strong>
-  Web domains where the floating overlay will <strong>always</strong> appear,
-  bypassing automatic Japanese language detection.
-  <br />
-  • <strong style="color:var(--color-error)">Blacklist (Block Overlay):</strong>
-  Web domains where the floating overlay is <strong>permanently blocked</strong>
-  from appearing, even if Japanese characters are detected.
-  <br /><br />
-  <span style="color: var(--color-text-muted);"
-    >Double-click any domain listed below to inline edit its host name.</span
-  >
+<div class="sub-head"><h3>Where the overlay appears</h3></div>
+<p class="hint">
+  The overlay shows up on pages that contain Japanese text. Sites on the "always" list get it
+  without that check; sites on the "never" list do not get it at all. Double-click a site to edit it.
 </p>
 
 <div class="field" style="margin-bottom: 24px;">
@@ -251,7 +237,7 @@
       onchange={persist}
     />
     <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    Only show overlay on Whitelisted domains (Disables automatic page analysis)
+    Only show the overlay on the "always" list, without checking pages for Japanese
   </label>
 </div>
 
@@ -265,7 +251,7 @@
     onclick={() => (allowOpen = !allowOpen)}
   >
     <div class="sites-head-left">
-      <span class="sites-head-label allow">Whitelist (Force Overlay)</span>
+      <span class="sites-head-label allow">Always show on</span>
       <span class="sites-head-count" id="allow-count">{allowSites.length}</span>
     </div>
     <span class="sites-chevron"
@@ -343,7 +329,7 @@
     onclick={() => (skipOpen = !skipOpen)}
   >
     <div class="sites-head-left">
-      <span class="sites-head-label skip">Blacklist (Block Overlay)</span>
+      <span class="sites-head-label skip">Never show on</span>
       <span class="sites-head-count" id="skip-count">{skipSites.length}</span>
     </div>
     <span class="sites-chevron"
@@ -414,6 +400,6 @@
 <!-- Appended Reset Button -->
 <div style="display:flex; gap:10px; margin-top:36px;">
   <button id="reset-overlay-btn" class="btn btn-ghost" onclick={reset}
-    >Revert to Default</button
+    >Reset overlay settings</button
   >
 </div>

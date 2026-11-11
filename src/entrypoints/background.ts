@@ -234,6 +234,14 @@ export default defineBackground(() => {
     });
   });
 
+  /* ── End-of-day auto-send ───────────────────────────────────────────────── */
+
+  const FLUSH_ALARM = 'flushDaily';
+  let flushInFlight = false;
+
+  const localDayKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
   function getNext2359Time(): number {
     const now = new Date();
     const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 0, 0);
@@ -246,9 +254,79 @@ export default defineBackground(() => {
   function scheduleFlushDailyAlarm() {
     if (!browser.alarms) return;
     const targetTime = getNext2359Time();
-    browser.alarms.clear('flushDaily').then(() => {
-      browser.alarms.create('flushDaily', { when: targetTime });
+    browser.alarms.clear(FLUSH_ALARM).then(() => {
+      browser.alarms.create(FLUSH_ALARM, { when: targetTime });
     }).catch(() => null);
+  }
+
+  /** When the item was last worked on: its newest session, or its own date. */
+  function lastActivityTime(item: any): number {
+    const times = [item.date, ...(item.sessions ?? []).map((s: any) => s.date)]
+      .map((date) => new Date(date).getTime())
+      .filter((time) => !Number.isNaN(time));
+    return times.length > 0 ? Math.max(...times) : 0;
+  }
+
+  /**
+   * Send what the end of the day should have sent.
+   *
+   * At 23:59 that is the whole queue. At any other time (the browser was closed
+   * at 23:59, so this runs at the next start) it is everything from before
+   * today — which is also how items left behind on earlier days get caught up.
+   * Each covered day is attempted once, so an item the server keeps rejecting
+   * is not retried every time the worker wakes up.
+   */
+  async function runEndOfDayFlush() {
+    if (flushInFlight) return;
+    flushInFlight = true;
+    try {
+      const cfg = await configStorage.getValue();
+      if (!cfg.autoSendEndOfDay || !cfg.apiKey) return;
+
+      const now = new Date();
+      const isEndOfDay = now.getHours() === 23 && now.getMinutes() >= 59;
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const cutoff = isEndOfDay ? now.getTime() : startOfToday - 1;
+      const coveredDay = localDayKey(new Date(cutoff));
+
+      if ((await storage.getItem(LAST_FLUSH_DATE_KEY)) === coveredDay) return;
+
+      const totals = { sent: 0, failed: 0 };
+      const queues: Array<[QueueType, { getValue(): Promise<any[]> }]> = [
+        ['reading', readingQueueStorage],
+        ['video', videoQueueStorage],
+        ['stremio', stremioQueueStorage],
+      ];
+
+      for (const [type, queue] of queues) {
+        for (const item of await queue.getValue()) {
+          if (lastActivityTime(item) > cutoff) continue;
+          try {
+            // Each item is settled as it is sent, so anything queued while the
+            // flush is running is left untouched.
+            const result = await submitQueueItem(item, type, { silent: true });
+            totals.sent += result.sent;
+            totals.failed += result.failed;
+          } catch (err) {
+            totals.failed++;
+            await reportError(`End-of-day send failed for a ${type} item`, err);
+          }
+        }
+      }
+
+      await storage.setItem(LAST_FLUSH_DATE_KEY, coveredDay);
+      refreshBadge();
+
+      if (totals.failed > 0) {
+        notify('End-of-day send failed', `${totals.failed} queued ${totals.failed === 1 ? 'log' : 'logs'} could not be sent and stayed in the queue.`);
+      } else if (totals.sent > 0) {
+        notify('Queue sent', `${totals.sent} queued ${totals.sent === 1 ? 'log was' : 'logs were'} sent to NihongoTracker.`);
+      }
+    } catch (err) {
+      await reportError('End-of-day send failed', err);
+    } finally {
+      flushInFlight = false;
+    }
   }
 
   /**
@@ -281,48 +359,11 @@ export default defineBackground(() => {
         await pollStremioTrakt(true);
         return;
       }
-      if (alarm.name !== 'flushDaily') return;
+      if (alarm.name !== FLUSH_ALARM) return;
 
       scheduleFlushDailyAlarm();
-
-      const cfg = await configStorage.getValue();
-      if (!cfg.autoSendEndOfDay) return;
-
-      const flushDate = new Date();
-      if (flushDate.getHours() < 4) {
-        flushDate.setDate(flushDate.getDate() - 1);
-      }
-      const targetDateStr = flushDate.toLocaleDateString();
-
-      const lastFlushDate = await storage.getItem(LAST_FLUSH_DATE_KEY);
-      if (lastFlushDate === targetDateStr) return;
-
-      await flushTodayQueue('reading', readingQueueStorage, targetDateStr);
-      await flushTodayQueue('video', videoQueueStorage, targetDateStr);
-      await flushTodayQueue('stremio', stremioQueueStorage, targetDateStr);
-      await storage.setItem(LAST_FLUSH_DATE_KEY, targetDateStr);
+      await runEndOfDayFlush();
     });
-  }
-
-  /**
-   * Send every queued item that was active on the given day. Each item is
-   * settled by `submitQueueItem` as it goes, so anything queued while the flush
-   * is running is left untouched instead of being overwritten by a stale copy.
-   */
-  async function flushTodayQueue(type: QueueType, qStorage: { getValue(): Promise<any[]> }, targetDateStr: string) {
-    const isTargetDay = (date: string) => new Date(date).toLocaleDateString() === targetDateStr;
-
-    for (const item of await qStorage.getValue()) {
-      const activeToday = isTargetDay(item.date) || (item.sessions ?? []).some((s: any) => isTargetDay(s.date));
-      if (!activeToday) continue;
-
-      try {
-        await submitQueueItem(item, type);
-      } catch (err) {
-        await reportError(`End-of-day flush failed for a ${type} item`, err);
-      }
-    }
-    refreshBadge();
   }
 
   /** @param force - Skip the "polled recently" check (the alarm already is the schedule). */
@@ -461,6 +502,8 @@ export default defineBackground(() => {
     // worker restarts many times an hour and must not poll Trakt on each start.
     void syncStremioAlarm(val || {});
     void pollStremioTrakt(false);
+    // And on anything the end-of-day send missed because the browser was closed.
+    void runEndOfDayFlush();
   }).catch((err) => reportError('Could not read the configuration at startup', err));
 
   configStorage.watch(async (newVal) => {

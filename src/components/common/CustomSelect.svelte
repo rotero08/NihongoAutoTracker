@@ -122,11 +122,9 @@
         position: relative;
     }
     .select-label {
-        font-size: 11px;
+        font-size: 12px;
         font-weight: 600;
         color: var(--color-text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
     }
     .select-trigger-wrap {
         position: relative;

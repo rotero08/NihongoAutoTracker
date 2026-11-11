@@ -3,6 +3,7 @@ import { stripVideoTitle } from '@/lib/utils/text-parsing';
 import { cleanUrl } from '@/lib/utils/url';
 import {
   getSpokenLanguage,
+  isForeignSubtitledContent,
   isJapaneseContent,
   isMusicContent,
   type VideoFacts,
@@ -27,6 +28,9 @@ function factsFromSnapshot(snapshot: YouTubePlayerSnapshot): VideoFacts {
     isLiveNow: snapshot.isLiveNow,
     spokenLanguage: getSpokenLanguage(snapshot),
     songs: snapshot.songs,
+    uploadedCaptionLanguages: snapshot.captionTracks
+      .filter((track) => track.kind !== 'asr')
+      .map((track) => track.languageCode),
   };
 }
 
@@ -62,6 +66,7 @@ function factsFromDom(videoId: string | null): VideoFacts | null {
       root?.querySelectorAll('ytd-horizontal-card-list-renderer .ytVideoAttributeViewModelTitle') ?? [],
       (el) => el.textContent?.trim() ?? '',
     ).filter(Boolean),
+    uploadedCaptionLanguages: [],
   };
 }
 
@@ -103,6 +108,13 @@ export const youtubeAdapter: VideoSiteAdapter = {
 
     const facts = getVideoFacts();
     return !!facts && isJapaneseContent(facts);
+  },
+
+  isForeignSubtitled(): boolean {
+    if (!window.location.hostname.includes('youtube.com')) return false;
+
+    const facts = getVideoFacts();
+    return !!facts && isForeignSubtitledContent(facts);
   },
 
   isLive(): boolean {

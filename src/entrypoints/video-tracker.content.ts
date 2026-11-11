@@ -101,8 +101,13 @@ function classifyVideo(fresh = false): VideoClassification {
     return classification;
   }
 
+  // A clip subtitled in another language is reading practice in that language,
+  // so unless the user opted in it is handled like any other non-Japanese video.
+  const countsAsJapanese = adapter.isLikelyJapanese()
+    && (cachedConfig.logSubtitledVideos === true || !(adapter.isForeignSubtitled?.() ?? false));
+
   classification = {
-    isJapanese: adapter.isLikelyJapanese(),
+    isJapanese: countsAsJapanese,
     isMusic: adapter.isMusic(),
     isLive: adapter.isLive?.() ?? false,
   };
@@ -865,6 +870,7 @@ export default defineContentScript({
       configStorage.watch((newCfg) => {
         if (newCfg) {
           cachedConfig = newCfg;
+          invalidateClassification();
           applyCachedTheme(newCfg);
 
           const badge = document.getElementById(BADGE_ID);

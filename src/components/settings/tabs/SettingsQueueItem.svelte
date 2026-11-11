@@ -103,6 +103,10 @@
 
   const isLinked = $derived(isQueueItemLinked(item, type));
   const source = $derived(getQueueItemSource(item, type));
+  /** Videos are keyed by their URL, which is of no use as text but makes a good link. */
+  const videoUrl = $derived(
+    type === "video" && /^https?:\/\//.test(item.contentTitleEnglish || "") ? item.contentTitleEnglish : "",
+  );
 
   let isSessionsOpen = $state(true);
 
@@ -608,12 +612,14 @@
 
   <!-- Mid row (channel/reader metadata name & date input) -->
   <div class="qi-row mid-row">
-    <span
-      class="qi-meta"
-      title={source.label + (source.detail ? " " + source.detail : "")}
-    >
-      {source.label}
-      {source.detail}
+    <span class="qi-meta" title={videoUrl ? source.label : `${source.label} ${source.detail}`.trim()}>
+      {#if videoUrl}
+        {source.label}
+        <a class="qi-open" href={videoUrl} target="_blank" rel="noreferrer">Open video</a>
+      {:else}
+        {source.label}
+        {source.detail}
+      {/if}
     </span>
     <input
       type="datetime-local"
