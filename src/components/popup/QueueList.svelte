@@ -11,6 +11,10 @@
     readingQueue: any[];
     stremioQueue: any[];
     currentFilter: string;
+    /** Storage has been read at least once; until then nothing is claimed about the queue. */
+    loaded: boolean;
+    hasApiKey: boolean;
+    onOpenApiSettings: () => void;
     onStatusMessage: (msg: string, err?: boolean) => void;
     onConfirm: (title: string, msg: string) => Promise<boolean>;
     onRefresh: () => void;
@@ -21,6 +25,9 @@
     readingQueue,
     stremioQueue,
     currentFilter,
+    loaded,
+    hasApiKey,
+    onOpenApiSettings,
     onStatusMessage,
     onConfirm,
     onRefresh,
@@ -37,85 +44,89 @@
     currentFilter === "all" || currentFilter === "stremio" ? stremioQueue : [],
   );
   const totalFiltered = $derived(filteredReading.length + filteredVideo.length + filteredStremio.length);
-  const totalAll = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
 </script>
 
-<div class="queue-list">
-  {#if totalAll === 0}
-    <div class="empty-msg">Queue is empty.</div>
-  {:else if totalFiltered === 0}
-    <div class="empty-msg">No {currentFilter} items.</div>
-  {:else}
+{#if !loaded}
+  <div class="queue-list"></div>
+{:else if totalFiltered === 0}
+  <div class="empty">
+    {#if hasApiKey}
+      <p class="empty-title">Nothing waiting to be sent</p>
+      <p class="empty-hint">Japanese videos you watch and pages you read are collected here before they are logged.</p>
+    {:else}
+      <p class="empty-title">Connect your account</p>
+      <p class="empty-hint">Add your NihongoTracker API key so your immersion can be logged.</p>
+      <button class="empty-action" onclick={onOpenApiSettings}>Add API key</button>
+    {/if}
+  </div>
+{:else}
+  <div class="queue-list">
     {#each filteredReading as item (item.id)}
-      <QueueItem
-        {item}
-        type="reading"
-        {onStatusMessage}
-        {onConfirm}
-        {onRefresh}
-      />
+      <QueueItem {item} type="reading" {onStatusMessage} {onConfirm} {onRefresh} />
     {/each}
     {#each filteredVideo as item (item.id)}
-      <QueueItem
-        {item}
-        type="video"
-        {onStatusMessage}
-        {onConfirm}
-        {onRefresh}
-      />
+      <QueueItem {item} type="video" {onStatusMessage} {onConfirm} {onRefresh} />
     {/each}
     {#each filteredStremio as item (item.id)}
-      <QueueItem
-        {item}
-        type="stremio"
-        {onStatusMessage}
-        {onConfirm}
-        {onRefresh}
-      />
+      <QueueItem {item} type="stremio" {onStatusMessage} {onConfirm} {onRefresh} />
     {/each}
-  {/if}
-</div>
+  </div>
+{/if}
 
 <style>
   .queue-list {
     width: 100%;
-    box-sizing: border-box;
-    padding: 7px 8px 10px; /* Reduced side gaps significantly to let cards expand */
     flex: 1;
-    max-height: 400px;
+    min-height: 0;
+    padding: 8px;
     overflow-y: auto;
-    overflow-x: hidden !important;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
-    min-width: 0;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
   }
 
   .queue-list :global(.qi) {
     width: 100%;
-    max-width: 100%;
     min-width: 0;
-    align-self: stretch;
-    box-sizing: border-box;
+    flex-shrink: 0;
   }
 
-  .queue-list::-webkit-scrollbar {
-    width: 0 !important;
-    height: 0 !important;
-    display: none !important;
-  }
-  .queue-list::-webkit-scrollbar-thumb {
-    background: var(--color-border-hover, #242d42);
-    border-radius: 2px;
-  }
-  .empty-msg {
+  .empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 40px 24px;
     text-align: center;
-    color: var(--color-text-dimmed, #3a4a60);
-    font-size: 11px;
-    padding: 22px 0;
-    margin: auto;
+  }
+  .empty-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .empty-hint {
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--color-text-muted);
+  }
+  .empty-action {
+    margin-top: 8px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: var(--rounded-btn, 4px);
+    background: var(--color-accent);
+    color: var(--color-accent-text, #09090f);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s;
+  }
+  .empty-action:hover {
+    background: var(--color-accent-hover, var(--color-accent));
   }
 </style>

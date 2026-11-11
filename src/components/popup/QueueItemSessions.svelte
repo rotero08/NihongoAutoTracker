@@ -286,7 +286,7 @@
     transition:
       background 0.15s,
       color 0.15s;
-    color-scheme: dark;
+    color-scheme: var(--nt-color-scheme, dark);
     text-align: right;
     margin-left: auto;
   }

@@ -49,7 +49,6 @@
   } = $props();
 
   let sending = $state(false);
-  let isUnlinkHovered = $state(false);
   let titleValue = $state("");
   let titleInputEl = $state<HTMLInputElement | undefined>(undefined);
 
@@ -66,14 +65,12 @@
   );
   const isLinked = $derived(isQueueItemLinked(item, type));
 
-  // Synchronized lifecycle tracking prevents unmatched states hanging on matched swaps
-  $effect(() => {
-    if (!isLinked) {
-      isUnlinkHovered = false;
-    }
-  });
-
   const source = $derived(getQueueItemSource(item, type));
+  /** Videos are keyed by their URL, which is of no use as text but makes a good link. */
+  const videoUrl = $derived(
+    type === "video" && /^https?:\/\//.test(item.contentTitleEnglish || "") ? item.contentTitleEnglish : "",
+  );
+  const sourceText = $derived(type === "video" ? source.label : `${source.label} ${source.detail}`.trim());
 
   const sessions = $derived(item.sessions ?? []);
   const logType = $derived(normalizeLogType(item.logType));
@@ -301,46 +298,38 @@
         />
       {/if}
     </div>
-    {#if isLinked}
-      {#if isSearchable}
-        <button
-          type="button"
-          class="qi-link-status"
-          title="Unlink match"
-          onclick={() => handleUnlink(item.id, type, onRefresh, onStatusMessage)}
-          onmouseenter={() => (isUnlinkHovered = true)}
-          onmouseleave={() => (isUnlinkHovered = false)}
-          style={isUnlinkHovered ? "color: var(--color-error, #f0706a) !important;" : "color: var(--color-success, #3ddc84) !important;"}
-        >
-          {#if isUnlinkHovered}
-            <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-              <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
-              <line x1="8" y1="12" x2="16" y2="12"/>
-              <line x1="2" y1="2" x2="22" y2="22"/>
-            </svg>
-          {:else}
-            <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-              <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-              <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
-              <line x1="8" y1="12" x2="16" y2="12"/>
-            </svg>
-          {/if}
-        </button>
-      {:else}
-        <span class="qi-link-status" title="Matched" style="cursor:default; color: var(--color-success, #3ddc84) !important;">
-          <svg style="width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;" viewBox="0 0 24 24">
-            <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
-            <path d="M15 7h2a5 5 0 1 1 0 10h-2"/>
-            <line x1="8" y1="12" x2="16" y2="12"/>
-          </svg>
-        </span>
-      {/if}
+    {#if videoUrl}
+      <a class="qi-action" href={videoUrl} target="_blank" rel="noreferrer" title="Open video" aria-label="Open video">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" />
+          <line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+      </a>
+    {:else if isLinked && isSearchable}
+      <button
+        type="button"
+        class="qi-action qi-link-status"
+        title="Matched — click to unlink"
+        aria-label="Unlink match"
+        onclick={() => handleUnlink(item.id, type, onRefresh, onStatusMessage)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+          <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+        </svg>
+      </button>
     {/if}
-    <button class="qi-del" title="Remove" onclick={handleDelete}>×</button>
+    <button class="qi-action qi-del" title="Remove from queue" aria-label="Remove from queue" onclick={handleDelete}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    </button>
   </div>
 
-  <div class="qi-meta-row" style="flex-wrap:wrap; gap:0;">
+  <div class="qi-meta-row">
     {#if isRead}
       <input
         class="ghost-num qi-chars-num"
@@ -385,7 +374,7 @@
     {/if}
     <span class="qi-meta-sep">·</span>
     <div class="qi-mid">
-      <span class="qi-channel" title="{source.label} {source.detail}">{source.label} {source.detail}</span>
+      <span class="qi-channel" title={sourceText}>{sourceText}</span>
     </div>
     {#if isStremio}
       <div style="flex-basis: 100%; height: 0;"></div>
@@ -425,18 +414,19 @@
         </div>
       </div>
     {/if}
-    <div style="flex-basis: 100%; height: 6px;"></div>
+  </div>
+
+  <div class="qi-foot">
     <input
       class="ghost-date qi-date"
       type="datetime-local"
       value={toLocalDT(defaultDateStr)}
-      style="text-align:left; margin-left:0;"
       onchange={handleDateChange}
       onfocus={rememberEditableStart}
       onkeydown={handleEditableKeydown}
       aria-label="Log date"
     />
-    <button class="qi-send" onclick={handleSend} disabled={sending} style="margin-left:auto;">Send</button>
+    <button class="qi-send" onclick={handleSend} disabled={sending}>{sending ? "Sending…" : "Send"}</button>
   </div>
 
   <QueueItemSessions
@@ -464,20 +454,20 @@
     display: flex;
     align-items: center;
     font-family: var(--font-mono, monospace) !important;
-    font-size: 10px !important;
+    font-size: 11px !important;
     color: var(--color-text-muted, #7a8ca5) !important;
     gap: 4px;
     margin-top: 6px;
   }
   .stremio-meta-row span {
     font-family: var(--font-mono, monospace) !important;
-    font-size: 10px !important;
+    font-size: 11px !important;
     color: var(--color-text-dimmed, #7a8ca5) !important;
   }
   .qi-episodes-num {
     width: 14px;
     font-family: var(--font-mono, monospace) !important;
-    font-size: 10px !important;
+    font-size: 11px !important;
     font-weight: bold !important;
     color: var(--color-accent, #f0b429) !important;
     background: none !important;

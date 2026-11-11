@@ -51,8 +51,10 @@
   let readingQueue: any[] = $state([]);
   let stremioQueue: any[] = $state([]);
   let hasApiKey = $state(false);
+  /** False until the first read of storage, so nothing flashes as "not set up". */
+  let loaded = $state(false);
   let username = $state("");
-  let currentFilter = $state("all");
+  let currentFilter = $state<QueueFilter>("all");
   let isSendingAll = $state(false);
   let confirmModal = $state<any>(null);
 
@@ -76,11 +78,35 @@
     const cfg = (await configStorage.getValue()) as any;
     cfg.syncPopupWithReaderTheme = false;
     await configStorage.setValue(cfg);
-    showStatus("✓ Synced theme unlocked");
+    showStatus("✓ Popup theme unlocked");
     applyInitialTheme(cfg, activeUrl, null);
   }
 
   const total = $derived(videoQueue.length + readingQueue.length + stremioQueue.length);
+
+  type QueueFilter = "all" | "video" | "reading" | "stremio";
+
+  /** A tab per queue that has something in it; "All" only earns its place next to two of them. */
+  const tabs = $derived.by(() => {
+    const perType: Array<{ id: QueueFilter; label: string; count: number }> = [
+      { id: "reading", label: "Reading", count: readingQueue.length },
+      { id: "video", label: "Video", count: videoQueue.length },
+      { id: "stremio", label: "Stremio", count: stremioQueue.length },
+    ];
+    const nonEmpty = perType.filter((tab) => tab.count > 0);
+    return nonEmpty.length > 1
+      ? [{ id: "all" as QueueFilter, label: "All", count: total }, ...nonEmpty]
+      : [];
+  });
+
+  // The filtered queue can empty out (sent, cleared) while its tab is selected.
+  $effect(() => {
+    if (currentFilter !== "all" && !tabs.some((tab) => tab.id === currentFilter)) {
+      currentFilter = "all";
+    }
+  });
+
+  const filterLabel = $derived(tabs.find((tab) => tab.id === currentFilter)?.label.toLowerCase() ?? "all");
 
   function isCustomThemeId(id: string): boolean {
     return id === "custom" || id.startsWith("custom_");
@@ -258,6 +284,7 @@
     selectedTheme = cfg?.selectedThemeId ?? cfg?.theme ?? "dark-amber";
     selectedFont = cfg?.font ?? "sans";
     syncPopupWithReaderTheme = cfg?.syncPopupWithReaderTheme !== false;
+    loaded = true;
 
     if (cfg) {
       const themeVal = cfg.selectedThemeId ?? cfg.theme ?? "dark-amber";
@@ -488,7 +515,12 @@
   }
 
   /* ── Settings Actions ── */
-  async function openSettings() {
+  /** @param tab - Settings section to land on; omitted, the last one used is kept. */
+  async function openSettings(tab?: string) {
+    if (tab) {
+      browser?.runtime?.sendMessage?.({ action: "OPEN_SETTINGS", tab })?.catch?.(() => {});
+      return;
+    }
     if (browser?.runtime?.openOptionsPage) {
       try {
         await browser.runtime.openOptionsPage();
@@ -524,18 +556,31 @@
     return window.confirm(msg);
   }
 
+  /** The queues the bulk actions apply to: everything, or only the selected tab. */
+  function queuesInScope() {
+    const inScope = (type: QueueFilter) => currentFilter === "all" || currentFilter === type;
+    return {
+      reading: inScope("reading") ? readingQueue : [],
+      video: inScope("video") ? videoQueue : [],
+      stremio: inScope("stremio") ? stremioQueue : [],
+    };
+  }
+
   async function handleSendAll() {
     const cfg = (await configStorage.getValue()) as any;
+    const queues = queuesInScope();
+    const scope = currentFilter === "all" ? "all pending logs" : `all pending ${filterLabel} logs`;
+
     if (cfg.warnSendAll !== false) {
       const ok = await confirmModal.confirm(
-        "Send All",
-        "Are you sure you want to send all pending logs?",
+        "Send all",
+        `Send ${scope} to NihongoTracker?`,
         "warnSendAll",
       );
       if (!ok) return;
     }
 
-    const hasUnmatched = readingQueue.some(
+    const hasUnmatched = queues.reading.some(
       (item) => !item.mediaId || item.mediaId === "web-reading",
     );
     if (hasUnmatched && cfg.warnUnmatched !== false) {
@@ -549,16 +594,12 @@
 
     isSendingAll = true;
     try {
-      const { sent, failed } = await sendAllQueued({
-        reading: readingQueue,
-        video: videoQueue,
-        stremio: stremioQueue,
-      });
+      const { sent, failed } = await sendAllQueued(queues);
 
       if (failed > 0) {
         showStatus(sent > 0 ? `⚠ Sent ${sent} logs, but ${failed} failed` : "⚠ Failed to send logs", true);
       } else if (sent > 0) {
-        showStatus(`✓ Successfully sent all ${sent} logs`);
+        showStatus(`✓ Sent ${sent} ${sent === 1 ? "log" : "logs"}`);
       }
     } finally {
       isSendingAll = false;
@@ -567,130 +608,78 @@
   }
 
   async function handleClearAll() {
+    // Captured up front: the selected tab falls back to "All" as soon as its
+    // queue empties, which must not widen what is being cleared.
+    const filter = currentFilter;
+    const label = filterLabel;
+    const inScope = (type: QueueFilter) => filter === "all" || filter === type;
+
     const ok = await confirmModal.confirm(
-      "Clear All",
-      "Are you sure you want to clear all pending logs?",
+      filter === "all" ? "Clear queue" : `Clear ${label} queue`,
+      `Delete ${filter === "all" ? "all pending logs" : `all pending ${label} logs`} without sending them? This cannot be undone.`,
     );
     if (!ok) return;
-    if (currentFilter === "all" || currentFilter === "video") {
-      await updateVideoQueueAtomic(() => []);
-    }
-    if (currentFilter === "all" || currentFilter === "reading") {
-      await updateReadingQueueAtomic(() => []);
-    }
-    if (currentFilter === "all" || currentFilter === "stremio") {
-      await updateStremioQueueAtomic(() => []);
-    }
-    await loadData();
-  }
 
-  function setFilter(filter: string) {
-    currentFilter = filter;
+    if (inScope("video")) await updateVideoQueueAtomic(() => []);
+    if (inScope("reading")) await updateReadingQueueAtomic(() => []);
+    if (inScope("stremio")) await updateStremioQueueAtomic(() => []);
+    await loadData();
   }
 </script>
 
 <header class="header">
   <div class="brand">
-    <div
-      class="brand-mark"
-      style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: transparent;"
-    >
+    <div class="brand-mark">
       {@html DYNAMIC_LOGO_SVG}
     </div>
     <div class="brand-text">
       <div class="brand-name">NihongoAutoTracker</div>
-      <div class="pill" class:pill-ok={hasApiKey} class:pill-off={!hasApiKey}>
-        {hasApiKey ? "API Key ✓" : "No API Key"}
-      </div>
+      {#if !loaded}
+        <div class="account">&nbsp;</div>
+      {:else if hasApiKey}
+        <div class="account" title="Logging to this NihongoTracker account">
+          <span class="status-dot ok"></span>{username ? `@${username}` : "Connected"}
+        </div>
+      {:else}
+        <button class="account" onclick={() => openSettings("api")}>
+          <span class="status-dot off"></span>Add your API key
+        </button>
+      {/if}
     </div>
   </div>
 
-  <div style="display: flex; gap: 6px; position: relative; align-items: center;">
-    {#if username}
-      <span class="font-mono" style="font-size: 10px; color: var(--color-text-dimmed, #7a8ca5); margin-right: 4px; opacity: 0.8;">@{username}</span>
-    {/if}
+  <div class="header-actions">
     <button
       class="icon-btn appearance-toggle"
-      title="Appearance Settings"
+      title="Theme and font"
+      aria-label="Theme and font"
+      aria-expanded={showCompactMenu}
       onclick={toggleCompactMenu}
     >
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        style="display: block;"
-      >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10" />
         <path d="M12 18a6 6 0 1 0 0-12v12z" fill="currentColor" />
       </svg>
     </button>
-    <button class="icon-btn" title="Open Settings" onclick={openSettings}>
-      <svg
-        viewBox="0 0 24 24"
-        fill="currentColor"
-        style="width: 14px; height: 14px; display: block;"
-        ><path
-          d="M19.14 12.94c.04-.32.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.44-.17-.47-.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6s3.6 1.62 3.6 3.6s-1.62 3.6-3.6 3.6z"
-        /></svg
-      >
+    <button class="icon-btn" title="Settings" aria-label="Settings" onclick={() => openSettings()}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
     </button>
 
     {#if showCompactMenu}
-      <div
-        class="compact-popover"
-        style="position: absolute; top: calc(100% + 6px); right: 32px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 10px; width: 160px; z-index: 10000; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 10px;"
-      >
-        <span
-          style="font-size: 9px; font-weight: bold; color: var(--color-text); text-transform: uppercase; display: block; border-bottom: 1px solid var(--color-border); padding-bottom: 4px;"
-          >Appearance</span
-        >
+      <div class="compact-popover">
+        <span class="popover-title">Appearance</span>
 
         {#if isReaderTab && syncPopupWithReaderTheme}
-          <div
-            style="background: color-mix(in srgb, var(--color-accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--color-accent) 20%, transparent); border-radius: 4px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; line-height: 1.25;"
-          >
-            <span
-              style="font-size: 9.5px; font-weight: bold; color: var(--color-accent); display: flex; align-items: center; gap: 4px;"
-            >
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                style="flex-shrink:0;"
-                ><rect x="3" y="11" width="18" height="11" rx="2" ry="2"
-                ></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg
-              >
-              Synced with Reader
-            </span>
-            <button
-              type="button"
-              style="background: none; border: none; color: var(--color-text); text-decoration: underline; font-family: inherit; font-size: 9px; cursor: pointer; text-align: left; padding: 0; font-weight: bold; transition: color 0.15s;"
-              onmouseenter={(e) =>
-                (e.currentTarget.style.color = "var(--color-accent)")}
-              onmouseleave={(e) =>
-                (e.currentTarget.style.color = "var(--color-text)")}
-              onclick={disableSyncDirectly}
-            >
-              Unlock Layout
-            </button>
+          <div class="sync-note">
+            <span>Following this reader's theme.</span>
+            <button type="button" onclick={disableSyncDirectly}>Use my own theme</button>
           </div>
         {/if}
 
-        <div
-          style={isReaderTab && syncPopupWithReaderTheme
-            ? "opacity: 0.45; pointer-events: none; cursor: not-allowed; display: flex; flex-direction: column; gap: 10px;"
-            : "display: flex; flex-direction: column; gap: 10px;"}
-        >
+        <div class="popover-fields" class:locked={isReaderTab && syncPopupWithReaderTheme}>
           <CustomSelect
             options={themeOptions}
             value={selectedTheme}
@@ -716,40 +705,50 @@
 
 <div class="sep"></div>
 
-<PopupStats hasQueueItems={total > 0} />
+<PopupStats />
 
-<div class="queue-header">
-  <div class="queue-header-left">
-    <span class="queue-label">QUEUE</span>
-    <span class="badge">{total}</span>
-  </div>
-  {#if total > 0}
+<div class="sep"></div>
+
+{#if total > 0}
+  <div class="queue-toolbar">
+    {#if tabs.length > 0}
+      <div class="queue-tabs" role="tablist">
+        {#each tabs as tab (tab.id)}
+          <button
+            class="q-tab"
+            class:active={currentFilter === tab.id}
+            role="tab"
+            aria-selected={currentFilter === tab.id}
+            onclick={() => (currentFilter = tab.id)}
+          >
+            {tab.label}<span class="q-count">{tab.count}</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <span class="queue-heading">{total} waiting to be sent</span>
+    {/if}
+
     <div class="queue-bulk">
       <button
-        class="bulk-btn amber"
-        onclick={handleSendAll}
-        disabled={isSendingAll}>{isSendingAll ? "..." : "Send All"}</button
-      >
-      <button
-        class="bulk-btn ghost"
+        class="icon-btn"
+        title={currentFilter === "all" ? "Clear queue" : `Clear ${filterLabel} queue`}
+        aria-label="Clear queue"
         onclick={handleClearAll}
-        disabled={isSendingAll}>Clear</button
+        disabled={isSendingAll}
       >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+      </button>
+      <button class="bulk-btn" onclick={handleSendAll} disabled={isSendingAll}>
+        {isSendingAll ? "Sending…" : "Send all"}
+      </button>
     </div>
-  {/if}
-</div>
-
-<div class="queue-tabs">
-  {#each ["all", "video", "reading", "stremio"] as filter}
-    <button
-      class="q-tab"
-      class:active={currentFilter === filter}
-      onclick={() => setFilter(filter)}
-    >
-      {filter.charAt(0).toUpperCase() + filter.slice(1)}
-    </button>
-  {/each}
-</div>
+  </div>
+{/if}
 
 <div class="queue-container">
   <QueueList
@@ -757,292 +756,13 @@
     {readingQueue}
     {stremioQueue}
     {currentFilter}
+    {loaded}
+    {hasApiKey}
+    onOpenApiSettings={() => openSettings("api")}
     onStatusMessage={showStatus}
     onConfirm={handleConfirm}
     onRefresh={loadData}
   />
 </div>
 
-<div class="sep"></div>
-
-<footer class="footer">
-  <button class="open-btn" onclick={openSettings}>Open Settings</button>
-</footer>
-
 <ConfirmModal bind:this={confirmModal} />
-
-<style>
-  :global(body) {
-    font-family: var(--font-mono);
-    background: var(--color-background);
-    color: var(--color-text);
-    width: 380px;
-    height: 515px;
-    font-size: 13px;
-    overflow: hidden !important;
-    margin: 0;
-    padding: 0;
-  }
-  :global(#app) {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    width: 100%;
-  }
-  :global(*, *::before, *::after) {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    flex-shrink: 0;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .brand-mark {
-    width: 24px; height: 24px;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0; background: transparent;
-  }
-  .brand-mark :global(svg) {
-    width: 100%;
-    height: 100%;
-  }
-  .brand-name {
-    font-size: 11px;
-    font-weight: bold;
-    color: var(--color-text);
-    letter-spacing: 0.04em;
-    margin-bottom: 2px;
-  }
-  .pill {
-    display: inline-block;
-    font-size: 10px;
-    font-weight: bold;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 1px 5px;
-    border-radius: 8px;
-  }
-  .pill-ok {
-    color: var(--color-api-green) !important;
-    border: 1px solid color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
-    background: color-mix(in srgb, var(--color-api-green) 7%, transparent) !important;
-  }
-  .pill-off {
-    color: var(--color-error);
-    border: 1px solid color-mix(in srgb, var(--color-error) 25%, transparent);
-    background: color-mix(in srgb, var(--color-error) 7%, transparent);
-  }
-  .icon-btn {
-    width: 26px;
-    height: 26px;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    color: var(--color-text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: color 0.15s;
-  }
-  .icon-btn:hover {
-    color: var(--color-text);
-  }
-  :global(.qi-link-status, .api-status.ok) {
-    color: var(--color-api-green) !important;
-    border-color: color-mix(in srgb, var(--color-api-green) 25%, transparent) !important;
-  }
-  .sep {
-    height: 1px;
-    background: var(--color-border);
-    flex-shrink: 0;
-  }
-  .queue-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 12px 4px;
-    flex-shrink: 0;
-  }
-  .queue-header-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .queue-label {
-    font-size: 10px;
-    font-weight: bold;
-    color: var(--color-text-dimmed);
-    letter-spacing: 0.1em;
-  }
-  .badge {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-accent);
-    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
-    border-radius: 8px;
-    padding: 1px 6px;
-    font-size: 10px;
-    font-weight: bold;
-  }
-  .queue-bulk {
-    display: flex;
-    gap: 6px;
-  }
-  .bulk-btn {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: bold;
-    padding: 3px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    transition: opacity 0.15s;
-  }
-  .bulk-btn:hover {
-    opacity: 0.7;
-  }
-  .bulk-btn.amber {
-    background: var(--color-accent);
-    color: var(--color-background);
-    border-color: var(--color-accent);
-  }
-  .bulk-btn.ghost {
-    background: none;
-    color: var(--color-text-muted);
-    border-color: var(--color-border-hover);
-  }
-  .bulk-btn:disabled {
-    opacity: 0.45 !important;
-    cursor: not-allowed !important;
-    pointer-events: none !important;
-  }
-  .queue-tabs {
-    display: flex;
-    gap: 8px;
-    padding: 0 12px 6px;
-    border-bottom: 1px solid var(--color-border);
-    flex-shrink: 0;
-  }
-  .q-tab {
-    background: transparent;
-    border: 1px solid var(--color-border);
-    color: var(--color-text-dimmed);
-    padding: 3px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 11px;
-    font-family: var(--font-mono);
-    transition: all 0.15s;
-    font-weight: bold;
-  }
-  .q-tab:hover {
-    color: var(--color-text);
-    border-color: var(--color-border-hover);
-  }
-  .q-tab.active {
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-accent);
-    border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
-  }
-  .queue-container {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
-  .queue-container :global(.queue-list) {
-    max-height: none !important;
-    flex: 1 !important;
-  }
-  .queue-container :global(.empty-state),
-  .queue-container :global(.empty-message),
-  .queue-container :global(.queue-empty),
-  .queue-container :global(.empty),
-  .queue-container :global([class*="empty"]),
-  .queue-container :global(.empty-msg) {
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: center !important;
-    justify-content: center !important;
-    text-align: center !important;
-    margin: auto !important;
-    flex: 1 !important;
-    height: 100% !important;
-    color: var(--color-text-muted) !important;
-  }
-  .footer {
-    padding: 6px 12px 8px;
-    flex-shrink: 0;
-  }
-  .open-btn {
-    width: 100%;
-    background: none;
-    color: var(--color-text-dimmed);
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    padding: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: bold;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    transition:
-      color 0.15s,
-      border-color 0.15s;
-  }
-  .open-btn:hover {
-    color: var(--color-text-muted);
-    border-color: var(--color-border-hover);
-  }
-  :global(
-      .compact-popover .select-option,
-      .compact-popover .option,
-      .compact-popover [class*="option"]
-    ) {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    width: 100%;
-  }
-  :global(
-      .select-dropdown,
-      .dropdown-menu,
-      [class*="select-dropdown"],
-      [class*="dropdown-menu"],
-      [class*="select-options"],
-      [class*="options-container"]
-    ) {
-    max-height: 160px !important;
-    overflow-y: auto !important;
-  }
-  :global(::-webkit-scrollbar) {
-    width: 6px !important;
-    height: 6px !important;
-  }
-  :global(::-webkit-scrollbar-track) {
-    background: transparent !important;
-  }
-  :global(::-webkit-scrollbar-thumb) {
-    background: rgba(255, 255, 255, 0.12) !important;
-    border-radius: 10px !important;
-    transition: background 0.2s;
-  }
-  :global(::-webkit-scrollbar-thumb:hover) {
-    background: rgba(255, 255, 255, 0.25) !important;
-  }
-  :global(*) {
-    scrollbar-width: thin !important;
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent !important;
-  }
-</style>

@@ -15,6 +15,8 @@ export const PLAYER_SNAPSHOT_REQUEST_EVENT = 'nat-request-player-snapshot';
 
 /** Descriptions are only sampled for language detection, so the bridge truncates them. */
 export const PLAYER_SNAPSHOT_DESCRIPTION_LIMIT = 1500;
+export const PLAYER_SNAPSHOT_KEYWORDS_LIMIT = 400;
+export const PLAYER_SNAPSHOT_SONGS_LIMIT = 10;
 
 export interface YouTubeCaptionTrack {
   languageCode: string;
@@ -28,6 +30,10 @@ export interface YouTubePlayerSnapshot {
   author: string;
   channelId: string;
   description: string;
+  /** Uploader tags, space separated and truncated; only sampled for language detection. */
+  keywords: string;
+  /** Titles of the songs credited in the description's "Music" card, when the page has one. */
+  songs: string[];
   /** Microformat category ("Music", "Gaming", …). Not localised by YouTube. */
   category: string;
   isLiveNow: boolean;
@@ -83,6 +89,8 @@ function parseSnapshot(raw: string): YouTubePlayerSnapshot | null {
     author: asString(data.author),
     channelId: asString(data.channelId),
     description: asString(data.description),
+    keywords: asString(data.keywords),
+    songs: Array.isArray(data.songs) ? data.songs.filter((song: unknown) => typeof song === 'string' && song) : [],
     category: asString(data.category),
     isLiveNow: data.isLiveNow === true,
     captionTracks,
