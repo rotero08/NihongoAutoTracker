@@ -50,6 +50,45 @@ export default defineContentScript({
       return songs.slice(0, PLAYER_SNAPSHOT_SONGS_LIMIT);
     }
 
+    const languageOf = (trackId: unknown): string => (typeof trackId === 'string' ? trackId.split('.')[0] : '');
+
+    /**
+     * Which audio track was recorded and which ones YouTube dubbed. Dubs are
+     * only described on the streaming formats; when those are missing, every
+     * dub of an auto-dubbed video still points its captions at the original
+     * transcript, which identifies the original language too.
+     */
+    function describeAudio(response: any, captionTracks: any[], audioTracks: any[]) {
+      const formats = Array.isArray(response?.streamingData?.adaptiveFormats)
+        ? response.streamingData.adaptiveFormats
+        : [];
+      const tracks = new Map<string, any>();
+      for (const format of formats) {
+        const track = format?.audioTrack;
+        if (typeof track?.id === 'string' && !tracks.has(track.id)) tracks.set(track.id, track);
+      }
+
+      const all = [...tracks.values()];
+      const dubbedAudioLanguages = all.filter((track) => track.isAutoDubbed === true).map((track) => languageOf(track.id));
+      const recorded = all.filter((track) => track.isAutoDubbed !== true);
+
+      let originalAudioLanguage = '';
+      if (all.length > 1) {
+        const original = recorded.length === 1
+          ? recorded[0]
+          : recorded.find((track) => /original|オリジナル/i.test(String(track.displayName ?? '')));
+        originalAudioLanguage = languageOf(original?.id);
+      } else if (all.length === 0 && audioTracks.length > 1) {
+        const indices = new Set(audioTracks.map((track) => track?.defaultCaptionTrackIndex));
+        const transcript = indices.size === 1 ? captionTracks[[...indices][0]] : null;
+        if (transcript?.kind === 'asr' && typeof transcript.languageCode === 'string') {
+          originalAudioLanguage = transcript.languageCode;
+        }
+      }
+
+      return { originalAudioLanguage, dubbedAudioLanguages };
+    }
+
     function buildSnapshot(response: any): YouTubePlayerSnapshot | null {
       const details = response?.videoDetails;
       if (!details?.videoId) return null;
@@ -79,7 +118,8 @@ export default defineContentScript({
           languageCode: String(track?.languageCode ?? ''),
           kind: String(track?.kind ?? ''),
         })),
-        defaultAudioLanguage: typeof defaultAudioId === 'string' ? defaultAudioId.split('.')[0] : '',
+        defaultAudioLanguage: languageOf(defaultAudioId),
+        ...describeAudio(response, captionTracks, audioTracks),
       };
     }
 

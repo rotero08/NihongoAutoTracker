@@ -40,6 +40,16 @@ export interface YouTubePlayerSnapshot {
   captionTracks: YouTubeCaptionTrack[];
   /** Language of the default audio track; only present on multi-audio uploads. */
   defaultAudioLanguage: string;
+  /**
+   * Language the video was recorded in, when YouTube offers other audio tracks
+   * (auto-dubs or uploaded dubs) and the original can be told apart from them.
+   */
+  originalAudioLanguage: string;
+  /**
+   * Languages of YouTube's AI dubs. Each dub brings an auto-generated caption
+   * track of its own, so those tracks say nothing about the spoken language.
+   */
+  dubbedAudioLanguages: string[];
 }
 
 /**
@@ -95,6 +105,10 @@ function parseSnapshot(raw: string): YouTubePlayerSnapshot | null {
     isLiveNow: data.isLiveNow === true,
     captionTracks,
     defaultAudioLanguage: asString(data.defaultAudioLanguage),
+    originalAudioLanguage: asString(data.originalAudioLanguage),
+    dubbedAudioLanguages: Array.isArray(data.dubbedAudioLanguages)
+      ? data.dubbedAudioLanguages.filter((lang: unknown) => typeof lang === 'string' && lang)
+      : [],
   };
 }
 
